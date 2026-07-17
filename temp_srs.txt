@@ -1,0 +1,7 @@
+<USER_REQUEST>
+bro there is no "1. Kitchen Display System (KDS) / KOT Dispatch 🍳 (Recommended)" in the SRS, you must follow it
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-07-09T17:37:26+05:00.
+</ADDITIONAL_METADATA>
+

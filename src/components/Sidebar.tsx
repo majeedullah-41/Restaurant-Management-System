@@ -1,0 +1,82 @@
+import { useNavigate } from "react-router-dom";
+import { 
+  LayoutDashboard, MenuSquare, ClipboardList, Table2, Users, 
+  UserSquare2, CalendarClock, Receipt, BarChart3, 
+  Settings, LogOut, ShoppingCart
+} from "lucide-react";
+
+export default function Sidebar({ activePage }: { activePage: string }) {
+  const navigate = useNavigate();
+  const role = localStorage.getItem("userRole") || "Admin";
+
+  return (
+    <aside className="w-64 bg-white dark:bg-[#0B1120] border-r border-slate-200 dark:border-slate-800 flex flex-col z-10 shrink-0 transition-colors">
+      <div className="h-20 flex flex-col px-6 border-b border-slate-200 dark:border-slate-800 justify-center">
+        <span className="text-xl font-bold text-slate-900 dark:text-white tracking-wide">RESTAURANT</span>
+        <span className="text-xs text-blue-600 dark:text-blue-500 font-semibold tracking-widest">MANAGEMENT SYSTEM</span>
+      </div>
+
+      <div className="flex items-center mt-6 px-3">
+        <div className="w-10 h-10 rounded-full bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-500 font-bold mr-3 shadow-inner">
+          {role === "Admin" ? "AD" : "CA"}
+        </div>
+        <div className="flex-1">
+          <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">{role === "Admin" ? "Admin User" : role}</h3>
+          <p className="text-xs text-emerald-500 font-medium">Online</p>
+        </div>
+      </div>
+      
+      {/* Centralized Navigation */}
+      <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1 custom-scrollbar">
+        {role === "Cashier" ? (
+          <>
+            <NavItem icon={<LayoutDashboard size={20} />} label="Cashier Dashboard" active={activePage === "cashier_dashboard"} onClick={() => navigate('/cashier/dashboard')} />
+            <NavItem icon={<ShoppingCart size={20} />} label="POS / New Order" active={activePage === "pos"} onClick={() => navigate('/cashier/pos/0')} />
+            <NavItem icon={<ClipboardList size={20} />} label="Orders" active={activePage === "orders"} onClick={() => navigate('/cashier/orders')} />
+            <NavItem icon={<Users size={20} />} label="Customers" active={activePage === "customers"} onClick={() => navigate('/cashier/customers')} />
+            <NavItem icon={<CalendarClock size={20} />} label="Order History" active={activePage === "history"} onClick={() => navigate('/cashier/history')} />
+            <NavItem icon={<Table2 size={20} />} label="Table Reservation" active={activePage === "tables"} onClick={() => navigate('/cashier/tables')} />
+          </>
+        ) : (
+          <>
+            <NavItem icon={<LayoutDashboard size={20} />} label="Dashboard" active={activePage === "dashboard"} onClick={() => navigate('/admin/dashboard')} />
+            <NavItem icon={<MenuSquare size={20} />} label="Menu Management" active={activePage === "menu"} onClick={() => navigate('/admin/menu')} />
+            <NavItem icon={<ClipboardList size={20} />} label="Orders" active={activePage === "orders"} onClick={() => navigate('/admin/orders')} />
+            <NavItem icon={<Table2 size={20} />} label="Table Management" active={activePage === "tables"} onClick={() => navigate('/admin/tables')} />
+            <NavItem icon={<Users size={20} />} label="Customers" active={activePage === "customers"} onClick={() => navigate('/admin/customers')} />
+            <NavItem icon={<UserSquare2 size={20} />} label="Staff Management" active={activePage === "staff"} onClick={() => navigate('/admin/staff')} />
+            <NavItem icon={<CalendarClock size={20} />} label="Attendance" active={activePage === "attendance"} onClick={() => navigate('/admin/attendance')} />
+            <NavItem icon={<Receipt size={20} />} label="Payroll" active={activePage === "payroll"} onClick={() => navigate('/admin/payroll')} />
+            <NavItem icon={<Receipt size={20} />} label="Expenses" active={activePage === "expenses"} onClick={() => navigate('/admin/expenses')} />
+            <NavItem icon={<BarChart3 size={20} />} label="Reports" active={activePage === "reports"} onClick={() => navigate('/admin/reports')} />
+            <NavItem icon={<Settings size={20} />} label="Settings" active={activePage === "settings"} onClick={() => navigate('/admin/settings')} />
+            <NavItem icon={<UserSquare2 size={20} />} label="User Profile" active={activePage === "profile"} onClick={() => navigate('/admin/profile')} />
+          </>
+        )}
+      </nav>
+
+      <div className="p-4 border-t border-slate-200 dark:border-slate-800 space-y-2">
+        <button onClick={() => navigate('/')} className="flex items-center space-x-3 text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 w-full px-3 py-2 rounded-lg transition-colors">
+          <LogOut size={20} />
+          <span>Logout</span>
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+// Helper component moved inside the shared file
+function NavItem({ icon, label, active = false, onClick }: { icon: React.ReactNode, label: string, active?: boolean, onClick?: () => void }) {
+  return (
+    <button onClick={onClick}
+      className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-all ${
+        active 
+        ? "bg-blue-600 text-white shadow-md shadow-blue-600/20" 
+        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200"
+      }`}
+    >
+      {icon}
+      <span className="font-medium text-sm">{label}</span>
+    </button>
+  );
+}

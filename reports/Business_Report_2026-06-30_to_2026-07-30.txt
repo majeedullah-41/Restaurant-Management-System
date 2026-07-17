@@ -1,0 +1,31 @@
+========================================
+       BUSINESS REPORT & ANALYTICS      
+========================================
+Date Range: 2026-06-30 to 2026-07-30
+
+--- FINANCIAL SUMMARY ---
+Total Revenue: Rs. 79550.00
+Total Expenses: Rs. 186700.00
+Net Profit: Rs. -107150.00
+Profit Margin: -134.7%
+Total Orders: 25
+Average Order Value: Rs. 3182.00
+
+--- EXPENSES BY CATEGORY ---
+- Salaries: Rs. 132600.00
+- Groceries: Rs. 53500.00
+- Maintenance: Rs. 500.00
+- Miscellaneous: Rs. 100.00
+
+--- TOP SELLING ITEMS ---
+1. Coca coal | Sold: 23 | Revenue: Rs. 3450.00
+2. Karahi | Sold: 21 | Revenue: Rs. 37800.00
+3. Afghani PIzza | Sold: 12 | Revenue: Rs. 14400.00
+4. Zinger Burger | Sold: 11 | Revenue: Rs. 7150.00
+5. Pizza | Sold: 7 | Revenue: Rs. 5600.00
+
+--- DAILY TRENDS ---
+Date       | Sales        | Expenses   
+----------------------------------------
+2026-07-08 | Rs. 0.00       | Rs. 74200.00
+2026-07-09 | Rs. 79550.00   | Rs. 112500.00
