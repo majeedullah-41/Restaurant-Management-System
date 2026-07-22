@@ -2,13 +2,11 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useNavigate } from 'react-router-dom';
 import { 
-  Banknote, TrendingUp, ShoppingBag, PieChart, 
-  CalendarDays, Bell, List,
-  Plus, Search, Clock, ChevronDown, Moon, Sun
+  TrendingUp, ShoppingBag, PieChart, 
+  Clock
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
-import { useTheme } from '../components/ThemeProvider';
 
 interface CashierStats {
   todays_sales: number;
@@ -28,22 +26,14 @@ interface TodaySale {
   status: string;
 }
 
-interface TodaySale {
-  id: string;
-  table: string;
-  customer: string;
-  time: string;
-  amount: number;
-  status: string;
-}
-
 interface DetailedTableStatus {
   id: number;
   table_number: number;
   status: string;
-  active_order_id: number | null;
-  active_order_total: number | null;
-  elapsed_minutes: number | null;
+  order_id: number | null;
+  item_count: number;
+  order_total: number;
+  order_type: string | null;
 }
 
 interface StaffMember {
@@ -59,9 +49,7 @@ interface StaffCategory {
 }
 
 export default function CashierDashboard() {
-  const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
-  const role = localStorage.getItem("userRole") || "Admin";
   const [stats, setStats] = useState<CashierStats | null>(null);
   const [recentOrders, setRecentOrders] = useState<TodaySale[]>([]);
   const [tables, setTables] = useState<DetailedTableStatus[]>([]);
@@ -333,20 +321,18 @@ export default function CashierDashboard() {
                       key={order.id} 
                       onClick={() => {
                         if (order.status === 'Open') {
-                           const parsedOrderId = parseInt(order.id.replace('#ORD-', ''));
-                           const parsedTableId = order.table === 'Walk-in' ? '0' : parseInt(order.table.replace('Table ', '')).toString();
-                           navigate(`/cashier/pos/${parsedTableId}/${parsedOrderId}?return=/cashier/dashboard`);
+                           navigate(`/cashier/pos/${order.table_number}/${order.id}?return=/cashier/dashboard`);
                         }
                       }}
                       className={`flex items-center justify-between group p-1.5 -mx-1.5 rounded-lg transition-colors ${order.status === 'Open' ? 'cursor-pointer hover:bg-slate-800/50' : 'opacity-80'}`}
                     >
                       <div className="flex items-center space-x-2">
                         <div className={`w-1.5 h-1.5 rounded-full ${order.status === 'Open' ? 'bg-orange-500' : 'bg-emerald-500'}`}></div>
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400 group-hover:text-slate-900 dark:text-white transition-colors">{order.id}</span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400 group-hover:text-slate-900 dark:text-white transition-colors">#ORD-{order.id}</span>
                       </div>
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400">{order.table === 'Walk-in' ? 'Walk-in' : `Table ${order.table.padStart(2, '0')}`}</div>
-                      <div className="text-[11px] text-slate-500">{formatTime(order.time)}</div>
-                      <div className="text-xs font-bold text-red-400 text-right w-16">Rs. {order.amount.toLocaleString()}</div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">{order.table_number === 0 ? 'Walk-in' : `Table ${String(order.table_number).padStart(2, '0')}`}</div>
+                      <div className="text-[11px] text-slate-500">{formatTime(order.created_at || order.closed_at || '')}</div>
+                      <div className="text-xs font-bold text-red-400 text-right w-16">Rs. {order.total_price.toLocaleString()}</div>
                     </div>
                   ))
                 )}

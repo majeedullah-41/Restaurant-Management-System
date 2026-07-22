@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_variables, non_snake_case)]
+
 use rusqlite::{Connection, Result};
 use serde::Serialize;
 

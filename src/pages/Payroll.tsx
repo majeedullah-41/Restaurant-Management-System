@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { CreditCard, Calendar, CheckCircle, Clock, History, Users, Check, Wallet, AlertCircle, ArrowUpRight, ArrowDownRight, Banknote, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CreditCard, Calendar, CheckCircle, Clock, History, Users, Check, AlertCircle, ArrowUpRight, ArrowDownRight, Banknote, ChevronLeft, ChevronRight } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 
