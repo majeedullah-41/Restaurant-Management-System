@@ -34,9 +34,10 @@ interface ReportTemplateProps {
   startDate: string;
   endDate: string;
   restaurantName?: string;
+  restaurantLogo?: string | null;
 }
 
-export const ReportTemplate = React.forwardRef<HTMLDivElement, ReportTemplateProps>(({ report, startDate, endDate, restaurantName = "Restaurant POS" }, ref) => {
+export const ReportTemplate = React.forwardRef<HTMLDivElement, ReportTemplateProps>(({ report, startDate, endDate, restaurantName = "Restaurant POS", restaurantLogo = null }, ref) => {
   return (
     <div className="hidden">
       <div 
@@ -50,6 +51,7 @@ export const ReportTemplate = React.forwardRef<HTMLDivElement, ReportTemplatePro
         {/* Header */}
         <div className="flex justify-between items-end border-b-2 border-slate-800 pb-6 mb-8">
           <div>
+            {restaurantLogo && <img src={restaurantLogo} alt="Logo" className="h-16 w-auto object-contain mb-4" />}
             <h1 className="text-3xl font-bold text-slate-900 mb-2">{restaurantName}</h1>
             <h2 className="text-xl text-slate-600 font-medium">Business Performance Report</h2>
           </div>

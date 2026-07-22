@@ -43,11 +43,14 @@ import {
   Tag, Percent, Calculator, FileText, CalendarDays, Bell, Printer, ChevronDown, Moon, Sun
 } from "lucide-react";
 import { useTheme } from "../components/ThemeProvider";
+import { ConfirmModal } from "../components/ConfirmModal";
+import { AlertModal } from "../components/AlertModal";
 
-interface MenuItem { id: number; name: string; category_id: number; price: number; }
+interface MenuItem { id: number; name: string; category_id: number; price: number; is_active: boolean; }
 interface Category { id: number; name: string; }
 interface CartItem { id: number; item_id: number; name: string; price: number; quantity: number; }
 interface Customer { id: number; name: string; phone: string; visits: number; }
+interface DetailedTableStatus { id: number; table_number: number; status: string; active_order_id: number | null; active_order_total: number | null; elapsed_minutes: number | null; }
 interface Customer { id: number; name: string; phone: string; visits: number; }
 
 export default function POS() {
@@ -63,13 +66,20 @@ export default function POS() {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [taxRate, setTaxRate] = useState<number>(0);
+  const [tables, setTables] = useState<DetailedTableStatus[]>([]);
 
   // State
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [orderId, setOrderId] = useState<number | null>(null);
   const [orderType, setOrderType] = useState<string>(tableId === "0" ? "Takeaway" : "Dine-in");
+  
+  useEffect(() => {
+    setOrderType(tableId === "0" ? "Takeaway" : "Dine-in");
+  }, [tableId]);
+
   const [view, setView] = useState<'payment' | 'menu'>('payment');
   const [restaurantName, setRestaurantName] = useState("RMS");
+  const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
 
 
   // Payment State
@@ -82,6 +92,19 @@ export default function POS() {
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+
+  // Modal State
+  const [confirmModal, setConfirmModal] = useState<{isOpen: boolean; title: string; message: string; onConfirm: () => void}>({
+    isOpen: false, title: '', message: '', onConfirm: () => {}
+  });
+  
+  const [alertModal, setAlertModal] = useState<{isOpen: boolean; title: string; message: string; type: 'danger' | 'warning' | 'info' | 'success'}>({
+    isOpen: false, title: '', message: '', type: 'danger'
+  });
+
+  const showAlert = (title: string, message: string, type: 'danger' | 'warning' | 'info' | 'success' = 'danger') => {
+    setAlertModal({ isOpen: true, title, message, type });
+  };
 
   const filteredCustomers = customers.filter(c =>
     c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
@@ -113,13 +136,16 @@ export default function POS() {
         const cats: any = await invoke("get_categories");
         const items: any = await invoke("get_menu_items");
         const custs: any = await invoke("get_customers");
+        const tbls: any = await invoke("get_detailed_table_statuses");
         setCategories(cats);
         setMenuItems(items);
         setCustomers(custs);
+        setTables(tbls);
 
         const settings: any = await invoke("get_settings");
         setTaxRate(settings.tax_rate);
         setRestaurantName(settings.restaurant_name);
+        setRestaurantLogo(settings.logo_path || null);
 
         // Only create/fetch order for physical tables or when resuming an existing order
         if (routeOrderId && routeOrderId !== 'new') {
@@ -128,7 +154,7 @@ export default function POS() {
           setOrderId(order.id);
           setDiscount(order.discount_amount || 0);
           refreshCart(order.id);
-        } else if (tableId !== "0" && !routeOrderId) {
+        } else if (tableId !== "0") {
           // Physical table lookup — get or create order
           const order: any = await invoke("get_or_create_order", { tableNumber: parseInt(tableId!) });
           setOrderId(order.id);
@@ -139,7 +165,7 @@ export default function POS() {
         // Don't create any order yet — it will be created lazily when the first item is added
       } catch (err) {
         console.error("Failed to initialize POS", err);
-        alert(err);
+        showAlert("Initialization Error", String(err));
         navigate(returnUrl);
       }
     }
@@ -152,6 +178,31 @@ export default function POS() {
       setCartItems(items);
     } catch (err) {
       console.error("Failed to fetch cart items", err);
+    }
+  };
+
+  const handleTableChange = async (newTableIdStr: string) => {
+    const newTableId = parseInt(newTableIdStr);
+    const currentTableId = parseInt(tableId || "0");
+    if (newTableId === currentTableId) return;
+    
+    if (orderId) {
+      try {
+        await invoke("reassign_order_table", {
+          orderId: orderId,
+          oldTable: currentTableId,
+          newTable: newTableId
+        });
+        navigate(`${basePath}/pos/${newTableId}/${orderId}${location.search}`, { replace: true });
+        
+        // Refresh tables list to show updated availability
+        const tbls: any = await invoke("get_detailed_table_statuses");
+        setTables(tbls);
+      } catch (err) {
+        showAlert("Error", "Failed to reassign table: " + err);
+      }
+    } else {
+      navigate(`${basePath}/pos/${newTableId}/new${location.search}`, { replace: true });
     }
   };
 
@@ -222,6 +273,7 @@ export default function POS() {
     </head>
     <body>
       <div class="text-center">
+        ${restaurantLogo ? `<img src="${restaurantLogo}" style="max-height: 80px; max-width: 100%; display: block; margin: 0 auto 10px;" />` : ''}
         <h1>${restaurantName || "Restaurant Name"}</h1>
         <p>Generated via RMS POS</p>
         <div class="border-b"></div>
@@ -302,7 +354,7 @@ export default function POS() {
       });
       await handlePrint();
     } catch (err) {
-      alert("Checkout failed: " + err);
+      showAlert("Checkout Failed", String(err));
     }
   };
 
@@ -332,6 +384,7 @@ export default function POS() {
     </head>
     <body>
       <div class="text-center">
+        ${restaurantLogo ? `<img src="${restaurantLogo}" style="max-height: 80px; max-width: 100%; display: block; margin: 0 auto 10px;" />` : ''}
         <h1>KOT</h1>
         <p class="font-bold">*** KITCHEN COPY ***</p>
         <div class="border-b"></div>
@@ -375,22 +428,29 @@ export default function POS() {
       // Do not navigate away for KOT
     } catch (err) {
       console.error("Failed to generate KOT:", err);
-      alert("Failed to generate KOT");
+      showAlert("Error", "Failed to generate KOT");
     }
   };
 
   const handleCancelOrder = async () => {
     if (!orderId) return;
-    if (!confirm("Are you sure you want to cancel this order? All items will be removed.")) return;
-    try {
-      await invoke("cancel_active_order", {
-        orderId,
-        tableNumber: parseInt(tableId || "0")
-      });
-      navigate(returnUrl);
-    } catch (err) {
-      alert("Failed to cancel order: " + err);
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Cancel Order',
+      message: 'Are you sure you want to cancel this order? All items will be removed.',
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        try {
+          await invoke("cancel_active_order", {
+            orderId,
+            tableNumber: parseInt(tableId || "0")
+          });
+          navigate(returnUrl);
+        } catch (err) {
+          showAlert("Cancel Failed", "Failed to cancel order: " + err);
+        }
+      }
+    });
   };
 
   // Render Left Sidebar (Navigation)
@@ -440,13 +500,26 @@ export default function POS() {
               <button
                 key={item.id}
                 onClick={() => handleAddToCart(item)}
-                className="bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-800 hover:border-blue-500/50 p-4 rounded-2xl flex flex-col items-center justify-center text-center transition-all hover:-translate-y-1 group"
+                disabled={!item.is_active}
+                className={`border p-4 rounded-2xl flex flex-col items-center justify-center text-center transition-all relative overflow-hidden ${
+                  item.is_active 
+                    ? 'bg-white dark:bg-[#1E293B] border-slate-200 dark:border-slate-800 hover:border-blue-500/50 hover:-translate-y-1 group cursor-pointer' 
+                    : 'bg-slate-50 dark:bg-[#0B1120] border-slate-200 dark:border-slate-800 opacity-60 cursor-not-allowed grayscale'
+                }`}
               >
-                <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full mb-3 flex items-center justify-center text-slate-500 group-hover:bg-blue-500/10 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                <div className={`w-16 h-16 rounded-full mb-3 flex items-center justify-center transition-colors ${
+                  item.is_active 
+                    ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 group-hover:bg-blue-500/10 group-hover:text-blue-600 dark:group-hover:text-blue-400'
+                    : 'bg-slate-200 dark:bg-slate-800 text-slate-400'
+                }`}>
                   <Tag size={24} />
                 </div>
                 <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200 mb-1 leading-tight">{item.name}</h3>
-                <span className="text-blue-600 dark:text-blue-400 font-bold text-sm">Rs. {item.price}</span>
+                {item.is_active ? (
+                  <span className="text-blue-600 dark:text-blue-400 font-bold text-sm">Rs. {item.price}</span>
+                ) : (
+                  <span className="text-red-500 font-bold text-[10px] uppercase tracking-wider mt-1 border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded-full">Out of Stock</span>
+                )}
               </button>
             ))
           }
@@ -593,9 +666,19 @@ export default function POS() {
             <div className="p-5 border-b border-slate-200 dark:border-slate-800">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-base font-bold text-slate-900 dark:text-white">Order Summary</h2>
-                <div className="px-3 py-1 bg-blue-100 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800/50 text-blue-600 dark:text-blue-400 text-[10px] rounded-lg">
-                  {tableId === '0' ? 'Walk-in' : `Table ${tableId?.padStart(2, '0')}`}
-                </div>
+                <select
+                  value={tableId || "0"}
+                  onChange={(e) => handleTableChange(e.target.value)}
+                  className="px-2 py-1.5 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 text-blue-600 dark:text-blue-400 text-xs font-bold rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer appearance-none text-center shadow-sm"
+                >
+                  <option value="0">Walk-in</option>
+                  {tables.map(t => {
+                    if (t.status === 'Available' || t.table_number.toString() === tableId) {
+                      return <option key={t.id} value={t.table_number}>Table {t.table_number.toString().padStart(2, '0')}</option>
+                    }
+                    return null;
+                  })}
+                </select>
               </div>
 
               <div className="flex flex-col space-y-3">
@@ -781,6 +864,25 @@ export default function POS() {
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
         .custom-scrollbar:hover::-webkit-scrollbar-thumb { background: #475569; }
       `}</style>
+
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+        type="danger"
+        confirmText="Yes, Cancel Order"
+        cancelText="No, Keep It"
+      />
+      
+      <AlertModal
+        isOpen={alertModal.isOpen}
+        title={alertModal.title}
+        message={alertModal.message}
+        type={alertModal.type}
+        onClose={() => setAlertModal(prev => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 }

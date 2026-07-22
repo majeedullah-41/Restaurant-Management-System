@@ -4,7 +4,9 @@ mod db;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+    db::get_user_role_by_username,
     db::get_restaurant_name,
     db::login,
     db::update_user_profile,
@@ -16,6 +18,7 @@ pub fn run() {
     db::update_category,
     db::delete_menu_item,
     db::update_menu_item,
+    db::toggle_menu_item_status,
     db::get_settings,
     db::update_settings,
     db::init_tables_if_needed,
@@ -64,8 +67,18 @@ pub fn run() {
     db::get_payroll_summary,
     db::process_payout,
     db::get_payout_history,
+    db::get_paid_staff_ids,
+    db::process_batch_payout,
     db::get_analytics_report,
-    db::save_text_report
+    db::save_text_report,
+
+    db::get_backup_settings,
+    db::update_backup_settings,
+    db::perform_backup,
+    db::check_and_run_auto_backup,
+    db::validate_backup_file,
+    db::import_backup_file,
+    db::verify_admin_password
 ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,4 +1,6 @@
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { invoke } from "@tauri-apps/api/core";
 import { 
   LayoutDashboard, MenuSquare, ClipboardList, Table2, Users, 
   UserSquare2, CalendarClock, Receipt, BarChart3, 
@@ -9,11 +11,36 @@ export default function Sidebar({ activePage }: { activePage: string }) {
   const navigate = useNavigate();
   const role = localStorage.getItem("userRole") || "Admin";
 
+  const [restaurantName, setRestaurantName] = useState("RESTAURANT");
+  const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadName = async () => {
+      try {
+        const settings: any = await invoke("get_settings");
+        setRestaurantName(settings.restaurant_name.toUpperCase());
+        setRestaurantLogo(settings.logo_path || null);
+      } catch (e) {}
+    };
+    loadName();
+
+    const handleSettingsUpdated = () => loadName();
+    window.addEventListener("settingsUpdated", handleSettingsUpdated);
+    return () => window.removeEventListener("settingsUpdated", handleSettingsUpdated);
+  }, []);
+
   return (
     <aside className="w-64 bg-white dark:bg-[#0B1120] border-r border-slate-200 dark:border-slate-800 flex flex-col z-10 shrink-0 transition-colors">
-      <div className="h-20 flex flex-col px-6 border-b border-slate-200 dark:border-slate-800 justify-center">
-        <span className="text-xl font-bold text-slate-900 dark:text-white tracking-wide">RESTAURANT</span>
-        <span className="text-xs text-blue-600 dark:text-blue-500 font-semibold tracking-widest">MANAGEMENT SYSTEM</span>
+      <div className="min-h-[5rem] py-4 flex items-center px-6 border-b border-slate-200 dark:border-slate-800">
+        {restaurantLogo && (
+          <div className="h-10 w-10 shrink-0 bg-white rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden mr-3">
+            <img src={restaurantLogo} alt="Logo" className="h-full w-full object-contain p-0.5" />
+          </div>
+        )}
+        <div className="flex flex-col min-w-0">
+          <span className="text-base font-bold text-slate-900 dark:text-white tracking-wide leading-tight line-clamp-2" title={restaurantName}>{restaurantName}</span>
+          <span className="text-[10px] text-blue-600 dark:text-blue-500 font-semibold tracking-widest truncate mt-0.5">MANAGEMENT SYSTEM</span>
+        </div>
       </div>
 
       <div className="flex items-center mt-6 px-3">
@@ -40,12 +67,13 @@ export default function Sidebar({ activePage }: { activePage: string }) {
         ) : (
           <>
             <NavItem icon={<LayoutDashboard size={20} />} label="Dashboard" active={activePage === "dashboard"} onClick={() => navigate('/admin/dashboard')} />
+            <NavItem icon={<ShoppingCart size={20} />} label="POS / New Order" active={activePage === "pos"} onClick={() => navigate('/admin/pos/0')} />
             <NavItem icon={<MenuSquare size={20} />} label="Menu Management" active={activePage === "menu"} onClick={() => navigate('/admin/menu')} />
             <NavItem icon={<ClipboardList size={20} />} label="Orders" active={activePage === "orders"} onClick={() => navigate('/admin/orders')} />
+            <NavItem icon={<CalendarClock size={20} />} label="Order History" active={activePage === "history"} onClick={() => navigate('/admin/history')} />
             <NavItem icon={<Table2 size={20} />} label="Table Management" active={activePage === "tables"} onClick={() => navigate('/admin/tables')} />
             <NavItem icon={<Users size={20} />} label="Customers" active={activePage === "customers"} onClick={() => navigate('/admin/customers')} />
             <NavItem icon={<UserSquare2 size={20} />} label="Staff Management" active={activePage === "staff"} onClick={() => navigate('/admin/staff')} />
-            <NavItem icon={<CalendarClock size={20} />} label="Attendance" active={activePage === "attendance"} onClick={() => navigate('/admin/attendance')} />
             <NavItem icon={<Receipt size={20} />} label="Payroll" active={activePage === "payroll"} onClick={() => navigate('/admin/payroll')} />
             <NavItem icon={<Receipt size={20} />} label="Expenses" active={activePage === "expenses"} onClick={() => navigate('/admin/expenses')} />
             <NavItem icon={<BarChart3 size={20} />} label="Reports" active={activePage === "reports"} onClick={() => navigate('/admin/reports')} />

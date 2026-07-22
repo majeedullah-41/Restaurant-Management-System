@@ -27,8 +27,8 @@ interface ReceiptProps {
 export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((props, ref) => {
   return (
     <div className="hidden">
-      <div 
-        ref={ref} 
+      <div
+        ref={ref}
         className="w-[80mm] min-h-screen bg-white text-black p-4 text-[12px] font-mono mx-auto"
         style={{
           printColorAdjust: 'exact',
@@ -38,7 +38,7 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
         {/* Header */}
         <div className="text-center mb-6">
           <h1 className="text-xl font-bold mb-1">{props.restaurantName || "Restaurant Name"}</h1>
-          <p className="text-[10px] text-gray-600">Generated via RMS POS</p>
+          <p className="text-[10px] text-gray-600">Bypass Mingora Swat</p>
           <div className="border-b-2 border-dashed border-gray-300 my-4"></div>
         </div>
 
@@ -81,7 +81,7 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
             <div key={i} className="flex justify-between">
               <span className="w-1/2 break-words pr-2">{item.name}</span>
               <span className="w-1/6 text-center">{item.quantity}</span>
-              <span className="w-1/3 text-right">{(item.price * item.quantity).toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+              <span className="w-1/3 text-right">{(item.price * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
             </div>
           ))}
         </div>
@@ -92,22 +92,22 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
         <div className="space-y-1 mb-4">
           <div className="flex justify-between">
             <span>Subtotal</span>
-            <span>Rs. {props.subtotal.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+            <span>Rs. {props.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
           </div>
           {props.discount > 0 && (
             <div className="flex justify-between text-gray-700">
               <span>Discount</span>
-              <span>- Rs. {props.discount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+              <span>- Rs. {props.discount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
             </div>
           )}
           <div className="flex justify-between text-gray-700">
             <span>Tax ({props.taxRate}%)</span>
-            <span>Rs. {props.taxAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+            <span>Rs. {props.taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
           </div>
           <div className="border-b border-gray-300 my-2"></div>
           <div className="flex justify-between font-bold text-sm">
             <span>Grand Total</span>
-            <span>Rs. {props.totalAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+            <span>Rs. {props.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
           </div>
         </div>
 
@@ -117,11 +117,11 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
         <div className="space-y-1 mb-6">
           <div className="flex justify-between">
             <span>Cash Received</span>
-            <span>Rs. {props.amountReceived.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+            <span>Rs. {props.amountReceived.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
           </div>
           <div className="flex justify-between">
             <span>Change Due</span>
-            <span>Rs. {props.changeAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+            <span>Rs. {props.changeAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
           </div>
         </div>
 

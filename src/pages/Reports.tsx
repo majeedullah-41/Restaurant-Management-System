@@ -5,7 +5,7 @@ import Header from '../components/Header';
 import { 
   AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
-import { TrendingUp, TrendingDown, DollarSign, Receipt, ShoppingBag, Calendar, Download } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Receipt, ShoppingBag, Calendar, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import { ReportTemplate } from '../components/ReportTemplate';
 
@@ -45,18 +45,54 @@ export default function Reports() {
   const [loading, setLoading] = useState(true);
   const printRef = useRef<HTMLDivElement>(null);
   
-  // Default to current month
-  const today = new Date();
-  const firstDay = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
-  const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+  const [restaurantName, setRestaurantName] = useState("Restaurant POS");
+  const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
   
-  const [startDate, setStartDate] = useState(firstDay);
-  const [endDate, setEndDate] = useState(lastDay);
+  const today = new Date();
+  const [selectedMonth, setSelectedMonth] = useState(today.getMonth());
+  const [selectedYear, setSelectedYear] = useState(today.getFullYear());
 
-  const fetchReport = async () => {
+  const formatLocalDate = (y: number, m: number, d: number) =>
+    `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+  const startDate = formatLocalDate(selectedYear, selectedMonth, 1);
+  const lastDayOfMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+  const endDate = formatLocalDate(selectedYear, selectedMonth, lastDayOfMonth);
+
+  const isCurrentMonth = selectedMonth === today.getMonth() && selectedYear === today.getFullYear();
+  const isFutureMonth = selectedYear > today.getFullYear() || (selectedYear === today.getFullYear() && selectedMonth > today.getMonth());
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+  const goToPrevMonth = () => {
+    if (selectedMonth === 0) {
+      setSelectedMonth(11);
+      setSelectedYear(y => y - 1);
+    } else {
+      setSelectedMonth(m => m - 1);
+    }
+  };
+
+  const goToNextMonth = () => {
+    if (selectedMonth === 11) {
+      setSelectedMonth(0);
+      setSelectedYear(y => y + 1);
+    } else {
+      setSelectedMonth(m => m + 1);
+    }
+  };
+
+  const goToCurrentMonth = () => {
+    setSelectedMonth(today.getMonth());
+    setSelectedYear(today.getFullYear());
+  };
+
+  const fetchReport = async (sd: string, ed: string) => {
     try {
       setLoading(true);
-      const data = await invoke<AnalyticsReport>('get_analytics_report', { startDate, endDate });
+      const data = await invoke<AnalyticsReport>('get_analytics_report', { startDate: sd, endDate: ed });
+      const settings: any = await invoke("get_settings");
+      setRestaurantName(settings.restaurant_name);
+      setRestaurantLogo(settings.logo_path || null);
       setReport(data);
     } catch (e) {
       console.error('Failed to fetch report:', e);
@@ -66,8 +102,8 @@ export default function Reports() {
   };
 
   useEffect(() => {
-    fetchReport();
-  }, []);
+    fetchReport(startDate, endDate);
+  }, [selectedMonth, selectedYear]);
 
   const handlePrint = useReactToPrint({
     contentRef: printRef,
@@ -78,40 +114,58 @@ export default function Reports() {
     <div className="flex h-screen w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
       <Sidebar activePage="reports" />
       <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors">
-        <Header title="Reports & Analytics" subtitle="Visualize your business performance and metrics.">
-          <div className="flex items-center space-x-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-1.5">
-            <Calendar size={16} className="text-slate-400" />
-            <input 
-              type="date" 
-              value={startDate}
-              onChange={e => setStartDate(e.target.value)}
-              className="bg-transparent border-none text-sm text-slate-900 dark:text-slate-300 focus:outline-none w-28"
-            />
-            <span className="text-slate-400 dark:text-slate-500">to</span>
-            <input 
-              type="date" 
-              value={endDate}
-              onChange={e => setEndDate(e.target.value)}
-              className="bg-transparent border-none text-sm text-slate-900 dark:text-slate-300 focus:outline-none w-28"
-            />
-          </div>
-          <button 
-            onClick={fetchReport}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            Apply Filter
-          </button>
-          <button
-            onClick={() => handlePrint()}
-            className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2 border border-slate-200 dark:border-slate-700"
-            disabled={loading || !report}
-          >
-            <Download size={16} />
-            Export PDF Report
-          </button>
-        </Header>
+        <Header title="Reports & Analytics" subtitle="Visualize your business performance and metrics." />
 
-        <div className="flex-1 p-6 overflow-y-auto custom-scrollbar">
+        <div className="flex-1 px-6 pt-4 pb-5 overflow-y-auto custom-scrollbar">
+          {/* Toolbar */}
+          <div className="flex items-center justify-between mb-6 shrink-0">
+            <div className="flex items-center space-x-2">
+              <div className="flex items-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-sm overflow-hidden">
+                <button
+                  onClick={goToPrevMonth}
+                  className="px-3 py-2.5 text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-r border-slate-200 dark:border-slate-700"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <div className="px-5 py-2.5 flex items-center space-x-2.5 min-w-[200px] justify-center">
+                  <Calendar size={15} className="text-blue-500 shrink-0" />
+                  <div className="text-center">
+                    <span className="text-sm font-bold text-slate-900 dark:text-white">
+                      {monthNames[selectedMonth]} {selectedYear}
+                    </span>
+                    <span className="text-[10px] text-slate-400 ml-2 font-medium">
+                      {startDate.slice(8)}/{startDate.slice(5,7)} — {endDate.slice(8)}/{endDate.slice(5,7)}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={goToNextMonth}
+                  disabled={isFutureMonth}
+                  className="px-3 py-2.5 text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-l border-slate-200 dark:border-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+
+              {!isCurrentMonth && (
+                <button
+                  onClick={goToCurrentMonth}
+                  className="px-3.5 py-2.5 text-xs font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-500/20 transition-colors"
+                >
+                  This Month
+                </button>
+              )}
+            </div>
+
+            <button
+              onClick={() => handlePrint()}
+              className="px-4 py-2.5 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-sm font-semibold rounded-xl transition-colors flex items-center gap-2 border border-slate-200 dark:border-slate-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={loading || !report}
+            >
+              <Download size={16} />
+              Export PDF
+            </button>
+          </div>
           {loading ? (
             <div className="flex items-center justify-center h-full">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
@@ -300,6 +354,8 @@ export default function Reports() {
             report={report} 
             startDate={startDate} 
             endDate={endDate} 
+            restaurantName={restaurantName}
+            restaurantLogo={restaurantLogo}
           />
         )}
       </main>

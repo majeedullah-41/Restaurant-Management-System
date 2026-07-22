@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Search, CheckCircle2, ChevronDown, ChevronRight, PackageOpen, User, Clock, Banknote, FileText, Tag, AlertCircle, ExternalLink, Percent } from "lucide-react";
+import { Search, CheckCircle2, ChevronDown, ChevronRight, PackageOpen, User, Clock, Banknote, FileText, Tag, AlertCircle, ExternalLink, Percent, ChevronLeft, Calendar } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 
@@ -92,15 +92,50 @@ export default function Orders() {
   const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
   const [orderItems, setOrderItems] = useState<Record<number, OrderItem[]>>({});
   const [loadingItems, setLoadingItems] = useState<Record<number, boolean>>({});
+  const currentDate = new Date();
+  const [selectedMonth, setSelectedMonth] = useState(currentDate.getMonth());
+  const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear());
+
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+  const goToPrevMonth = () => {
+    if (selectedMonth === 0) {
+      setSelectedMonth(11);
+      setSelectedYear(selectedYear - 1);
+    } else {
+      setSelectedMonth(selectedMonth - 1);
+    }
+  };
+
+  const goToNextMonth = () => {
+    if (selectedMonth === 11) {
+      setSelectedMonth(0);
+      setSelectedYear(selectedYear + 1);
+    } else {
+      setSelectedMonth(selectedMonth + 1);
+    }
+  };
 
   const handleDiscountUpdated = (orderId: number, discountAmt: number) => {
     setAllOrders(prev => prev.map(o => o.id === orderId ? { ...o, discount_amount: discountAmt } : o));
   };
 
   // Filter orders based on the current page
-  const orders = allOrders.filter(order =>
-    isHistoryPage ? order.status === 'Closed' : order.status === 'Open'
-  );
+  const orders = allOrders.filter(order => {
+    const statusMatch = isHistoryPage ? order.status === 'Closed' : order.status === 'Open';
+    if (!statusMatch) return false;
+
+    if (isHistoryPage) {
+      const dateStr = order.closed_at || order.created_at;
+      if (!dateStr) return false;
+      const orderDate = new Date(dateStr);
+      if (orderDate.getMonth() !== selectedMonth || orderDate.getFullYear() !== selectedYear) {
+        return false;
+      }
+    }
+    
+    return true;
+  });
 
   const toggleRow = async (orderId: number) => {
     if (expandedOrderId === orderId) {
@@ -173,15 +208,39 @@ export default function Orders() {
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
             <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-900/50">
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">{isHistoryPage ? 'Completed Transactions' : 'Active Orders'}</h2>
-              <div className="relative">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
-                <input 
-                  type="text" 
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  placeholder="Search Order ID..." 
-                  className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-sm rounded-lg pl-9 pr-4 py-2 w-64 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600"
-                />
+              <div className="flex items-center space-x-4">
+                {isHistoryPage && (
+                  <div className="flex items-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden h-10">
+                    <button
+                      onClick={goToPrevMonth}
+                      className="px-3 h-full text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-r border-slate-200 dark:border-slate-800 flex items-center justify-center"
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <div className="px-5 h-full flex items-center space-x-2.5 min-w-[160px] justify-center">
+                      <Calendar size={15} className="text-blue-500 shrink-0" />
+                      <span className="text-sm font-bold text-slate-900 dark:text-white">
+                        {monthNames[selectedMonth]} {selectedYear}
+                      </span>
+                    </div>
+                    <button
+                      onClick={goToNextMonth}
+                      className="px-3 h-full text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-l border-slate-200 dark:border-slate-800 flex items-center justify-center"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                )}
+                <div className="relative">
+                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+                  <input 
+                    type="text" 
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder="Search Order ID..." 
+                    className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-sm rounded-lg pl-9 pr-4 py-2 w-64 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600"
+                  />
+                </div>
               </div>
             </div>
             

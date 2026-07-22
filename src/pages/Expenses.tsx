@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Plus, Trash2, Landmark, Wallet, X } from "lucide-react";
+import { Plus, Trash2, Landmark, X, ChevronLeft, ChevronRight, Calendar } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
+import { ConfirmModal } from "../components/ConfirmModal";
 
 interface Expense {
   id: number;
@@ -12,28 +13,41 @@ interface Expense {
   note?: string;
 }
 
-interface StaffMember {
-  id: number;
-  name: string;
-  role: string;
-  phone: string;
-  salary: number;
-}
-
 export default function Expenses() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [staff, setStaff] = useState<StaffMember[]>([]);
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
-  const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [expenseToDelete, setExpenseToDelete] = useState<number | null>(null);
 
   // Expense Form State
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("Groceries");
   const [note, setNote] = useState("");
 
-  // Payroll Form State
-  const [selectedStaffId, setSelectedStaffId] = useState("");
-  const [payrollAmount, setPayrollAmount] = useState("");
+  // Month Navigation State
+  const currentDate = new Date();
+  const [selectedMonth, setSelectedMonth] = useState(currentDate.getMonth());
+  const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear());
+
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+  const goToPrevMonth = () => {
+    if (selectedMonth === 0) {
+      setSelectedMonth(11);
+      setSelectedYear(selectedYear - 1);
+    } else {
+      setSelectedMonth(selectedMonth - 1);
+    }
+  };
+
+  const goToNextMonth = () => {
+    if (selectedMonth === 11) {
+      setSelectedMonth(0);
+      setSelectedYear(selectedYear + 1);
+    } else {
+      setSelectedMonth(selectedMonth + 1);
+    }
+  };
 
   const loadExpenses = async () => {
     try {
@@ -44,22 +58,8 @@ export default function Expenses() {
     }
   };
 
-  const loadStaff = async () => {
-    try {
-      const data: any = await invoke("get_staff");
-      setStaff(data);
-      if (data.length > 0) {
-        setSelectedStaffId(data[0].id.toString());
-        setPayrollAmount(data[0].salary.toString());
-      }
-    } catch (err) {
-      console.error("Failed to load staff", err);
-    }
-  };
-
   useEffect(() => {
     loadExpenses();
-    loadStaff();
   }, []);
 
   const handleSaveExpense = async (e: React.FormEvent) => {
@@ -82,39 +82,32 @@ export default function Expenses() {
     }
   };
 
-  const handleProcessPayroll = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedStaffId || !payrollAmount) return;
-    
-    const staffMember = staff.find(s => s.id.toString() === selectedStaffId);
-    if (!staffMember) return;
 
+
+  const handleDeleteExpense = (id: number) => {
+    setExpenseToDelete(id);
+    setDeleteModalOpen(true);
+  };
+
+  const confirmDeleteExpense = async () => {
+    if (expenseToDelete === null) return;
+    setDeleteModalOpen(false);
     try {
-      await invoke("process_payroll", { 
-        staffId: parseInt(selectedStaffId), 
-        amount: parseFloat(payrollAmount), 
-        date: new Date().toISOString().split('T')[0], 
-        note: `Payroll for ${staffMember.name}`
-      });
-      setIsPayrollModalOpen(false);
-      setPayrollAmount("");
+      await invoke("delete_expense", { id: expenseToDelete });
       loadExpenses();
     } catch (err) {
       console.error(err);
+    } finally {
+      setExpenseToDelete(null);
     }
   };
 
-  const handleDeleteExpense = async (id: number) => {
-    if (!window.confirm("Delete this expense record?")) return;
-    try {
-      await invoke("delete_expense", { id });
-      loadExpenses();
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  const filteredExpenses = expenses.filter(e => {
+    const expenseDate = new Date(e.date);
+    return expenseDate.getMonth() === selectedMonth && expenseDate.getFullYear() === selectedYear;
+  });
 
-  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const totalExpenses = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
 
   return (
     <div className="flex h-screen w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden relative transition-colors">
@@ -163,86 +156,68 @@ export default function Expenses() {
         </div>
       )}
 
-      {/* Process Payroll Modal */}
-      {isPayrollModalOpen && (
-        <div className="absolute inset-0 bg-black/60 z-50 flex items-center justify-center backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-96 shadow-2xl">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Process Payroll</h3>
-              <button onClick={() => setIsPayrollModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-white"><X size={20}/></button>
-            </div>
-            
-            <form onSubmit={handleProcessPayroll} className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Staff Member</label>
-                <select 
-                  value={selectedStaffId} 
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    setSelectedStaffId(id);
-                    const selectedStaff = staff.find(s => s.id.toString() === id);
-                    if (selectedStaff) {
-                      setPayrollAmount(selectedStaff.salary.toString());
-                    }
-                  }}
-                  className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500" required
-                >
-                  {staff.length === 0 ? (
-                    <option value="" disabled>No staff available</option>
-                  ) : (
-                    staff.map(s => (
-                      <option key={s.id} value={s.id}>{s.name} ({s.role})</option>
-                    ))
-                  )}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Payment Amount (Rs.)</label>
-                <input 
-                  type="number" step="0.01" value={payrollAmount} onChange={(e) => setPayrollAmount(e.target.value)}
-                  className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500" required
-                />
-              </div>
-              <button type="submit" className="w-full h-11 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-colors mt-4 shadow-lg shadow-emerald-600/20">
-                Pay Staff
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
+      <ConfirmModal
+        isOpen={deleteModalOpen}
+        title="Delete Expense"
+        message="Are you sure you want to delete this expense record? This action cannot be undone."
+        type="danger"
+        onConfirm={confirmDeleteExpense}
+        onCancel={() => {
+          setDeleteModalOpen(false);
+          setExpenseToDelete(null);
+        }}
+        confirmText="Delete"
+      />
 
       <Sidebar activePage="expenses" />
 
       <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors">
-        <Header title="Payroll & Expenses" subtitle="Track money leaving the restaurant.">
-          <div className="flex items-center space-x-3 mr-4">
-            <button 
-              onClick={() => setIsPayrollModalOpen(true)}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center space-x-2 transition-colors shadow-lg shadow-emerald-600/20"
-            >
-              <Wallet size={16} />
-              <span>Process Payroll</span>
-            </button>
-            <button 
-              onClick={() => setIsExpenseModalOpen(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center space-x-2 transition-colors shadow-lg shadow-blue-600/20"
-            >
-              <Plus size={16} />
-              <span>Add Expense</span>
-            </button>
-          </div>
-        </Header>
+        <Header title="Expenses" subtitle="Track money leaving the restaurant." />
 
         <div className="flex-1 p-8 overflow-y-auto">
-          {/* Summary Card */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 flex items-center space-x-6 mb-8 w-fit min-w-[300px] shadow-sm">
-             <div className="p-4 rounded-xl bg-orange-100 dark:bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-200 dark:border-orange-500/20">
-               <Landmark size={32} />
-             </div>
-             <div>
-               <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Total Outflow</p>
-               <h2 className="text-3xl font-bold text-slate-900 dark:text-white mt-1">Rs. {totalExpenses.toFixed(2)}</h2>
-             </div>
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-6 mb-8">
+            {/* Summary Card */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 flex items-center space-x-6 w-fit min-w-[300px] shadow-sm shrink-0">
+               <div className="p-4 rounded-xl bg-orange-100 dark:bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-200 dark:border-orange-500/20">
+                 <Landmark size={32} />
+               </div>
+               <div>
+                 <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Total Outflow</p>
+                 <h2 className="text-3xl font-bold text-slate-900 dark:text-white mt-1">Rs. {totalExpenses.toFixed(2)}</h2>
+               </div>
+            </div>
+
+            <div className="flex items-center space-x-4 shrink-0">
+              {/* Month Navigator */}
+              <div className="flex items-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden h-10">
+                <button
+                  onClick={goToPrevMonth}
+                  className="px-3 h-full text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-r border-slate-200 dark:border-slate-800 flex items-center justify-center"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <div className="px-5 h-full flex items-center space-x-2.5 min-w-[160px] justify-center">
+                  <Calendar size={15} className="text-blue-500 shrink-0" />
+                  <span className="text-sm font-bold text-slate-900 dark:text-white">
+                    {monthNames[selectedMonth]} {selectedYear}
+                  </span>
+                </div>
+                <button
+                  onClick={goToNextMonth}
+                  className="px-3 h-full text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-l border-slate-200 dark:border-slate-800 flex items-center justify-center"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+
+              <button 
+                onClick={() => setIsExpenseModalOpen(true)}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 h-10 rounded-lg text-sm font-semibold flex items-center space-x-2 transition-colors shadow-lg shadow-blue-600/20"
+              >
+                <Plus size={16} />
+                <span>Add Expense</span>
+              </button>
+            </div>
           </div>
 
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
@@ -257,14 +232,14 @@ export default function Expenses() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
-                {expenses.length === 0 ? (
+                {filteredExpenses.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="py-12 text-center text-slate-500">
-                      No expenses logged yet.
+                      No expenses logged for this month.
                     </td>
                   </tr>
                 ) : (
-                  expenses.map((expense) => (
+                  filteredExpenses.map((expense) => (
                     <tr key={expense.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
                       <td className="py-4 px-6 text-sm text-slate-700 dark:text-slate-300 font-medium">{expense.date}</td>
                       <td className="py-4 px-6">

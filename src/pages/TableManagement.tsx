@@ -169,18 +169,20 @@ export default function TableManagement() {
 
       {/* MAIN CONTENT */}
       <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors">
-        <Header title="Table Management" subtitle="Override physical floor status. Occupied tables are locked by active orders.">
-          <button 
-            onClick={() => setIsAddModalOpen(true)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center space-x-2 transition-colors shadow-lg shadow-blue-600/20"
-          >
-            <span>Add Table</span>
-          </button>
-        </Header>
+        <Header title="Table Management" subtitle="Override physical floor status. Occupied tables are locked by active orders." />
 
-        <div className="flex-1 p-8 overflow-y-auto">
+        <div className="flex-1 p-8 overflow-y-auto flex flex-col">
+          <div className="mb-6 flex justify-end shrink-0">
+            <button 
+              onClick={() => setIsAddModalOpen(true)}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center space-x-2 transition-colors shadow-lg shadow-blue-600/20"
+            >
+              <span>Add Table</span>
+            </button>
+          </div>
+          
           {loading ? (
-            <div className="flex items-center justify-center h-full text-slate-500">Loading floor plan...</div>
+            <div className="flex-1 flex items-center justify-center text-slate-500">Loading floor plan...</div>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
               {tables.map((table) => {

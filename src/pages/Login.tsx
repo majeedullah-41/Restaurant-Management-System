@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,22 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [restaurantName, setRestaurantName] = useState("Restaurant");
+  const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    async function fetchSettings() {
+      try {
+        const settings: any = await invoke("get_settings");
+        if (settings.restaurant_name) setRestaurantName(settings.restaurant_name);
+        if (settings.logo_path) setRestaurantLogo(settings.logo_path);
+      } catch (err) {
+        console.error("Failed to fetch settings", err);
+      }
+    }
+    fetchSettings();
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,24 +55,33 @@ export default function Login() {
       <div className="flex flex-col md:flex-row w-full h-full bg-white dark:bg-[#0B1120] rounded-3xl overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 transition-colors">
         
         {/* LEFT SIDE: The Restaurant Image Area */}
-        <div className="hidden md:flex flex-col w-1/2 bg-slate-900 relative">
-          <div className="absolute inset-0 bg-gradient-to-t from-[#0B1120] via-[#0B1120]/60 to-transparent z-10"></div>
+        <div className="hidden md:flex flex-col w-1/2 bg-black relative">
+          <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-black/20 z-10"></div>
           
           <img 
-            src="https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?q=80&w=2070&auto=format&fit=crop" 
+            src="https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?q=80&w=2070&auto=format&fit=crop" 
             alt="Restaurant Interior"
-            className="absolute inset-0 w-full h-full object-cover opacity-60 mix-blend-overlay"
+            className="absolute inset-0 w-full h-full object-cover opacity-80"
           />
           
           <div className="relative z-20 flex flex-col items-center justify-center h-full p-12 text-center">
-            <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-blue-600/30">
-              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
-                <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"></path>
-                <path d="M7 2v20"></path>
-                <path d="M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"></path>
-              </svg>
-            </div>
-            <h1 className="text-4xl lg:text-5xl font-bold text-white tracking-tight mb-4">RESTAURANT<br/><span className="text-blue-500">MANAGEMENT SYSTEM</span></h1>
+            {restaurantLogo ? (
+              <div className="w-24 h-24 bg-white/10 backdrop-blur-md rounded-3xl p-3 mb-8 shadow-2xl shadow-black/50 border border-white/20 flex items-center justify-center">
+                <img src={restaurantLogo} alt="Restaurant Logo" className="w-full h-full object-contain rounded-xl" />
+              </div>
+            ) : (
+              <div className="w-20 h-20 bg-blue-600 rounded-3xl flex items-center justify-center mb-8 shadow-lg shadow-blue-600/30 border border-blue-400/30">
+                <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
+                  <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"></path>
+                  <path d="M7 2v20"></path>
+                  <path d="M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"></path>
+                </svg>
+              </div>
+            )}
+            <h1 className="text-4xl lg:text-5xl font-extrabold text-white tracking-tight mb-2 drop-shadow-lg leading-tight uppercase">
+              {restaurantName}
+            </h1>
+            <p className="text-blue-400 font-bold tracking-[0.2em] uppercase text-sm mb-8 drop-shadow-md">Management System</p>
             <div className="flex items-center space-x-3 text-slate-300 font-medium">
               <span>Simple</span>
               <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
@@ -135,7 +159,7 @@ export default function Login() {
                <ShieldCheck size={14} className="text-blue-500" />
                <span>Your data is safe and secure</span>
             </div>
-            <span>© 2026 Restaurant Management System</span>
+            <span>© {new Date().getFullYear()} {restaurantName}</span>
           </div>
         </div>
       </div>

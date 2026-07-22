@@ -43,6 +43,70 @@ pub fn init_db() -> Result<()> {
     conn.execute("INSERT OR IGNORE INTO users (username, password_hash, role_id) VALUES ('cashier@restaurant.com', 'password', 2)", [])?;
 
     println!("Database created and seeded successfully!");
+    run_migrations(&conn).map_err(|e| rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e)))?;
+    Ok(())
+}
+
+pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
+    // 1. restaurant_settings columns
+    let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN last_backup_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN backup_frequency TEXT DEFAULT 'Off'", []);
+    let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN backup_path TEXT", []);
+
+    // 2. table_status & shifts tables
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS table_status (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            table_number INTEGER UNIQUE, 
+            status TEXT NOT NULL DEFAULT 'Available'
+        )",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS shifts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            start_time TEXT DEFAULT (datetime('now', 'localtime')),
+            end_time TEXT,
+            opening_cash REAL NOT NULL,
+            closing_cash REAL,
+            status TEXT DEFAULT 'Open'
+        )", []
+    );
+
+    // 3. orders table columns
+    let _ = conn.execute("ALTER TABLE orders ADD COLUMN created_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE orders ADD COLUMN closed_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE orders ADD COLUMN order_type TEXT DEFAULT 'Dine-in'", []);
+    let _ = conn.execute("ALTER TABLE orders ADD COLUMN subtotal REAL DEFAULT 0.0", []);
+    let _ = conn.execute("ALTER TABLE orders ADD COLUMN tax_amount REAL DEFAULT 0.0", []);
+    let _ = conn.execute("ALTER TABLE orders ADD COLUMN discount_amount REAL DEFAULT 0.0", []);
+    let _ = conn.execute("ALTER TABLE orders ADD COLUMN amount_received REAL DEFAULT 0.0", []);
+    let _ = conn.execute("ALTER TABLE orders ADD COLUMN change_due REAL DEFAULT 0.0", []);
+    let _ = conn.execute("ALTER TABLE orders ADD COLUMN customer_id INTEGER", []);
+    let _ = conn.execute("ALTER TABLE orders ADD COLUMN cashier_name TEXT", []);
+    let _ = conn.execute("ALTER TABLE orders ADD COLUMN order_note TEXT", []);
+
+    // 4. staff, customers, attendance, payouts columns/tables if any
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS staff (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            role TEXT NOT NULL,
+            phone TEXT,
+            salary REAL NOT NULL DEFAULT 0.0,
+            status TEXT DEFAULT 'Active'
+        )", []
+    );
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS customers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            phone TEXT UNIQUE NOT NULL,
+            visits INTEGER DEFAULT 0,
+            total_spent REAL DEFAULT 0.0
+        )", []
+    );
+
     Ok(())
 }
 
@@ -52,6 +116,7 @@ pub fn update_user_profile(
     new_username: String,
     current_password: Option<String>,
     new_password: Option<String>,
+    admin_override: Option<bool>,
 ) -> Result<(), String> {
     let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
 
@@ -63,9 +128,11 @@ pub fn update_user_profile(
 
     // If they want to change password, they must provide the correct current password
     if let Some(new_pw) = new_password {
-        let curr_pw = current_password.ok_or_else(|| "Current password is required to set a new password".to_string())?;
-        if db_password != curr_pw {
-            return Err("Incorrect current password".to_string());
+        if !admin_override.unwrap_or(false) {
+            let curr_pw = current_password.ok_or_else(|| "Current password is required to set a new password".to_string())?;
+            if db_password != curr_pw {
+                return Err("Incorrect current password".to_string());
+            }
         }
         
         // Update both username and password
@@ -97,6 +164,22 @@ pub fn get_restaurant_name() -> Result<String, String> {
     
     // Send the name back to React
     Ok(name)
+}
+
+#[tauri::command]
+pub fn get_user_role_by_username(username: String) -> Result<String, String> {
+    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    
+    let mut stmt = conn.prepare("
+        SELECT r.name FROM users u
+        JOIN roles r ON u.role_id = r.id
+        WHERE u.username = ?1
+    ").map_err(|e| e.to_string())?;
+    
+    let role: String = stmt.query_row([&username], |row| row.get(0))
+        .map_err(|_| "User not found".to_string())?;
+        
+    Ok(role)
 }
 
 // NEW: The authentication command
@@ -158,12 +241,13 @@ pub struct MenuItem {
     pub name: String,
     pub category_id: i32,
     pub price: f64,
+    pub is_active: bool,
 }
 
 #[tauri::command]
 pub fn get_menu_items() -> Result<Vec<MenuItem>, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare("SELECT id, name, category_id, price FROM menu_items").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT id, name, category_id, price, is_active FROM menu_items").map_err(|e| e.to_string())?;
     
     let items = stmt.query_map([], |row| {
         Ok(MenuItem {
@@ -171,6 +255,7 @@ pub fn get_menu_items() -> Result<Vec<MenuItem>, String> {
             name: row.get(1)?,
             category_id: row.get(2)?,
             price: row.get(3)?,
+            is_active: row.get::<_, i32>(4)? == 1,
         })
     }).map_err(|e| e.to_string())?
     .filter_map(Result::ok)
@@ -221,17 +306,29 @@ pub fn delete_menu_item(id: i32) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn update_menu_item(id: i32, name: String, category_id: i32, price: f64) -> Result<String, String> {
+pub fn update_menu_item(id: i32, name: String, categoryId: i32, price: f64) -> Result<String, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
     conn.execute(
         "UPDATE menu_items SET name = ?1, category_id = ?2, price = ?3 WHERE id = ?4",
-        rusqlite::params![name, category_id, price, id],
+        rusqlite::params![name, categoryId, price, id],
     ).map_err(|e| e.to_string())?;
-    Ok("Menu item updated".into())
+    Ok("Item updated successfully".to_string())
 }
+
+#[tauri::command]
+pub fn toggle_menu_item_status(id: i32, is_active: bool) -> Result<String, String> {
+    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE menu_items SET is_active = ?1 WHERE id = ?2",
+        rusqlite::params![if is_active { 1 } else { 0 }, id],
+    ).map_err(|e| e.to_string())?;
+    Ok("Item status updated successfully".to_string())
+}
+
 #[derive(serde::Serialize)]
 pub struct RestaurantSettings {
     pub restaurant_name: String,
+    pub logo_path: Option<String>,
     pub tax_rate: f64,
     pub total_tables: i32,
 }
@@ -239,13 +336,14 @@ pub struct RestaurantSettings {
 #[tauri::command]
 pub fn get_settings() -> Result<RestaurantSettings, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare("SELECT restaurant_name, tax_rate, total_tables FROM restaurant_settings WHERE id = 1").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT restaurant_name, logo_path, tax_rate, total_tables FROM restaurant_settings WHERE id = 1").map_err(|e| e.to_string())?;
     
     let settings = stmt.query_row([], |row| {
         Ok(RestaurantSettings {
             restaurant_name: row.get(0)?,
-            tax_rate: row.get(1)?,
-            total_tables: row.get(2)?,
+            logo_path: row.get(1)?,
+            tax_rate: row.get(2)?,
+            total_tables: row.get(3)?,
         })
     }).map_err(|e| e.to_string())?;
 
@@ -253,11 +351,27 @@ pub fn get_settings() -> Result<RestaurantSettings, String> {
 }
 
 #[tauri::command]
-pub fn update_settings(name: String, tax_rate: f64, total_tables: i32) -> Result<String, String> {
+pub fn update_settings(name: String, logo_path: Option<String>, tax_rate: f64, total_tables: i32) -> Result<String, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    
+    // Check if we are reducing tables and if any of the tables to be removed are occupied
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM table_status WHERE table_number > ?1 AND status != 'Available'").unwrap();
+    let occupied_count: i32 = stmt.query_row([&total_tables], |row| row.get(0)).unwrap_or(0);
+    if occupied_count > 0 {
+        return Err("Cannot reduce total tables. Some tables to be removed are currently occupied or reserved.".to_string());
+    }
+    
+    // Remove tables beyond the new total
+    conn.execute("DELETE FROM table_status WHERE table_number > ?1", [&total_tables]).map_err(|e| e.to_string())?;
+
+    // Ensure all tables from 1 to total_tables exist
+    for i in 1..=total_tables {
+        conn.execute("INSERT OR IGNORE INTO table_status (table_number, status) VALUES (?1, 'Available')", [&i]).ok();
+    }
+
     conn.execute(
-        "UPDATE restaurant_settings SET restaurant_name = ?1, tax_rate = ?2, total_tables = ?3 WHERE id = 1",
-        rusqlite::params![name, tax_rate, total_tables],
+        "UPDATE restaurant_settings SET restaurant_name = ?1, logo_path = ?2, tax_rate = ?3, total_tables = ?4 WHERE id = 1",
+        rusqlite::params![name, logo_path, tax_rate, total_tables],
     ).map_err(|e| e.to_string())?;
     
     Ok("Settings updated successfully".into())
@@ -1138,7 +1252,29 @@ pub fn add_expense(amount: f64, date: String, category: String, note: Option<Str
 #[tauri::command]
 pub fn delete_expense(id: i32) -> Result<String, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    
+    // Fetch the expense details before deleting it
+    let mut stmt = conn.prepare("SELECT amount, date, note FROM expenses WHERE id = ?1").unwrap();
+    let expense_data = stmt.query_row([&id], |row| {
+        Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?))
+    });
+
     conn.execute("DELETE FROM expenses WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
+    
+    // If it was a payroll expense, delete the corresponding salary payout
+    if let Ok((_amount, date, Some(note))) = expense_data {
+        if note.starts_with("Payroll: ") {
+            let staff_name = note.trim_start_matches("Payroll: ");
+            let mut stmt = conn.prepare("SELECT id FROM staff WHERE name = ?1").unwrap();
+            if let Ok(staff_id) = stmt.query_row([&staff_name], |row| row.get::<_, i32>(0)) {
+                conn.execute(
+                    "DELETE FROM salary_payouts WHERE staff_id = ?1 AND date = ?2",
+                    rusqlite::params![staff_id, date]
+                ).ok();
+            }
+        }
+    }
+    
     Ok("Expense deleted".into())
 }
 
@@ -1687,6 +1823,75 @@ pub fn get_payout_history() -> Result<Vec<SalaryPayout>, String> {
     Ok(history)
 }
 
+#[tauri::command]
+pub fn get_paid_staff_ids(start_date: String, end_date: String) -> Result<Vec<i32>, String> {
+    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    
+    conn.execute("CREATE TABLE IF NOT EXISTS salary_payouts (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, amount REAL NOT NULL, date TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
+    
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT staff_id FROM salary_payouts WHERE date >= ?1 AND date <= ?2"
+    ).map_err(|e| e.to_string())?;
+    
+    let iter = stmt.query_map([&start_date, &end_date], |row| {
+        row.get::<_, i32>(0)
+    }).map_err(|e| e.to_string())?;
+    
+    let mut ids = Vec::new();
+    for id in iter {
+        match id {
+            Ok(i) => ids.push(i),
+            Err(e) => return Err(format!("Error: {}", e)),
+        }
+    }
+    Ok(ids)
+}
+
+#[derive(serde::Deserialize, Debug)]
+pub struct BatchPayoutEntry {
+    pub staff_id: i32,
+    pub base_salary: f64,
+    pub bonus: f64,
+    pub deduction: f64,
+    pub staff_name: String,
+}
+
+#[tauri::command]
+pub fn process_batch_payout(payouts: Vec<BatchPayoutEntry>, payout_date: String) -> Result<String, String> {
+    let mut conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    
+    conn.execute("CREATE TABLE IF NOT EXISTS salary_payouts (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, amount REAL NOT NULL, date TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
+    conn.execute("ALTER TABLE salary_payouts ADD COLUMN bonus REAL", []).ok();
+    conn.execute("ALTER TABLE salary_payouts ADD COLUMN deduction REAL", []).ok();
+    conn.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, amount REAL NOT NULL, date TEXT NOT NULL, category TEXT NOT NULL, note TEXT)", []).map_err(|e| e.to_string())?;
+    
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    
+    let mut total_paid = 0.0;
+    let mut count = 0;
+    
+    for entry in &payouts {
+        let net_amount = entry.base_salary + entry.bonus - entry.deduction;
+        
+        tx.execute(
+            "INSERT INTO salary_payouts (staff_id, amount, bonus, deduction, date) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![entry.staff_id, net_amount, entry.bonus, entry.deduction, payout_date]
+        ).map_err(|e| e.to_string())?;
+        
+        tx.execute(
+            "INSERT INTO expenses (amount, date, category, note) VALUES (?1, ?2, 'Salaries', ?3)",
+            rusqlite::params![net_amount, payout_date, format!("Payroll: {}", entry.staff_name)]
+        ).map_err(|e| e.to_string())?;
+        
+        total_paid += net_amount;
+        count += 1;
+    }
+    
+    tx.commit().map_err(|e| e.to_string())?;
+    
+    Ok(format!("Processed {} payouts totalling {:.2}", count, total_paid))
+}
+
 #[derive(serde::Serialize, Debug)]
 pub struct DailyTrend {
     pub date: String,
@@ -1845,3 +2050,229 @@ pub fn save_text_report(filename: String, content: String) -> Result<String, Str
     
     Ok(format!("Report saved and opened successfully."))
 }
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct BackupSettings {
+    pub last_backup_at: Option<String>,
+    pub backup_frequency: String,
+    pub backup_path: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_backup_settings() -> Result<BackupSettings, String> {
+    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    run_migrations(&conn)?;
+
+    let mut stmt = conn.prepare(
+        "SELECT last_backup_at, COALESCE(backup_frequency, 'Off'), backup_path FROM restaurant_settings WHERE id = 1"
+    ).map_err(|e| e.to_string())?;
+
+    let settings = stmt.query_row([], |row| {
+        Ok(BackupSettings {
+            last_backup_at: row.get(0)?,
+            backup_frequency: row.get(1)?,
+            backup_path: row.get(2)?,
+        })
+    }).map_err(|e| e.to_string())?;
+
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn update_backup_settings(frequency: String, path: Option<String>) -> Result<(), String> {
+    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    run_migrations(&conn)?;
+
+    conn.execute(
+        "UPDATE restaurant_settings SET backup_frequency = ?1, backup_path = ?2 WHERE id = 1",
+        rusqlite::params![frequency, path],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn perform_backup(destination: Option<String>) -> Result<String, String> {
+    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    run_migrations(&conn)?;
+
+    let target_path_str = match destination {
+        Some(d) if !d.trim().is_empty() => d,
+        _ => {
+            let stored_path: Option<String> = conn
+                .query_row("SELECT backup_path FROM restaurant_settings WHERE id = 1", [], |r| r.get(0))
+                .unwrap_or(None);
+            
+            match stored_path {
+                Some(p) if !p.trim().is_empty() => p,
+                _ => return Err("No backup destination path selected.".into()),
+            }
+        }
+    };
+
+    let target_path = std::path::Path::new(&target_path_str);
+    
+    let final_dest = if target_path.is_dir() || target_path_str.ends_with('/') || target_path_str.ends_with('\\') {
+        let now_str = conn.query_row("SELECT strftime('%Y-%m-%d_%H%M%S', 'now', 'localtime')", [], |r| r.get::<_, String>(0))
+            .unwrap_or_else(|_| "backup".to_string());
+        target_path.join(format!("rms_backup_{}.db", now_str))
+    } else {
+        target_path.to_path_buf()
+    };
+
+    if let Some(parent) = final_dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create folder: {}", e))?;
+    }
+
+    std::fs::copy("../local.db", &final_dest)
+        .map_err(|e| format!("Failed to copy database file: {}", e))?;
+
+    let dest_str = final_dest.to_string_lossy().to_string();
+
+    conn.execute(
+        "UPDATE restaurant_settings SET last_backup_at = datetime('now', 'localtime'), backup_path = ?1 WHERE id = 1",
+        rusqlite::params![dest_str],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(dest_str)
+}
+
+#[tauri::command]
+pub fn check_and_run_auto_backup() -> Result<Option<String>, String> {
+    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    run_migrations(&conn)?;
+
+    let row: Result<(Option<String>, String, Option<String>), _> = conn.query_row(
+        "SELECT last_backup_at, COALESCE(backup_frequency, 'Off'), backup_path FROM restaurant_settings WHERE id = 1",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    );
+
+    let (last_backup_at, frequency, backup_path) = match row {
+        Ok(vals) => vals,
+        Err(_) => return Ok(None),
+    };
+
+    if frequency == "Off" {
+        return Ok(None);
+    }
+
+    let path_str = match backup_path {
+        Some(p) if !p.trim().is_empty() => p,
+        _ => return Ok(None),
+    };
+
+    let should_backup = match last_backup_at {
+        None => true,
+        Some(last_str) => {
+            let days_elapsed: Option<f64> = conn.query_row(
+                "SELECT julianday('now', 'localtime') - julianday(?1)",
+                [&last_str],
+                |r| r.get(0)
+            ).unwrap_or(None);
+
+            match days_elapsed {
+                Some(days) => {
+                    if frequency == "Daily" && days >= 1.0 {
+                        true
+                    } else if frequency == "Weekly" && days >= 7.0 {
+                        true
+                    } else {
+                        false
+                    }
+                },
+                None => true,
+            }
+        }
+    };
+
+    if should_backup {
+        match perform_backup(Some(path_str)) {
+            Ok(backed_path) => Ok(Some(backed_path)),
+            Err(e) => Err(e),
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+pub fn validate_backup_file(file_path: String) -> Result<String, String> {
+    let p = std::path::Path::new(&file_path);
+    if !p.exists() || !p.is_file() {
+        return Err("Selected file does not exist or is invalid.".to_string());
+    }
+
+    let conn = Connection::open(&file_path)
+        .map_err(|_| "Failed to open file as a valid SQLite database.".to_string())?;
+
+    let table_exists: i32 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='restaurant_settings'",
+        [],
+        |r| r.get(0)
+    ).unwrap_or(0);
+
+    if table_exists == 0 {
+        return Err("Invalid RMS database: Missing 'restaurant_settings' table.".to_string());
+    }
+
+    let restaurant_name: String = conn.query_row(
+        "SELECT restaurant_name FROM restaurant_settings WHERE id = 1",
+        [],
+        |r| r.get(0)
+    ).map_err(|_| "Database is missing restaurant settings configuration record.".to_string())?;
+
+    Ok(restaurant_name)
+}
+
+#[tauri::command]
+pub fn import_backup_file(file_path: String) -> Result<String, String> {
+    validate_backup_file(file_path.clone())?;
+
+    let db_path = std::path::Path::new("../local.db");
+    
+    let backups_dir = std::path::Path::new("../backups");
+    if let Err(e) = std::fs::create_dir_all(backups_dir) {
+        return Err(format!("Failed to create safety backups directory: {}", e));
+    }
+
+    let timestamp = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => d.as_secs().to_string(),
+        Err(_) => "backup".to_string(),
+    };
+    let safety_file = backups_dir.join(format!("pre-import-{}.db", timestamp));
+
+    if db_path.exists() {
+        std::fs::copy(db_path, &safety_file)
+            .map_err(|e| format!("Failed to create safety backup of current database: {}", e))?;
+    }
+
+    std::fs::copy(&file_path, db_path)
+        .map_err(|e| format!("Failed to import database file: {}", e))?;
+
+    let conn = Connection::open("../local.db")
+        .map_err(|e| format!("Database overwritten, but failed to reopen connection: {}", e))?;
+
+    run_migrations(&conn)?;
+
+    Ok(format!("Database imported. Safety copy created at: {}", safety_file.to_string_lossy()))
+}
+
+#[tauri::command]
+pub fn verify_admin_password(password: String) -> Result<bool, String> {
+    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    
+    let count: i32 = conn.query_row(
+        "SELECT COUNT(*) FROM users u JOIN roles r ON u.role_id = r.id WHERE r.name = 'Admin' AND u.password_hash = ?1",
+        [&password],
+        |r| r.get(0)
+    ).map_err(|e| e.to_string())?;
+
+    if count > 0 {
+        Ok(true)
+    } else {
+        Err("Incorrect Admin Password".to_string())
+    }
+}
+
+

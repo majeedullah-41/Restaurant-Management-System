@@ -15,11 +15,35 @@ export default function UserProfile() {
   const [message, setMessage] = useState({ text: "", type: "" });
   const [loading, setLoading] = useState(false);
 
+  const [targetRole, setTargetRole] = useState("");
+  const userRole = localStorage.getItem("userRole") || "Unknown";
+
   useEffect(() => {
     const user = localStorage.getItem("userName") || "";
     setCurrentUsername(user);
     setNewUsername(user);
+    setTargetRole(localStorage.getItem("userRole") || "Unknown");
   }, []);
+
+  useEffect(() => {
+    if (userRole === "Admin" && newUsername && newUsername !== currentUsername) {
+      const checkUser = async () => {
+        try {
+          const role = await invoke("get_user_role_by_username", { username: newUsername });
+          setTargetRole(role as string);
+        } catch (e) {
+          setTargetRole("");
+        }
+      };
+      
+      const timer = setTimeout(checkUser, 500);
+      return () => clearTimeout(timer);
+    } else if (newUsername === currentUsername) {
+      setTargetRole(userRole);
+    } else {
+      setTargetRole("");
+    }
+  }, [newUsername, currentUsername, userRole]);
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,7 +54,9 @@ export default function UserProfile() {
       return;
     }
     
-    if (newPassword && !currentPassword) {
+    const isTargetingOther = userRole === "Admin" && targetRole && newUsername !== currentUsername;
+
+    if (newPassword && !currentPassword && !isTargetingOther) {
       setMessage({ text: "Current password is required to set a new password.", type: "error" });
       return;
     }
@@ -38,16 +64,17 @@ export default function UserProfile() {
     try {
       setLoading(true);
       await invoke("update_user_profile", {
-        oldUsername: currentUsername,
+        oldUsername: isTargetingOther ? newUsername : currentUsername,
         newUsername: newUsername,
         currentPassword: currentPassword ? currentPassword : null,
         newPassword: newPassword ? newPassword : null,
+        adminOverride: isTargetingOther,
       });
       
       setMessage({ text: "Profile updated successfully!", type: "success" });
       
       // Update local storage and current state if username changed
-      if (newUsername !== currentUsername) {
+      if (!isTargetingOther && newUsername !== currentUsername) {
         localStorage.setItem("userName", newUsername);
         setCurrentUsername(newUsername);
       }
@@ -125,7 +152,7 @@ export default function UserProfile() {
                       </div>
                       <input 
                         type="text" 
-                        value={localStorage.getItem("userRole") || "Unknown"}
+                        value={targetRole || (newUsername === currentUsername ? userRole : "User not found")}
                         className="w-full h-11 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg pl-10 pr-4 text-slate-500 dark:text-slate-400 cursor-not-allowed"
                         disabled
                       />
@@ -156,8 +183,9 @@ export default function UserProfile() {
                       type="password" 
                       value={currentPassword}
                       onChange={(e) => setCurrentPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                      placeholder={userRole === "Admin" && targetRole && newUsername !== currentUsername ? "Not required for Admin override" : "••••••••"}
+                      disabled={userRole === "Admin" && targetRole && newUsername !== currentUsername ? true : false}
+                      className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors disabled:opacity-50"
                     />
                   </div>
                   

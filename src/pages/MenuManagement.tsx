@@ -20,20 +20,23 @@ const getCategoryIcon = (name: string) => {
 
 export default function MenuManagement() {
   const [categories, setCategories] = useState<{id: number, name: string}[]>([]);
-  const [menuItems, setMenuItems] = useState<{id: number, name: string, category_id: number, price: number}[]>([]);
+  const [menuItems, setMenuItems] = useState<{id: number, name: string, category_id: number, price: number, is_active: boolean}[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   
   // Modals & Forms
   const [isCatModalOpen, setIsCatModalOpen] = useState(false);
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
   const [editingCat, setEditingCat] = useState<{id: number, name: string} | null>(null);
-  const [editingItem, setEditingItem] = useState<{id: number, name: string, category_id: number, price: number} | null>(null);
+  const [editingItem, setEditingItem] = useState<{id: number, name: string, category_id: number, price: number, is_active: boolean} | null>(null);
   const [catName, setCatName] = useState("");
   const [itemName, setItemName] = useState("");
   const [itemPrice, setItemPrice] = useState("");
   const [itemCatId, setItemCatId] = useState("");
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [priceSort, setPriceSort] = useState<'none' | 'asc' | 'desc'>('none');
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
 
   async function loadData() {
     try {
@@ -89,11 +92,18 @@ export default function MenuManagement() {
     } catch (err) { console.error(err); }
   };
 
+  const handleToggleStatus = async (id: number, currentStatus: boolean) => {
+    try {
+      await invoke("toggle_menu_item_status", { id, isActive: !currentStatus });
+      loadData();
+    } catch (err) { console.error(err); }
+  };
+
   const openCatModal = (cat: {id: number, name: string} | null = null) => {
     setEditingCat(cat); setCatName(cat ? cat.name : ""); setIsCatModalOpen(true);
   };
 
-  const openItemModal = (item: {id: number, name: string, category_id: number, price: number} | null = null) => {
+  const openItemModal = (item: {id: number, name: string, category_id: number, price: number, is_active: boolean} | null = null) => {
     setEditingItem(item); setItemName(item ? item.name : ""); setItemPrice(item ? item.price.toString() : "");
     setItemCatId(item ? item.category_id.toString() : (selectedCategoryId ? selectedCategoryId.toString() : ""));
     setIsItemModalOpen(true);
@@ -102,7 +112,13 @@ export default function MenuManagement() {
   const displayedItems = menuItems.filter(item => {
     if (selectedCategoryId && item.category_id !== selectedCategoryId) return false;
     if (searchQuery && !item.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+    if (statusFilter === 'active' && !item.is_active) return false;
+    if (statusFilter === 'inactive' && item.is_active) return false;
     return true;
+  }).sort((a, b) => {
+    if (priceSort === 'asc') return a.price - b.price;
+    if (priceSort === 'desc') return b.price - a.price;
+    return 0;
   });
 
   return (
@@ -281,10 +297,63 @@ export default function MenuManagement() {
                   />
                 </div>
                 
-                <button className="flex items-center space-x-2 px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
-                  <Filter size={16} />
-                  <span>Filter</span>
-                </button>
+                <div className="relative">
+                  <button 
+                    onClick={() => setIsFilterOpen(!isFilterOpen)}
+                    className="flex items-center space-x-2 px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                  >
+                    <Filter size={16} />
+                    <span>Filter & Sort</span>
+                  </button>
+
+                  {isFilterOpen && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setIsFilterOpen(false)}></div>
+                      <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-20 py-2 overflow-hidden">
+                        <div className="px-4 py-1 text-xs font-bold text-slate-400 uppercase tracking-wider">Status</div>
+                        <button 
+                          onClick={() => { setStatusFilter('all'); setIsFilterOpen(false); }}
+                          className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${statusFilter === 'all' ? 'font-bold text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
+                        >
+                          All Statuses
+                        </button>
+                        <button 
+                          onClick={() => { setStatusFilter('active'); setIsFilterOpen(false); }}
+                          className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${statusFilter === 'active' ? 'font-bold text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
+                        >
+                          Active Only
+                        </button>
+                        <button 
+                          onClick={() => { setStatusFilter('inactive'); setIsFilterOpen(false); }}
+                          className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${statusFilter === 'inactive' ? 'font-bold text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
+                        >
+                          Out of Stock Only
+                        </button>
+                        
+                        <div className="border-t border-slate-100 dark:border-slate-700 my-1"></div>
+                        <div className="px-4 py-1 text-xs font-bold text-slate-400 uppercase tracking-wider">Price</div>
+                        <button 
+                          onClick={() => { setPriceSort('none'); setIsFilterOpen(false); }}
+                          className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${priceSort === 'none' ? 'font-bold text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
+                        >
+                          Default Sort
+                        </button>
+                        <button 
+                          onClick={() => { setPriceSort('desc'); setIsFilterOpen(false); }}
+                          className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${priceSort === 'desc' ? 'font-bold text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
+                        >
+                          Highest to Lowest
+                        </button>
+                        <button 
+                          onClick={() => { setPriceSort('asc'); setIsFilterOpen(false); }}
+                          className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${priceSort === 'asc' ? 'font-bold text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}
+                        >
+                          Lowest to Highest
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
 
                 <button onClick={() => openItemModal(null)} className="flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-colors shadow-lg shadow-blue-600/20">
                   <Plus size={16} />
@@ -335,9 +404,11 @@ export default function MenuManagement() {
                             <span className="font-bold text-slate-900 dark:text-white">Rs. {item.price.toFixed(2)}</span>
                           </td>
                           <td className="px-6 py-4 text-center">
-                            {/* Toggle Switch Mock */}
-                            <div className="inline-flex items-center justify-center w-10 h-5 bg-blue-600 rounded-full cursor-pointer relative">
-                              <span className="absolute right-1 w-3.5 h-3.5 bg-white rounded-full"></span>
+                            <div 
+                              onClick={() => handleToggleStatus(item.id, item.is_active)}
+                              className={`inline-flex items-center justify-center w-10 h-5 rounded-full cursor-pointer relative transition-colors ${item.is_active ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-700'}`}
+                            >
+                              <span className={`absolute w-3.5 h-3.5 bg-white rounded-full transition-all ${item.is_active ? 'right-1' : 'left-1'}`}></span>
                             </div>
                           </td>
                           <td className="px-6 py-4 text-right">
@@ -347,9 +418,6 @@ export default function MenuManagement() {
                               </button>
                               <button onClick={() => handleDeleteItem(item.id)} className="p-2 text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors">
                                 <Trash2 size={18} />
-                              </button>
-                              <button className="p-2 text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
-                                <MoreVertical size={18} />
                               </button>
                             </div>
                           </td>
