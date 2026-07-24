@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useNavigate } from 'react-router-dom';
 import { 
   TrendingUp, ShoppingBag, PieChart, 
-  Clock
+  Clock, Banknote, Plus, List, CalendarDays, Search
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
@@ -30,10 +30,9 @@ interface DetailedTableStatus {
   id: number;
   table_number: number;
   status: string;
-  order_id: number | null;
-  item_count: number;
-  order_total: number;
-  order_type: string | null;
+  active_order_id: number | null;
+  active_order_total: number | null;
+  elapsed_minutes: number | null;
 }
 
 interface StaffMember {
@@ -316,25 +315,29 @@ export default function CashierDashboard() {
                 {recentOrders.length === 0 ? (
                   <div className="text-center text-slate-500 text-xs mt-4">No orders today.</div>
                 ) : (
-                  recentOrders.map(order => (
-                    <div 
-                      key={order.id} 
-                      onClick={() => {
-                        if (order.status === 'Open') {
-                           navigate(`/cashier/pos/${order.table_number}/${order.id}?return=/cashier/dashboard`);
-                        }
-                      }}
-                      className={`flex items-center justify-between group p-1.5 -mx-1.5 rounded-lg transition-colors ${order.status === 'Open' ? 'cursor-pointer hover:bg-slate-800/50' : 'opacity-80'}`}
-                    >
-                      <div className="flex items-center space-x-2">
-                        <div className={`w-1.5 h-1.5 rounded-full ${order.status === 'Open' ? 'bg-orange-500' : 'bg-emerald-500'}`}></div>
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400 group-hover:text-slate-900 dark:text-white transition-colors">#ORD-{order.id}</span>
+                  recentOrders.map(order => {
+                    const parsedOrderId = parseInt(order.id.replace('#ORD-', '')) || 0;
+                    const parsedTableId = order.table === 'Walk-in' ? '0' : (order.table.replace('Table ', '').trim() || '0');
+                    return (
+                      <div 
+                        key={order.id} 
+                        onClick={() => {
+                          if (order.status === 'Open') {
+                             navigate(`/cashier/pos/${parsedTableId}/${parsedOrderId}?return=/cashier/dashboard`);
+                          }
+                        }}
+                        className={`flex items-center justify-between group p-1.5 -mx-1.5 rounded-lg transition-colors ${order.status === 'Open' ? 'cursor-pointer hover:bg-slate-800/50' : 'opacity-80'}`}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <div className={`w-1.5 h-1.5 rounded-full ${order.status === 'Open' ? 'bg-orange-500' : 'bg-emerald-500'}`}></div>
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400 group-hover:text-slate-900 dark:text-white transition-colors">{order.id}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400">{order.table}</div>
+                        <div className="text-[11px] text-slate-500">{formatTime(order.time)}</div>
+                        <div className="text-xs font-bold text-red-400 text-right w-16">Rs. {order.amount.toLocaleString()}</div>
                       </div>
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400">{order.table_number === 0 ? 'Walk-in' : `Table ${String(order.table_number).padStart(2, '0')}`}</div>
-                      <div className="text-[11px] text-slate-500">{formatTime(order.created_at || order.closed_at || '')}</div>
-                      <div className="text-xs font-bold text-red-400 text-right w-16">Rs. {order.total_price.toLocaleString()}</div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>

@@ -1,4 +1,7 @@
-mod db;
+#![allow(dead_code, unused_variables, non_snake_case)]
+
+pub mod db;
+pub mod license;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -78,7 +81,12 @@ pub fn run() {
     db::check_and_run_auto_backup,
     db::validate_backup_file,
     db::import_backup_file,
-    db::verify_admin_password
+    db::verify_admin_password,
+
+    license::get_machine_hwid,
+    license::check_license_status,
+    license::activate_license,
+    license::get_license_info
 ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

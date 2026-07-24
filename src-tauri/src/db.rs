@@ -109,6 +109,9 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
         )", []
     );
 
+    // 5. License table: activated_at column
+    let _ = conn.execute("ALTER TABLE license ADD COLUMN activated_at TEXT", []);
+
     Ok(())
 }
 
@@ -308,6 +311,7 @@ pub fn delete_menu_item(id: i32) -> Result<String, String> {
 }
 
 #[tauri::command]
+#[allow(non_snake_case)]
 pub fn update_menu_item(id: i32, name: String, categoryId: i32, price: f64) -> Result<String, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
     conn.execute(
@@ -1341,7 +1345,7 @@ pub fn get_dashboard_stats() -> Result<DashboardStats, String> {
         FROM expenses
         WHERE date(date) = date('now', 'localtime') OR date LIKE date('now', 'localtime') || '%'
     ";
-    let mut total_expenses: f64 = conn.query_row(expenses_query, [], |row| row.get(0)).unwrap_or(0.0);
+    let total_expenses: f64 = conn.query_row(expenses_query, [], |row| row.get(0)).unwrap_or(0.0);
 
     // If date format was different, we can fall back to all time or just let it be 0 for now
     // 3. Total Orders (Today)

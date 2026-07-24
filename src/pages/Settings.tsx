@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Save } from "lucide-react";
+import { Save, ShieldCheck, Copy, CheckCircle, CalendarClock, Clock, Cpu, RefreshCw, Key, XCircle, Loader2 } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import BackupSection from "../components/BackupSection";
@@ -12,6 +12,14 @@ export default function SettingsPage() {
   const [tables, setTables] = useState("");
   const [logo, setLogo] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+
+  // License info state
+  const [licenseInfo, setLicenseInfo] = useState<any>(null);
+  const [hwidCopied, setHwidCopied] = useState(false);
+  const [showRenewForm, setShowRenewForm] = useState(false);
+  const [renewKey, setRenewKey] = useState("");
+  const [renewLoading, setRenewLoading] = useState(false);
+  const [renewMessage, setRenewMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     async function fetchSettings() {
@@ -25,8 +33,33 @@ export default function SettingsPage() {
         console.error("Failed to load settings", err);
       }
     }
+    async function fetchLicenseInfo() {
+      try {
+        const info: any = await invoke("get_license_info");
+        setLicenseInfo(info);
+      } catch (err) {
+        console.error("Failed to load license info", err);
+      }
+    }
     fetchSettings();
+    fetchLicenseInfo();
   }, []);
+
+  const copyHwid = async () => {
+    if (!licenseInfo) return;
+    try {
+      await navigator.clipboard.writeText(licenseInfo.hwid);
+    } catch {
+      const el = document.createElement("textarea");
+      el.value = licenseInfo.hwid;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+    }
+    setHwidCopied(true);
+    setTimeout(() => setHwidCopied(false), 2000);
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,6 +124,173 @@ export default function SettingsPage() {
 
           <div className="max-w-3xl">
             <DataMigrationSection />
+          </div>
+
+          {/* License Information Section */}
+          <div className="max-w-3xl bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 shadow-sm">
+            <div className="flex items-center space-x-3 mb-6">
+              <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center border border-blue-100 dark:border-blue-800">
+                <ShieldCheck size={20} className="text-blue-600 dark:text-blue-500" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white">License Information</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Your software license details</p>
+              </div>
+            </div>
+
+            {licenseInfo ? (
+              <div className="space-y-5">
+                {/* Status Badge */}
+                <div className="flex items-center space-x-3">
+                  <span className="text-sm font-semibold text-slate-600 dark:text-slate-400 w-32">Status</span>
+                  <span className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold ${
+                    licenseInfo.status === "Active"
+                      ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20"
+                      : "bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-500/20"
+                  }`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${
+                      licenseInfo.status === "Active" ? "bg-emerald-500" : "bg-red-500"
+                    }`} />
+                    <span>{licenseInfo.status}</span>
+                  </span>
+                  {licenseInfo.days_remaining !== null && licenseInfo.days_remaining >= 0 && (
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      ({licenseInfo.days_remaining} day{licenseInfo.days_remaining !== 1 ? "s" : ""} remaining)
+                    </span>
+                  )}
+                </div>
+
+                {/* HWID */}
+                <div className="flex items-center space-x-3">
+                  <span className="text-sm font-semibold text-slate-600 dark:text-slate-400 w-32 flex items-center space-x-2">
+                    <Cpu size={14} />
+                    <span>Hardware ID</span>
+                  </span>
+                  <div className="flex items-center space-x-2">
+                    <code className="bg-slate-100 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm font-mono text-slate-700 dark:text-slate-300 tracking-wider">
+                      {licenseInfo.hwid}
+                    </code>
+                    <button
+                      onClick={copyHwid}
+                      className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                      title="Copy HWID"
+                    >
+                      {hwidCopied ? (
+                        <CheckCircle size={16} className="text-green-500" />
+                      ) : (
+                        <Copy size={16} className="text-slate-400" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Expiry Date */}
+                <div className="flex items-center space-x-3">
+                  <span className="text-sm font-semibold text-slate-600 dark:text-slate-400 w-32 flex items-center space-x-2">
+                    <CalendarClock size={14} />
+                    <span>Expires On</span>
+                  </span>
+                  <span className="text-sm text-slate-800 dark:text-slate-200 font-medium">
+                    {licenseInfo.expiry_date || "—"}
+                  </span>
+                </div>
+
+                {/* Last Activated */}
+                <div className="flex items-center space-x-3">
+                  <span className="text-sm font-semibold text-slate-600 dark:text-slate-400 w-32 flex items-center space-x-2">
+                    <Clock size={14} />
+                    <span>Last Renewed</span>
+                  </span>
+                  <span className="text-sm text-slate-800 dark:text-slate-200 font-medium">
+                    {licenseInfo.activated_at || "—"}
+                  </span>
+                </div>
+
+                {/* Renew License */}
+                <div className="pt-4 border-t border-slate-200 dark:border-slate-700">
+                  {!showRenewForm ? (
+                    <button
+                      onClick={() => { setShowRenewForm(true); setRenewMessage(null); }}
+                      className="inline-flex items-center space-x-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-xl transition-all shadow-md shadow-blue-600/20 cursor-pointer"
+                    >
+                      <RefreshCw size={16} />
+                      <span>Renew License</span>
+                    </button>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex items-center space-x-2 mb-2">
+                        <Key size={16} className="text-blue-500" />
+                        <span className="text-sm font-bold text-slate-700 dark:text-slate-300">Enter New License Key</span>
+                      </div>
+                      <textarea
+                        value={renewKey}
+                        onChange={(e) => setRenewKey(e.target.value)}
+                        placeholder="Paste your new license key here..."
+                        rows={3}
+                        className="w-full bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-mono resize-none transition-colors"
+                      />
+                      {renewMessage && (
+                        <div className={`flex items-start space-x-2 text-sm p-3 rounded-xl border ${
+                          renewMessage.type === "success"
+                            ? "text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20"
+                            : "text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/20"
+                        }`}>
+                          {renewMessage.type === "success" ? <CheckCircle size={16} className="mt-0.5 flex-shrink-0" /> : <XCircle size={16} className="mt-0.5 flex-shrink-0" />}
+                          <span className="font-medium">{renewMessage.text}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={async () => {
+                            const trimmed = renewKey.trim();
+                            if (!trimmed) { setRenewMessage({ type: "error", text: "Please enter a license key." }); return; }
+                            setRenewLoading(true);
+                            setRenewMessage(null);
+                            try {
+                              const res: any = await invoke("activate_license", { key: trimmed });
+                              if (res.valid) {
+                                setRenewMessage({ type: "success", text: `License renewed successfully! Valid until ${res.expiry_date}.` });
+                                // Refresh license info locally
+                                const info: any = await invoke("get_license_info");
+                                setLicenseInfo(info);
+                                setRenewKey("");
+                                
+                                // Notify App.tsx to update the global warning banner
+                                window.dispatchEvent(new Event("licenseUpdated"));
+
+                                setTimeout(() => { setShowRenewForm(false); setRenewMessage(null); }, 3000);
+                              } else {
+                                setRenewMessage({ type: "error", text: res.message });
+                              }
+                            } catch (err: any) {
+                              setRenewMessage({ type: "error", text: err?.toString() || "Renewal failed." });
+                            } finally {
+                              setRenewLoading(false);
+                            }
+                          }}
+                          disabled={renewLoading}
+                          className="inline-flex items-center space-x-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-bold rounded-xl transition-all shadow-md shadow-blue-600/20 cursor-pointer disabled:cursor-not-allowed"
+                        >
+                          {renewLoading ? (
+                            <><Loader2 size={16} className="animate-spin" /><span>Verifying...</span></>
+                          ) : (
+                            <><ShieldCheck size={16} /><span>Activate</span></>
+                          )}
+                        </button>
+                        <button
+                          onClick={() => { setShowRenewForm(false); setRenewKey(""); setRenewMessage(null); }}
+                          className="px-4 py-2.5 text-sm font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500 dark:text-slate-400">Loading license information...</p>
+            )}
           </div>
         </div>
       </main>

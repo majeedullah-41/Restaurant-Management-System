@@ -26,3 +26,5 @@ dist-ssr
 # Safety backups
 backups/
 
+# License keys (private key - NEVER commit)
+scripts/.keys/
