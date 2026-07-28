@@ -49,9 +49,8 @@ import { AlertModal } from "../components/AlertModal";
 interface MenuItem { id: number; name: string; category_id: number; price: number; is_active: boolean; }
 interface Category { id: number; name: string; }
 interface CartItem { id: number; item_id: number; name: string; price: number; quantity: number; }
-interface Customer { id: number; name: string; phone: string; visits: number; }
+interface Customer { id: number; name: string; phone: string; visits: number; address?: string; }
 interface DetailedTableStatus { id: number; table_number: number; status: string; active_order_id: number | null; active_order_total: number | null; elapsed_minutes: number | null; }
-interface Customer { id: number; name: string; phone: string; visits: number; }
 
 export default function POS() {
   const { tableId, orderId: routeOrderId } = useParams();
@@ -80,6 +79,11 @@ export default function POS() {
   const [view, setView] = useState<'payment' | 'menu'>('payment');
   const [restaurantName, setRestaurantName] = useState("RMS");
   const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
+
+  // Delivery State
+  const [deliverySettings, setDeliverySettings] = useState({ base_delivery_fee: 0, free_delivery_threshold: 0 });
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [deliveryPhone, setDeliveryPhone] = useState("");
 
 
   // Payment State
@@ -113,9 +117,13 @@ export default function POS() {
 
   const subtotal = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
   const taxAmount = (subtotal * taxRate) / 100;
+  
+  const deliveryFee = orderType === "Delivery" 
+    ? (deliverySettings.free_delivery_threshold > 0 && subtotal >= deliverySettings.free_delivery_threshold ? 0 : deliverySettings.base_delivery_fee) 
+    : 0;
 
   // Ensure discount never exceeds payable amount
-  const maxDiscount = subtotal + taxAmount;
+  const maxDiscount = subtotal + taxAmount + deliveryFee;
   const effectiveDiscount = Math.min(discount, maxDiscount);
   const totalAmount = maxDiscount - effectiveDiscount;
 
@@ -146,6 +154,9 @@ export default function POS() {
         setTaxRate(settings.tax_rate);
         setRestaurantName(settings.restaurant_name);
         setRestaurantLogo(settings.logo_path || null);
+
+        const delSettings: any = await invoke("get_delivery_settings");
+        setDeliverySettings(delSettings);
 
         // Only create/fetch order for physical tables or when resuming an existing order
         if (routeOrderId && routeOrderId !== 'new') {
@@ -308,6 +319,7 @@ export default function POS() {
       <div class="flex"><span>Subtotal</span><span>Rs. ${subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
       ${effectiveDiscount > 0 ? `<div class="flex"><span>Discount</span><span>- Rs. ${effectiveDiscount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>` : ''}
       <div class="flex"><span>Tax (${taxRate}%)</span><span>Rs. ${taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+      ${deliveryFee > 0 ? `<div class="flex"><span>Delivery Fee</span><span>Rs. ${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>` : ''}
       
       <div class="border-b" style="border-style: solid"></div>
       <div class="flex font-bold"><span>Grand Total</span><span>Rs. ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
@@ -339,6 +351,32 @@ export default function POS() {
   const handleCheckout = async () => {
     if (!orderId || cartItems.length === 0) return;
     try {
+      if (orderType === "Delivery") {
+        if (!selectedCustomerId && !deliveryPhone.trim()) {
+          showAlert("Validation Error", "Please provide a phone number for delivery.");
+          return;
+        }
+        if (!deliveryAddress) {
+          showAlert("Validation Error", "Please enter a delivery address.");
+          return;
+        }
+        await invoke("place_delivery_order", {
+          orderId,
+          customerId: selectedCustomerId,
+          deliveryAddress: deliveryAddress,
+          customerPhone: deliveryPhone,
+          deliveryFee: deliveryFee,
+          subtotal: subtotal,
+          taxAmount: taxAmount,
+          discountAmount: effectiveDiscount,
+          cashierName: role,
+          orderNote: orderNote
+        });
+        await handlePrint(); // Still print receipt
+        navigate(returnUrl); // Navigate away since place_delivery_order doesn't close it instantly, it dispatches it
+        return;
+      }
+
       await invoke("checkout_order", {
         orderId,
         tableNumber: parseInt(tableId || "0"),
@@ -663,7 +701,8 @@ export default function POS() {
 
           {/* Right Sidebar - Order Summary */}
           <aside className="w-[360px] bg-white dark:bg-[#0B1120] border-l border-slate-200 dark:border-slate-800 flex flex-col z-10 shrink-0">
-            <div className="p-5 border-b border-slate-200 dark:border-slate-800">
+            <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col">
+              <div className="p-5 border-b border-slate-200 dark:border-slate-800 shrink-0">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-base font-bold text-slate-900 dark:text-white">Order Summary</h2>
                 <select
@@ -688,14 +727,31 @@ export default function POS() {
                       <Users size={18} />
                     </div>
                     <div>
-                      <p className="text-sm font-bold text-slate-900 dark:text-white">{orderType === 'Takeaway' ? 'Walk-in Customer' : 'Dine-in Customer'}</p>
+                      {tableId === "0" ? (
+                        <div className="flex items-center space-x-2 mt-1 mb-1">
+                          <button 
+                            onClick={() => setOrderType("Takeaway")}
+                            className={`text-[11px] font-bold px-2 py-0.5 rounded transition-colors ${orderType === 'Takeaway' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                          >
+                            Takeaway
+                          </button>
+                          <button 
+                            onClick={() => setOrderType("Delivery")}
+                            className={`text-[11px] font-bold px-2 py-0.5 rounded transition-colors ${orderType === 'Delivery' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                          >
+                            Delivery
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-sm font-bold text-slate-900 dark:text-white">Dine-in Customer</p>
+                      )}
                       <p className="text-[10px] text-slate-500">Order #{orderId || '...'} • Type: {orderType}</p>
                     </div>
                   </div>
 
                 </div>
 
-                <div className="pt-2 border-t border-slate-200 dark:border-slate-800/50">
+                <div className="pt-2 border-t border-slate-200 dark:border-slate-800/50 space-y-3">
                   <div className="relative">
                     <div className="relative">
                       <input
@@ -740,6 +796,8 @@ export default function POS() {
                               onClick={() => {
                                 setSelectedCustomerId(c.id);
                                 setCustomerSearch(`${c.name} (${c.phone}) - ${c.visits} Visits`);
+                                setDeliveryAddress(c.address || "");
+                                setDeliveryPhone(c.phone || "");
                                 setShowCustomerDropdown(false);
                               }}
                             >
@@ -759,11 +817,37 @@ export default function POS() {
                       </p>
                     ) : null;
                   })()}
+
+                  {orderType === "Delivery" && (
+                    <div className="mt-3 space-y-3">
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1 tracking-wider">Phone Number</label>
+                        <input
+                          type="text"
+                          value={deliveryPhone}
+                          onChange={(e) => setDeliveryPhone(e.target.value)}
+                          placeholder="Enter contact number..."
+                          className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-lg p-2 focus:outline-none focus:border-indigo-500 transition-colors"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1 tracking-wider">Delivery Address</label>
+                        <textarea
+                          value={deliveryAddress}
+                          onChange={(e) => setDeliveryAddress(e.target.value)}
+                          placeholder="Enter full delivery address..."
+                          className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-lg p-2 focus:outline-none focus:border-indigo-500 transition-colors custom-scrollbar"
+                          rows={2}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+            {/* Cart Items Area - Inside the scrollable container */}
+            <div className="p-5 flex-1 flex flex-col">
               <div className="grid grid-cols-12 gap-2 text-[10px] text-slate-500 uppercase tracking-wider mb-3 px-2">
                 <div className="col-span-1">#</div>
                 <div className="col-span-5">Item Name</div>
@@ -822,10 +906,17 @@ export default function POS() {
                   <span className="text-slate-500 dark:text-slate-400">Tax ({taxRate}%)</span>
                   <span className="text-slate-900 dark:text-white">Rs. {taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                 </div>
+                {deliveryFee > 0 && (
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-slate-500 dark:text-slate-400">Delivery Fee</span>
+                    <span className="text-slate-900 dark:text-white">Rs. {deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  </div>
+                )}
               </div>
             </div>
+            </div> {/* Close scrollable container */}
 
-            <div className="p-5 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0F172A]">
+            <div className="p-5 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0F172A] shrink-0">
               <div className="flex justify-between items-end mb-5">
                 <span className="text-sm font-bold text-slate-700 dark:text-slate-300">Total Amount</span>
                 <span className="text-2xl font-bold text-slate-900 dark:text-white">Rs. {totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>

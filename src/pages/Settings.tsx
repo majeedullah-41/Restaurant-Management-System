@@ -5,6 +5,7 @@ import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import BackupSection from "../components/BackupSection";
 import DataMigrationSection from "../components/DataMigrationSection";
+import DeliverySettingsSection from "../components/DeliverySettingsSection";
 
 export default function SettingsPage() {
   const [name, setName] = useState("");
@@ -124,6 +125,10 @@ export default function SettingsPage() {
 
           <div className="max-w-3xl">
             <DataMigrationSection />
+          </div>
+
+          <div className="max-w-3xl">
+            <DeliverySettingsSection />
           </div>
 
           {/* License Information Section */}

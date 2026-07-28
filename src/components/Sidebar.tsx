@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { 
   LayoutDashboard, MenuSquare, ClipboardList, Table2, Users, 
   UserSquare2, CalendarClock, Receipt, BarChart3, 
-  Settings, LogOut, ShoppingCart
+  Settings, LogOut, ShoppingCart, Truck
 } from "lucide-react";
 
 export default function Sidebar({ activePage }: { activePage: string }) {
@@ -60,6 +60,7 @@ export default function Sidebar({ activePage }: { activePage: string }) {
             <NavItem icon={<LayoutDashboard size={20} />} label="Cashier Dashboard" active={activePage === "cashier_dashboard"} onClick={() => navigate('/cashier/dashboard')} />
             <NavItem icon={<ShoppingCart size={20} />} label="POS / New Order" active={activePage === "pos"} onClick={() => navigate('/cashier/pos/0')} />
             <NavItem icon={<ClipboardList size={20} />} label="Orders" active={activePage === "orders"} onClick={() => navigate('/cashier/orders')} />
+            <NavItem icon={<Truck size={20} />} label="Deliveries" active={activePage === "deliveries"} onClick={() => navigate('/cashier/deliveries')} />
             <NavItem icon={<Users size={20} />} label="Customers" active={activePage === "customers"} onClick={() => navigate('/cashier/customers')} />
             <NavItem icon={<CalendarClock size={20} />} label="Order History" active={activePage === "history"} onClick={() => navigate('/cashier/history')} />
             <NavItem icon={<Table2 size={20} />} label="Table Reservation" active={activePage === "tables"} onClick={() => navigate('/cashier/tables')} />
@@ -70,6 +71,7 @@ export default function Sidebar({ activePage }: { activePage: string }) {
             <NavItem icon={<ShoppingCart size={20} />} label="POS / New Order" active={activePage === "pos"} onClick={() => navigate('/admin/pos/0')} />
             <NavItem icon={<MenuSquare size={20} />} label="Menu Management" active={activePage === "menu"} onClick={() => navigate('/admin/menu')} />
             <NavItem icon={<ClipboardList size={20} />} label="Orders" active={activePage === "orders"} onClick={() => navigate('/admin/orders')} />
+            <NavItem icon={<Truck size={20} />} label="Deliveries" active={activePage === "deliveries"} onClick={() => navigate('/admin/deliveries')} />
             <NavItem icon={<CalendarClock size={20} />} label="Order History" active={activePage === "history"} onClick={() => navigate('/admin/history')} />
             <NavItem icon={<Table2 size={20} />} label="Table Management" active={activePage === "tables"} onClick={() => navigate('/admin/tables')} />
             <NavItem icon={<Users size={20} />} label="Customers" active={activePage === "customers"} onClick={() => navigate('/admin/customers')} />

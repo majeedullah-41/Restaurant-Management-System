@@ -16,6 +16,7 @@ import Expenses from "./pages/Expenses";
 import Payroll from "./pages/Payroll";
 import UserProfile from "./pages/UserProfile";
 import Reports from "./pages/Reports";
+import DeliveryManagement from "./pages/DeliveryManagement";
 import './App.css';
 
 interface LicenseStatus {
@@ -34,6 +35,7 @@ function App() {
   const [licenseValid, setLicenseValid] = useState(false);
   const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(null);
   const [machineHwid, setMachineHwid] = useState("");
+  const [hideLicenseWarning, setHideLicenseWarning] = useState(false);
 
   // Check license on mount
   useEffect(() => {
@@ -129,11 +131,19 @@ function App() {
         </div>
       )}
 
-      {/* License expiry warning banner (30 days or less) */}
-      {licenseStatus && licenseStatus.days_remaining !== null && licenseStatus.days_remaining <= 30 && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 max-w-lg bg-amber-500/95 backdrop-blur-sm text-white px-4 py-2.5 rounded-xl shadow-lg flex items-center space-x-2 text-xs font-semibold">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          <span>License expires in {licenseStatus.days_remaining} day{licenseStatus.days_remaining !== 1 ? 's' : ''} ({licenseStatus.expiry_date}). Contact your vendor to renew.</span>
+      {/* License expiry warning banner (7 days or less) */}
+      {licenseStatus && licenseStatus.days_remaining !== null && licenseStatus.days_remaining <= 7 && !hideLicenseWarning && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 max-w-lg bg-amber-500/95 backdrop-blur-sm text-white px-4 py-2.5 rounded-xl shadow-lg flex items-center justify-between space-x-4 text-xs font-semibold">
+          <div className="flex items-center space-x-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span>License expires in {licenseStatus.days_remaining} day{licenseStatus.days_remaining !== 1 ? 's' : ''} ({licenseStatus.expiry_date}). Contact your vendor to renew.</span>
+          </div>
+          <button 
+            onClick={() => setHideLicenseWarning(true)}
+            className="hover:text-amber-200 cursor-pointer font-bold shrink-0 p-1"
+          >
+            ✕
+          </button>
         </div>
       )}
 
@@ -155,7 +165,9 @@ function App() {
         <Route path="/cashier/pos/:tableId/:orderId" element={<POS />} />
         <Route path="/cashier/customers" element={<Customers />} />
         <Route path="/cashier/history" element={<Orders />} />
+        <Route path="/cashier/deliveries" element={<DeliveryManagement />} />
         <Route path="/admin/history" element={<Orders />} />
+        <Route path="/admin/deliveries" element={<DeliveryManagement />} />
         <Route path="/admin/staff" element={<StaffManagement />} />
         <Route path="/admin/customers" element={<Customers />} />
         <Route path="/admin/expenses" element={<Expenses />} />

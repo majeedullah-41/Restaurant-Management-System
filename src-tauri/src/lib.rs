@@ -73,6 +73,7 @@ pub fn run() {
     db::get_paid_staff_ids,
     db::process_batch_payout,
     db::get_analytics_report,
+    db::get_detailed_report,
     db::save_text_report,
 
     db::get_backup_settings,
@@ -82,6 +83,13 @@ pub fn run() {
     db::validate_backup_file,
     db::import_backup_file,
     db::verify_admin_password,
+
+    db::get_delivery_settings,
+    db::update_delivery_settings,
+    db::get_active_deliveries,
+    db::update_delivery_status,
+    db::assign_delivery_driver,
+    db::place_delivery_order,
 
     license::get_machine_hwid,
     license::check_license_status,
