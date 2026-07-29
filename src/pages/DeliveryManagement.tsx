@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Truck, CheckCircle2, MapPin, Clock, User, Phone, Navigation, ChevronDown } from "lucide-react";
+import { Truck, CheckCircle2, MapPin, Clock, User, Phone, Navigation, ChevronDown, Printer } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { AlertModal } from "../components/AlertModal";
@@ -28,6 +28,8 @@ export default function DeliveryManagement() {
   const [deliveries, setDeliveries] = useState<DeliveryOrder[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [selectedDriver, setSelectedDriver] = useState<Record<number, number>>({});
+  const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
+  const [restaurantName, setRestaurantName] = useState<string>("");
   
   const [alertModal, setAlertModal] = useState<{isOpen: boolean; title: string; message: string; type: 'danger' | 'warning' | 'info' | 'success'}>({
     isOpen: false, title: '', message: '', type: 'danger'
@@ -57,9 +59,20 @@ export default function DeliveryManagement() {
     }
   };
 
+  const fetchSettings = async () => {
+    try {
+      const settings: any = await invoke("get_settings");
+      if (settings.restaurant_name) setRestaurantName(settings.restaurant_name);
+      if (settings.restaurant_logo) setRestaurantLogo(settings.restaurant_logo);
+    } catch (err) {
+      console.error("Failed to load settings:", err);
+    }
+  };
+
   useEffect(() => {
     fetchDeliveries();
     fetchStaff();
+    fetchSettings();
     
     // Set interval to refresh automatically every 30s
     const interval = setInterval(fetchDeliveries, 30000);
@@ -88,6 +101,97 @@ export default function DeliveryManagement() {
       fetchDeliveries();
     } catch (err) {
       showAlert("Error", "Failed to update delivery status: " + err);
+    }
+  };
+
+  const handlePrintTicket = async (order: DeliveryOrder) => {
+    let items: any[] = [];
+    try {
+      items = await invoke("get_order_items", { orderId: order.id });
+    } catch(err) {
+      console.error("Failed to fetch items", err);
+    }
+
+    const formattedId = `#ORD-${order.id.toString().padStart(4, '0')}`;
+    const dateStr = order.created_at ? new Date(order.created_at).toLocaleString() : new Date().toLocaleString();
+
+    const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Delivery Ticket ${formattedId}</title>
+      <style>
+        body { font-family: monospace; width: 80mm; margin: 0 auto; padding: 20px; font-size: 14px; color: #000; background: #fff; }
+        .text-center { text-align: center; }
+        .font-bold { font-weight: bold; }
+        .flex { display: flex; justify-content: space-between; }
+        .border-b { border-bottom: 2px dashed #000; margin: 15px 0; }
+        .items-header { font-weight: bold; margin-bottom: 5px; }
+        h1 { font-size: 1.5em; margin: 0; }
+        p { margin: 4px 0; }
+      </style>
+    </head>
+    <body>
+      <div class="text-center">
+        ${restaurantLogo ? `<img src="${restaurantLogo}" style="max-height: 80px; max-width: 100%; display: block; margin: 0 auto 10px;" />` : ''}
+        <h1>${restaurantName || "Restaurant Name"}</h1>
+        <p class="font-bold">*** DELIVERY TICKET ***</p>
+        <div class="border-b"></div>
+      </div>
+      
+      <div>
+        <div class="flex"><span>Order #:</span><span class="font-bold">${formattedId}</span></div>
+        <div class="flex"><span>Date:</span><span>${dateStr}</span></div>
+        <div class="flex"><span>Driver:</span><span>${order.driver_name || 'Pending Dispatch'}</span></div>
+      </div>
+      
+      <div class="border-b"></div>
+
+      <div class="flex items-header">
+        <span style="width: 50%">Item</span>
+        <span style="width: 15%; text-align: center;">Qty</span>
+        <span style="width: 35%; text-align: right;">Total</span>
+      </div>
+      
+      ${items.map(item => `
+      <div class="flex" style="margin-bottom: 4px;">
+        <span style="width: 50%">${item.name}</span>
+        <span style="width: 15%; text-align: center;">${item.quantity}</span>
+        <span style="width: 35%; text-align: right;">${(item.price * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+      </div>
+      `).join('')}
+
+      <div class="border-b"></div>
+      
+      <div class="flex"><span>Total Amt:</span><span class="font-bold">Rs. ${order.total_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+
+      <div class="border-b"></div>
+      
+      <div>
+        <p class="font-bold" style="font-size: 16px; margin-bottom: 10px;">Customer Details:</p>
+        <p><strong>Name:</strong> ${order.customer_name || 'Walk-in'}</p>
+        <p><strong>Phone:</strong> ${order.customer_phone || 'N/A'}</p>
+        <p style="margin-top: 10px;"><strong>Address:</strong><br/>${order.delivery_address || 'No address provided'}</p>
+      </div>
+
+      <div class="border-b"></div>
+      <div class="text-center">
+        <p>Please collect Rs. ${order.total_price.toLocaleString(undefined, { minimumFractionDigits: 2 })} from the customer.</p>
+        <p style="margin-top:20px;">End of Ticket</p>
+        <p style="margin-top: 10px; font-size: 12px;">Software provided by EagleNest Creations<br/>(0346-4451505)</p>
+      </div>
+      <script>
+        window.onload = () => { window.print(); }
+      </script>
+    </body>
+    </html>
+    `;
+
+    try {
+      await invoke("save_print_html", { filename: "rms_delivery_ticket.html", html: htmlContent });
+    } catch (err) {
+      console.error("Failed to generate ticket:", err);
+      showAlert("Error", "Failed to generate delivery ticket");
     }
   };
 
@@ -124,6 +228,13 @@ export default function DeliveryManagement() {
                         }`}>
                           {order.delivery_status}
                         </span>
+                        <button 
+                          onClick={() => handlePrintTicket(order)}
+                          className="ml-2 text-slate-400 hover:text-indigo-600 dark:text-slate-500 dark:hover:text-indigo-400 transition-colors"
+                          title="Print Delivery Ticket"
+                        >
+                          <Printer size={16} />
+                        </button>
                       </div>
                       <div className="flex items-center text-[11px] text-slate-500 mt-1">
                         <Clock size={12} className="mr-1" />

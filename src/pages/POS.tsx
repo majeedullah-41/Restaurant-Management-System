@@ -38,11 +38,11 @@ import Header from "../components/Header";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Plus, Receipt,
-  Search, X, Trash2, LayoutDashboard, ShoppingCart,
-  ClipboardList, Users, CalendarClock, Table2, BarChart3, Settings, LogOut,
-  Tag, Percent, Calculator, FileText, CalendarDays, Bell, Printer, ChevronDown, Moon, Sun
+  X, Trash2,
+  Users,
+  Tag, Percent, Calculator, FileText, Printer, ChevronDown
 } from "lucide-react";
-import { useTheme } from "../components/ThemeProvider";
+
 import { ConfirmModal } from "../components/ConfirmModal";
 import { AlertModal } from "../components/AlertModal";
 
@@ -54,7 +54,6 @@ interface DetailedTableStatus { id: number; table_number: number; status: string
 
 export default function POS() {
   const { tableId, orderId: routeOrderId } = useParams();
-  const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
   const role = localStorage.getItem("userRole") || "Admin";
   const basePath = role === "Cashier" ? "/cashier" : "/admin";
@@ -88,7 +87,7 @@ export default function POS() {
 
   // Payment State
   const [amountReceived, setAmountReceived] = useState<string>("");
-  const [orderNote, setOrderNote] = useState("");
+  const [orderNote] = useState("");
   const [discount, setDiscount] = useState<number>(0);
 
   // Customer State
@@ -164,12 +163,20 @@ export default function POS() {
           const order: any = await invoke("get_order_by_id", { orderId: parseInt(routeOrderId) });
           setOrderId(order.id);
           setDiscount(order.discount_amount || 0);
+          if (order.order_type) setOrderType(order.order_type);
+          if (order.customer_phone) setDeliveryPhone(order.customer_phone);
+          if (order.delivery_address) setDeliveryAddress(order.delivery_address);
+          if (order.customer_id) setSelectedCustomerId(order.customer_id);
           refreshCart(order.id);
         } else if (tableId !== "0") {
           // Physical table lookup — get or create order
           const order: any = await invoke("get_or_create_order", { tableNumber: parseInt(tableId!) });
           setOrderId(order.id);
           setDiscount(order.discount_amount || 0);
+          if (order.order_type) setOrderType(order.order_type);
+          if (order.customer_phone) setDeliveryPhone(order.customer_phone);
+          if (order.delivery_address) setDeliveryAddress(order.delivery_address);
+          if (order.customer_id) setSelectedCustomerId(order.customer_id);
           refreshCart(order.id);
         }
         // For walk-in (table 0) with 'new' or no routeOrderId: 
@@ -223,9 +230,10 @@ export default function POS() {
     // Lazy order creation for walk-in: create the order now if it doesn't exist yet
     if (!currentOrderId) {
       try {
-        const order: any = await invoke("create_walkin_order");
+        const order: any = await invoke("create_walkin_order", { orderType: orderType });
         currentOrderId = order.id;
         setOrderId(order.id);
+        if (order.order_type) setOrderType(order.order_type);
         // Update URL so refresh doesn't create another order
         navigate(`${basePath}/pos/0/${order.id}${location.search}`, { replace: true });
       } catch (err) {
@@ -245,6 +253,20 @@ export default function POS() {
       refreshCart(activeOrderId);
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const saveDeliveryDraft = async (address?: string, phone?: string, custId?: number | null) => {
+    if (!orderId) return;
+    try {
+      await invoke("update_order_delivery_draft", {
+        orderId: orderId,
+        deliveryAddress: address !== undefined ? address : deliveryAddress,
+        customerPhone: phone !== undefined ? phone : deliveryPhone,
+        customerId: custId !== undefined ? custId : selectedCustomerId
+      });
+    } catch (err) {
+      console.error("Failed to save delivery draft", err);
     }
   };
 
@@ -294,7 +316,7 @@ export default function POS() {
         <div class="flex"><span>Order #:</span><span>${formattedId}</span></div>
         <div class="flex"><span>Date:</span><span>${dateStr}</span></div>
         <div class="flex"><span>Type:</span><span>${orderType}</span></div>
-        <div class="flex"><span>Table:</span><span>${tableStr}</span></div>
+        ${orderType === "Dine-in" ? `<div class="flex"><span>Table:</span><span>${tableStr}</span></div>` : ''}
         <div class="flex"><span>Cashier:</span><span>Cashier</span></div>
       </div>
       
@@ -432,7 +454,7 @@ export default function POS() {
         <div class="flex"><span>Order #:</span><span class="font-bold">${formattedId}</span></div>
         <div class="flex"><span>Date:</span><span>${dateStr}</span></div>
         <div class="flex"><span>Type:</span><span class="font-bold">${orderType}</span></div>
-        <div class="flex"><span>Table:</span><span class="font-bold">${tableStr}</span></div>
+        ${orderType === "Dine-in" ? `<div class="flex"><span>Table:</span><span class="font-bold">${tableStr}</span></div>` : ''}
         <div class="flex"><span>Cashier:</span><span>Cashier</span></div>
       </div>
       
@@ -453,6 +475,7 @@ export default function POS() {
       <div class="border-b"></div>
       <div class="text-center">
         <p>End of Ticket</p>
+        <p style="margin-top: 20px; font-size: 12px;">Software provided by EagleNest Creations<br/>(0346-4451505)</p>
       </div>
       <script>
         window.onload = () => { window.print(); }
@@ -730,13 +753,19 @@ export default function POS() {
                       {tableId === "0" ? (
                         <div className="flex items-center space-x-2 mt-1 mb-1">
                           <button 
-                            onClick={() => setOrderType("Takeaway")}
+                            onClick={async () => {
+                              setOrderType("Takeaway");
+                              if (orderId) await invoke("update_order_type", { orderId, orderType: "Takeaway" });
+                            }}
                             className={`text-[11px] font-bold px-2 py-0.5 rounded transition-colors ${orderType === 'Takeaway' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
                           >
                             Takeaway
                           </button>
                           <button 
-                            onClick={() => setOrderType("Delivery")}
+                            onClick={async () => {
+                              setOrderType("Delivery");
+                              if (orderId) await invoke("update_order_type", { orderId, orderType: "Delivery" });
+                            }}
                             className={`text-[11px] font-bold px-2 py-0.5 rounded transition-colors ${orderType === 'Delivery' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
                           >
                             Delivery
@@ -782,6 +811,7 @@ export default function POS() {
                             setSelectedCustomerId(null);
                             setCustomerSearch("");
                             setShowCustomerDropdown(false);
+                            saveDeliveryDraft(undefined, undefined, null);
                           }}
                         >
                           Guest (No Customer)
@@ -799,6 +829,7 @@ export default function POS() {
                                 setDeliveryAddress(c.address || "");
                                 setDeliveryPhone(c.phone || "");
                                 setShowCustomerDropdown(false);
+                                saveDeliveryDraft(c.address || "", c.phone || "", c.id);
                               }}
                             >
                               {c.name} <span className="text-slate-500 dark:text-slate-400">({c.phone})</span> - <span className="text-blue-400">{c.visits} Visits</span>
@@ -826,6 +857,7 @@ export default function POS() {
                           type="text"
                           value={deliveryPhone}
                           onChange={(e) => setDeliveryPhone(e.target.value)}
+                          onBlur={() => saveDeliveryDraft(undefined, deliveryPhone, undefined)}
                           placeholder="Enter contact number..."
                           className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-lg p-2 focus:outline-none focus:border-indigo-500 transition-colors"
                         />
@@ -835,6 +867,7 @@ export default function POS() {
                         <textarea
                           value={deliveryAddress}
                           onChange={(e) => setDeliveryAddress(e.target.value)}
+                          onBlur={() => saveDeliveryDraft(deliveryAddress, undefined, undefined)}
                           placeholder="Enter full delivery address..."
                           className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-lg p-2 focus:outline-none focus:border-indigo-500 transition-colors custom-scrollbar"
                           rows={2}
@@ -978,17 +1011,4 @@ export default function POS() {
   );
 }
 
-// NavItem Helper Component
-function NavItem({ icon, label, active = false, onClick }: { icon: React.ReactNode, label: string, active?: boolean, onClick?: () => void }) {
-  return (
-    <button onClick={onClick}
-      className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-all ${active
-        ? "bg-blue-600 text-white shadow-md shadow-blue-600/20"
-        : "text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800/50 hover:text-slate-200"
-        }`}
-    >
-      {icon}
-      <span className="font-medium text-sm">{label}</span>
-    </button>
-  );
-}
+

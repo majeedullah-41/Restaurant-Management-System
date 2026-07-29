@@ -122,7 +122,7 @@ export default function Orders() {
 
   // Filter orders based on the current page
   const orders = allOrders.filter(order => {
-    const statusMatch = isHistoryPage ? order.status === 'Closed' : order.status === 'Open';
+    const statusMatch = isHistoryPage ? order.status === 'Closed' : (order.status === 'Open' || order.status === 'Placed');
     if (!statusMatch) return false;
 
     if (isHistoryPage) {

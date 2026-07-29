@@ -32,10 +32,7 @@ pub fn init_db() -> Result<()> {
     // Seed the default data
     conn.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'Admin'), (2, 'Cashier')", [])?;
     conn.execute("INSERT OR IGNORE INTO restaurant_settings (id, restaurant_name, tax_rate, total_tables) VALUES (1, 'My Restaurant', 16.0, 10)", [])?;
-    conn.execute("INSERT OR IGNORE INTO categories (name) VALUES ('Burgers')", [])?;
-    
-    // Insert the Zinger Burger! (Price 650.00 like your screenshot)
-    conn.execute("INSERT OR IGNORE INTO menu_items (name, category_id, price) VALUES ('Zinger Burger', 1, 650.00)", [])?;
+
 
     // NEW: Seed a default Admin user so the login actually works
     // Using admin@restaurant.com to match your UI mockup. 
@@ -93,6 +90,7 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
     let _ = conn.execute("ALTER TABLE orders ADD COLUMN delivery_address TEXT", []);
     let _ = conn.execute("ALTER TABLE orders ADD COLUMN delivery_driver_id INTEGER", []);
     let _ = conn.execute("ALTER TABLE orders ADD COLUMN delivery_fee REAL DEFAULT 0.0", []);
+    let _ = conn.execute("ALTER TABLE orders ADD COLUMN customer_phone TEXT", []);
 
     // 4. staff, customers, attendance, payouts columns/tables if any
     let _ = conn.execute(
@@ -502,6 +500,10 @@ pub struct ActiveOrder {
     pub table_number: i32,
     pub status: String,
     pub discount_amount: f64,
+    pub order_type: Option<String>,
+    pub customer_id: Option<i32>,
+    pub customer_phone: Option<String>,
+    pub delivery_address: Option<String>,
 }
 
 
@@ -573,6 +575,28 @@ pub fn remove_item_from_order(order_id: i32, item_id: i32) -> Result<String, Str
         }
     }
     Ok("Item removed".into())
+}
+
+#[tauri::command]
+pub fn update_order_type(order_id: i32, order_type: String) -> Result<String, String> {
+    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE orders SET order_type = ?1 WHERE id = ?2",
+        rusqlite::params![order_type, order_id]
+    ).map_err(|e| e.to_string())?;
+    Ok("Order type updated".into())
+}
+
+#[tauri::command]
+pub fn update_order_delivery_draft(order_id: i32, delivery_address: Option<String>, customer_phone: Option<String>, customer_id: Option<i32>) -> Result<String, String> {
+    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    conn.execute("ALTER TABLE orders ADD COLUMN customer_phone TEXT", []).ok();
+    
+    conn.execute(
+        "UPDATE orders SET delivery_address = ?1, customer_phone = ?2, customer_id = ?3 WHERE id = ?4",
+        rusqlite::params![delivery_address, customer_phone, customer_id, order_id]
+    ).map_err(|e| e.to_string())?;
+    Ok("Draft saved".into())
 }
 
 #[tauri::command]
@@ -682,7 +706,7 @@ pub fn get_order_history() -> Result<Vec<OrderHistory>, String> {
          FROM orders o 
          LEFT JOIN order_items oi ON o.id = oi.order_id 
          LEFT JOIN customers c ON o.customer_id = c.id
-         WHERE o.status IN ('Closed', 'Open') 
+         WHERE o.status IN ('Closed', 'Open', 'Placed') 
          GROUP BY o.id ORDER BY o.id DESC"
     ).map_err(|e| e.to_string())?;
 
@@ -835,13 +859,17 @@ pub fn get_or_create_order(table_number: i32) -> Result<ActiveOrder, String> {
     }
 
     // 3. Check if this table already has an 'Open' order
-    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0) FROM orders WHERE table_number = ?1 AND status = 'Open'").unwrap();
+    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address FROM orders WHERE table_number = ?1 AND status = 'Open'").unwrap();
     let existing_order = stmt.query_row([&table_number], |row| {
         Ok(ActiveOrder {
             id: row.get(0)?,
             table_number: row.get(1)?,
             status: row.get(2)?,
             discount_amount: row.get(3)?,
+            order_type: row.get(4).unwrap_or(None),
+            customer_id: row.get(5).unwrap_or(None),
+            customer_phone: row.get(6).unwrap_or(None),
+            delivery_address: row.get(7).unwrap_or(None),
         })
     });
 
@@ -851,7 +879,11 @@ pub fn get_or_create_order(table_number: i32) -> Result<ActiveOrder, String> {
 
     // 4. If no order exists, create a new one
     let new_id = get_next_available_order_id(&conn);
-    conn.execute("INSERT INTO orders (id, table_number, status, created_at) VALUES (?1, ?2, 'Open', datetime('now', 'localtime'))", [&new_id, &table_number]).map_err(|e| e.to_string())?;
+    let initial_type = if table_number == 0 { "Takeaway" } else { "Dine-in" };
+    conn.execute(
+        "INSERT INTO orders (id, table_number, status, created_at, order_type) VALUES (?1, ?2, 'Open', datetime('now', 'localtime'), ?3)", 
+        rusqlite::params![&new_id, &table_number, &initial_type]
+    ).map_err(|e| e.to_string())?;
     
     // 5. Update the physical table status to 'Occupied'
     conn.execute("UPDATE table_status SET status = 'Occupied' WHERE table_number = ?1", [&table_number]).ok();
@@ -861,6 +893,10 @@ pub fn get_or_create_order(table_number: i32) -> Result<ActiveOrder, String> {
         table_number,
         status: "Open".to_string(),
         discount_amount: 0.0,
+        order_type: Some(initial_type.to_string()),
+        customer_id: None,
+        customer_phone: None,
+        delivery_address: None,
     })
 }
 
@@ -868,13 +904,17 @@ pub fn get_or_create_order(table_number: i32) -> Result<ActiveOrder, String> {
 pub fn get_order_by_id(order_id: i32) -> Result<ActiveOrder, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
     
-    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0) FROM orders WHERE id = ?1").unwrap();
+    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address FROM orders WHERE id = ?1").unwrap();
     let order = stmt.query_row([&order_id], |row| {
         Ok(ActiveOrder {
             id: row.get(0)?,
             table_number: row.get(1)?,
             status: row.get(2)?,
             discount_amount: row.get(3)?,
+            order_type: row.get(4).unwrap_or(None),
+            customer_id: row.get(5).unwrap_or(None),
+            customer_phone: row.get(6).unwrap_or(None),
+            delivery_address: row.get(7).unwrap_or(None),
         })
     }).map_err(|e| e.to_string())?;
     
@@ -882,13 +922,13 @@ pub fn get_order_by_id(order_id: i32) -> Result<ActiveOrder, String> {
 }
 
 #[tauri::command]
-pub fn create_walkin_order() -> Result<ActiveOrder, String> {
+pub fn create_walkin_order(order_type: String) -> Result<ActiveOrder, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
     
     let new_id = get_next_available_order_id(&conn);
     conn.execute(
-        "INSERT INTO orders (id, table_number, status, created_at) VALUES (?1, 0, 'Open', datetime('now', 'localtime'))", 
-        [&new_id]
+        "INSERT INTO orders (id, table_number, status, created_at, order_type) VALUES (?1, 0, 'Open', datetime('now', 'localtime'), ?2)", 
+        rusqlite::params![&new_id, &order_type]
     ).map_err(|e| e.to_string())?;
     
     Ok(ActiveOrder {
@@ -896,6 +936,10 @@ pub fn create_walkin_order() -> Result<ActiveOrder, String> {
         table_number: 0,
         status: "Open".to_string(),
         discount_amount: 0.0,
+        order_type: Some(order_type),
+        customer_id: None,
+        customer_phone: None,
+        delivery_address: None,
     })
 }
 
@@ -2629,201 +2673,6 @@ pub fn assign_delivery_driver(order_id: i32, driver_id: i32) -> Result<String, S
 #[tauri::command]
 pub fn place_delivery_order(
     order_id: i32, 
-    customer_id: i32,
-    delivery_address: String,
-    delivery_fee: f64,
-    subtotal: f64,
-    tax_amount: f64,
-    discount_amount: f64,
-    cashier_name: String,
-    order_note: String
-) -> Result<String, String> {
-        .filter_map(Result::ok)
-        .collect();
-
-    for date in dates {
-        let daily_sales: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(oi.price * oi.quantity), 0) FROM orders o JOIN order_items oi ON o.id = oi.order_id WHERE o.status = 'Closed' AND date(o.created_at) = ?1",
-            [&date],
-            |row| row.get(0)
-        ).unwrap_or(0.0);
-        
-        let daily_expenses: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE date = ?1",
-            [&date],
-            |row| row.get(0)
-        ).unwrap_or(0.0);
-
-        sales_trend.push(DailyTrend {
-            date,
-            sales: daily_sales,
-            expenses: daily_expenses,
-        });
-    }
-
-    // Category Expenses
-    let mut stmt5 = conn.prepare(
-        "SELECT category, SUM(amount) FROM expenses WHERE date >= ?1 AND date <= ?2 GROUP BY category ORDER BY SUM(amount) DESC"
-    ).map_err(|e| e.to_string())?;
-    
-    let expenses_by_category: Vec<CategoryExpense> = stmt5.query_map([&start_date, &end_date], |row| {
-        Ok(CategoryExpense {
-            name: row.get(0)?,
-            value: row.get(1)?,
-        })
-    }).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
-
-    // Top Items
-    let mut stmt6 = conn.prepare(
-        "SELECT oi.name, SUM(oi.quantity) as q, SUM(oi.price * oi.quantity) as r
-         FROM orders o JOIN order_items oi ON o.id = oi.order_id
-         WHERE o.status = 'Closed' AND date(o.created_at) >= ?1 AND date(o.created_at) <= ?2
-         GROUP BY oi.item_id, oi.name ORDER BY q DESC LIMIT 5"
-    ).map_err(|e| e.to_string())?;
-    
-    let top_items: Vec<TopItem> = stmt6.query_map([&start_date, &end_date], |row| {
-        Ok(TopItem {
-            name: row.get(0)?,
-            quantity: row.get(1)?,
-            revenue: row.get(2)?,
-        })
-    }).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
-
-    orders.truncate(5);
-    expenses.truncate(5);
-    payouts.truncate(5);
-
-    Ok(DetailedReport {
-        orders,
-        expenses,
-        payouts,
-        total_revenue,
-        total_expenses,
-        net_profit,
-        profit_margin,
-        total_orders,
-        avg_order_value,
-        sales_trend,
-        expenses_by_category,
-        top_items,
-    })
-}
-
-#[derive(serde::Serialize)]
-pub struct DeliveryOrder {
-    pub id: i32,
-    pub created_at: Option<String>,
-    pub customer_name: Option<String>,
-    pub customer_phone: Option<String>,
-    pub delivery_address: Option<String>,
-    pub status: String,
-    pub delivery_status: Option<String>,
-    pub total_price: f64,
-    pub delivery_fee: f64,
-    pub driver_name: Option<String>,
-}
-
-#[derive(serde::Serialize)]
-pub struct DeliverySettings {
-    pub base_delivery_fee: f64,
-    pub free_delivery_threshold: f64,
-}
-
-#[tauri::command]
-pub fn get_delivery_settings() -> Result<DeliverySettings, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
-    
-    let settings = conn.query_row(
-        "SELECT base_delivery_fee, free_delivery_threshold FROM restaurant_settings WHERE id = 1",
-        [],
-        |row| Ok(DeliverySettings {
-            base_delivery_fee: row.get(0).unwrap_or(0.0),
-            free_delivery_threshold: row.get(1).unwrap_or(0.0),
-        })
-    ).map_err(|e| e.to_string())?;
-    
-    Ok(settings)
-}
-
-#[tauri::command]
-pub fn update_delivery_settings(base_delivery_fee: f64, free_delivery_threshold: f64) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
-    conn.execute(
-        "UPDATE restaurant_settings SET base_delivery_fee = ?1, free_delivery_threshold = ?2 WHERE id = 1",
-        rusqlite::params![base_delivery_fee, free_delivery_threshold]
-    ).map_err(|e| e.to_string())?;
-    
-    Ok("Delivery settings updated".into())
-}
-
-#[tauri::command]
-pub fn get_active_deliveries() -> Result<Vec<DeliveryOrder>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
-    
-    let mut stmt = conn.prepare(
-        "SELECT o.id, o.created_at, c.name, c.phone, o.delivery_address, o.status, o.delivery_status, 
-                COALESCE(SUM(oi.price * oi.quantity), 0) + COALESCE(o.delivery_fee, 0) as total_price,
-                o.delivery_fee, s.name as driver_name
-         FROM orders o
-         LEFT JOIN customers c ON o.customer_id = c.id
-         LEFT JOIN staff s ON o.delivery_driver_id = s.id
-         LEFT JOIN order_items oi ON o.id = oi.order_id
-         WHERE o.order_type = 'Delivery' AND o.status != 'Closed'
-         GROUP BY o.id ORDER BY o.id ASC"
-    ).map_err(|e| e.to_string())?;
-    
-    let deliveries = stmt.query_map([], |row| {
-        Ok(DeliveryOrder {
-            id: row.get(0)?,
-            created_at: row.get(1).unwrap_or(None),
-            customer_name: row.get(2).unwrap_or(None),
-            customer_phone: row.get(3).unwrap_or(None),
-            delivery_address: row.get(4).unwrap_or(None),
-            status: row.get(5)?,
-            delivery_status: row.get(6).unwrap_or(Some("Pending".to_string())),
-            total_price: row.get(7).unwrap_or(0.0),
-            delivery_fee: row.get(8).unwrap_or(0.0),
-            driver_name: row.get(9).unwrap_or(None),
-        })
-    }).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
-    
-    Ok(deliveries)
-}
-
-#[tauri::command]
-pub fn update_delivery_status(order_id: i32, status: String) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
-    
-    conn.execute(
-        "UPDATE orders SET delivery_status = ?1 WHERE id = ?2",
-        rusqlite::params![status, order_id]
-    ).map_err(|e| e.to_string())?;
-    
-    if status == "Delivered" {
-        conn.execute(
-            "UPDATE orders SET status = 'Closed', closed_at = datetime('now', 'localtime') WHERE id = ?1",
-            rusqlite::params![order_id]
-        ).map_err(|e| e.to_string())?;
-    }
-    
-    Ok("Delivery status updated".into())
-}
-
-#[tauri::command]
-pub fn assign_delivery_driver(order_id: i32, driver_id: i32) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
-    
-    conn.execute(
-        "UPDATE orders SET delivery_driver_id = ?1, delivery_status = 'Dispatched' WHERE id = ?2",
-        rusqlite::params![driver_id, order_id]
-    ).map_err(|e| e.to_string())?;
-    
-    Ok("Driver assigned".into())
-}
-
-#[tauri::command]
-pub fn place_delivery_order(
-    order_id: i32, 
     customer_id: Option<i32>,
     delivery_address: String,
     customer_phone: Option<String>,
@@ -2885,10 +2734,10 @@ pub fn place_delivery_order(
         }
     }
 
-    // Place the order but don't close it (status = 'Open' or 'Pending')
+    // Place the order (status = 'Placed') so get_or_create_order doesn't overwrite it
     // and set delivery_status = 'Pending'
     conn.execute(
-        "UPDATE orders SET status = 'Open', delivery_status = 'Pending', 
+        "UPDATE orders SET status = 'Placed', delivery_status = 'Pending', 
         order_type = 'Delivery', subtotal = ?2, tax_amount = ?3, discount_amount = ?4, 
         customer_id = ?5, cashier_name = ?6, order_note = ?7, 
         delivery_address = ?8, delivery_fee = ?9

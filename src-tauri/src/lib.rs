@@ -40,6 +40,8 @@ pub fn run() {
     db::admin_update_table_status,
     db::cancel_active_order,
     db::reassign_order_table,
+    db::update_order_type,
+    db::update_order_delivery_draft,
     db::get_staff,
     db::add_staff,
     db::delete_staff,
