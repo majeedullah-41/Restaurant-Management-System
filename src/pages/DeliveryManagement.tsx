@@ -115,83 +115,56 @@ export default function DeliveryManagement() {
     const formattedId = `#ORD-${order.id.toString().padStart(4, '0')}`;
     const dateStr = order.created_at ? new Date(order.created_at).toLocaleString() : new Date().toLocaleString();
 
-    const htmlContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Delivery Ticket ${formattedId}</title>
-      <style>
-        body { font-family: monospace; width: 80mm; margin: 0 auto; padding: 20px; font-size: 14px; color: #000; background: #fff; }
-        .text-center { text-align: center; }
-        .font-bold { font-weight: bold; }
-        .flex { display: flex; justify-content: space-between; }
-        .border-b { border-bottom: 2px dashed #000; margin: 15px 0; }
-        .items-header { font-weight: bold; margin-bottom: 5px; }
-        h1 { font-size: 1.5em; margin: 0; }
-        p { margin: 4px 0; }
-      </style>
-    </head>
-    <body>
-      <div class="text-center">
-        ${restaurantLogo ? `<img src="${restaurantLogo}" style="max-height: 80px; max-width: 100%; display: block; margin: 0 auto 10px;" />` : ''}
-        <h1>${restaurantName || "Restaurant Name"}</h1>
-        <p class="font-bold">*** DELIVERY TICKET ***</p>
-        <div class="border-b"></div>
-      </div>
-      
-      <div>
-        <div class="flex"><span>Order #:</span><span class="font-bold">${formattedId}</span></div>
-        <div class="flex"><span>Date:</span><span>${dateStr}</span></div>
-        <div class="flex"><span>Driver:</span><span>${order.driver_name || 'Pending Dispatch'}</span></div>
-      </div>
-      
-      <div class="border-b"></div>
+    const padBoth = (left: string, right: string, width = 32) => {
+      const spaces = width - left.length - right.length;
+      return left + " ".repeat(Math.max(1, spaces)) + right;
+    };
+  
+    const center = (text: string, width = 32) => {
+      if (text.length >= width) return text.substring(0, width);
+      const left = Math.floor((width - text.length) / 2);
+      return " ".repeat(left) + text;
+    };
 
-      <div class="flex items-header">
-        <span style="width: 50%">Item</span>
-        <span style="width: 15%; text-align: center;">Qty</span>
-        <span style="width: 35%; text-align: right;">Total</span>
-      </div>
-      
-      ${items.map(item => `
-      <div class="flex" style="margin-bottom: 4px;">
-        <span style="width: 50%">${item.name}</span>
-        <span style="width: 15%; text-align: center;">${item.quantity}</span>
-        <span style="width: 35%; text-align: right;">${(item.price * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-      </div>
-      `).join('')}
-
-      <div class="border-b"></div>
-      
-      <div class="flex"><span>Total Amt:</span><span class="font-bold">Rs. ${order.total_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
-
-      <div class="border-b"></div>
-      
-      <div>
-        <p class="font-bold" style="font-size: 16px; margin-bottom: 10px;">Customer Details:</p>
-        <p><strong>Name:</strong> ${order.customer_name || 'Walk-in'}</p>
-        <p><strong>Phone:</strong> ${order.customer_phone || 'N/A'}</p>
-        <p style="margin-top: 10px;"><strong>Address:</strong><br/>${order.delivery_address || 'No address provided'}</p>
-      </div>
-
-      <div class="border-b"></div>
-      <div class="text-center">
-        <p>Please collect Rs. ${order.total_price.toLocaleString(undefined, { minimumFractionDigits: 2 })} from the customer.</p>
-        <p style="margin-top:20px;">End of Ticket</p>
-        <p style="margin-top: 10px; font-size: 12px;">Software provided by EagleNest Creations<br/>(0346-4451505)</p>
-      </div>
-      <script>
-        window.onload = () => { window.print(); }
-      </script>
-    </body>
-    </html>
-    `;
+    let text = "";
+    text += center(restaurantName || "Restaurant Name") + "\n";
+    text += center("*** DELIVERY TICKET ***") + "\n";
+    text += "-".repeat(32) + "\n";
+    
+    text += `Order #: ${formattedId}\n`;
+    text += `Date: ${dateStr}\n`;
+    text += `Driver: ${order.driver_name || 'Pending Dispatch'}\n`;
+    text += "-".repeat(32) + "\n";
+    
+    text += padBoth("Item", "Qty   Total") + "\n";
+    text += "-".repeat(32) + "\n";
+    
+    items.forEach(item => {
+      const name = item.name.length > 15 ? item.name.substring(0, 15) : item.name.padEnd(15, ' ');
+      const qty = item.quantity.toString().padStart(3, ' ');
+      const total = (item.price * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2 });
+      text += padBoth(`${name}  ${qty}`, total) + "\n";
+    });
+    
+    text += "-".repeat(32) + "\n";
+    text += padBoth("Total Amt:", `Rs. ${order.total_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+    text += "-".repeat(32) + "\n";
+    
+    text += "Customer Details:\n";
+    text += `Name: ${order.customer_name || 'Walk-in'}\n`;
+    text += `Phone: ${order.customer_phone || 'N/A'}\n`;
+    text += `Address:\n${order.delivery_address || 'No address provided'}\n`;
+    text += "-".repeat(32) + "\n";
+    
+    text += `Please collect Rs. ${order.total_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}\n`;
+    text += `from the customer.\n\n`;
+    text += center("End of Ticket") + "\n\n\n\n";
 
     try {
-      await invoke("save_print_html", { filename: "rms_delivery_ticket.html", html: htmlContent });
+      await invoke("print_receipt_text", { text });
     } catch (err) {
       console.error("Failed to generate ticket:", err);
-      showAlert("Error", "Failed to generate delivery ticket");
+      showAlert("Error", "Failed to print delivery ticket");
     }
   };
 

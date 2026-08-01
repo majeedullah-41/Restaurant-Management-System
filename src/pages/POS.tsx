@@ -338,6 +338,17 @@ export default function POS() {
     }
   };
 
+  const padBoth = (left: string, right: string, width = 32) => {
+    const spaces = width - left.length - right.length;
+    return left + " ".repeat(Math.max(1, spaces)) + right;
+  };
+
+  const center = (text: string, width = 32) => {
+    if (text.length >= width) return text.substring(0, width);
+    const left = Math.floor((width - text.length) / 2);
+    return " ".repeat(left) + text;
+  };
+
   const handlePrint = async () => {
     const formattedId = `#ORD-${orderId?.toString().padStart(4, '0')}`;
     const dateStr = new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString();
@@ -345,135 +356,89 @@ export default function POS() {
     const amtReceived = parseFloat(amountReceived) || totalAmount;
     const changeAmt = amtReceived - totalAmount;
 
-    const htmlContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Receipt ${formattedId}</title>
-      <style>
-        @page { margin: 0; }
-        body { font-family: monospace; width: 80mm; margin: 0 auto; padding: 20px; font-size: 12px; color: #000; background: #fff; }
-        .text-center { text-align: center; }
-        .font-bold { font-weight: bold; }
-        .flex { display: flex; justify-content: space-between; }
-        .border-b { border-bottom: 1px dashed #ccc; margin: 10px 0; }
-        .items-header { font-weight: bold; margin-bottom: 5px; }
-        h1 { font-size: 1.5em; margin: 0; }
-        p { margin: 2px 0; }
-        .mt-4 { margin-top: 20px; }
-      </style>
-    </head>
-    <body>
-      <div class="text-center">
-        ${restaurantLogo ? `<img src="${restaurantLogo}" style="max-height: 80px; max-width: 100%; display: block; margin: 0 auto 10px;" />` : ''}
-        <h1>${restaurantName || "Restaurant Name"}</h1>
-        <p>${restaurantAddress || "Generated via RMS POS"}</p>
-        <div class="border-b"></div>
-      </div>
-      
-      <div>
-        <div class="flex"><span>Order #:</span><span>${formattedId}</span></div>
-        <div class="flex"><span>Date:</span><span>${dateStr}</span></div>
-        <div class="flex"><span>Type:</span><span>${orderType}</span></div>
-        ${orderType === "Dine-in" ? `<div class="flex"><span>Table:</span><span>${tableStr}</span></div>` : ''}
-        ${orderType === "Delivery" ? `
-        <div class="flex"><span>Phone:</span><span>${deliveryPhone || 'N/A'}</span></div>
-        <div class="flex" style="align-items: flex-start;">
-          <span>Address:</span>
-          <span style="text-align: right; margin-left: 10px; max-width: 60%; word-break: break-word;">${deliveryAddress || 'N/A'}</span>
-        </div>` : ''}
-        <div class="flex"><span>Cashier:</span><span>${displayName}</span></div>
-      </div>
-      
-      <div class="border-b"></div>
-      
-      <div class="flex items-header">
-        <span style="width: 50%">Item</span>
-        <span style="width: 15%; text-align: center;">Qty</span>
-        <span style="width: 35%; text-align: right;">Total</span>
-      </div>
-      
-      ${cartItems.map(item => `
-      <div class="flex">
-        <span style="width: 50%">${item.name}</span>
-        <span style="width: 15%; text-align: center;">${item.quantity}</span>
-        <span style="width: 35%; text-align: right;">${(item.price * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-      </div>
-      `).join('')}
-      
-      <div class="border-b"></div>
-      
-      <div class="flex"><span>Subtotal</span><span>Rs. ${subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
-      ${effectiveDiscount > 0 ? `<div class="flex"><span>Discount</span><span>- Rs. ${effectiveDiscount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>` : ''}
-      <div class="flex"><span>Tax (${taxRate}%)</span><span>Rs. ${taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
-      ${serviceChargeAmount > 0 ? `<div class="flex"><span>Service Charge (${serviceChargeRate}%)</span><span>Rs. ${serviceChargeAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>` : ''}
-      ${deliveryFee > 0 ? `<div class="flex"><span>Delivery Fee</span><span>Rs. ${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>` : ''}
-      
-      <div class="border-b" style="border-style: solid"></div>
-      <div class="flex font-bold"><span>Grand Total</span><span>Rs. ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
-      <div class="border-b"></div>
-      
-      <div class="flex"><span>Cash Received</span><span>Rs. ${amtReceived.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
-      <div class="flex"><span>Change Due</span><span>Rs. ${changeAmt.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
-      
-      <div class="text-center mt-4">
-        <p>Thank you for your visit!</p>
-        <p>Software provided by EagleNest Creations (0346-4451505)</p>
-      </div>
-      <script>
-        window.onload = () => { window.print(); }
-      </script>
-    </body>
-    </html>
-    `;
+    let text = "";
+    text += center(restaurantName || "Restaurant Name") + "\n";
+    text += center(restaurantAddress || "Generated via RMS POS") + "\n";
+    text += "-".repeat(32) + "\n";
+    
+    text += `Order #: ${formattedId}\n`;
+    text += `Date: ${dateStr}\n`;
+    text += `Type: ${orderType}\n`;
+    if (orderType === "Dine-in") text += `Table: ${tableStr}\n`;
+    if (orderType === "Delivery") {
+      text += `Phone: ${deliveryPhone || 'N/A'}\n`;
+      text += `Address: ${deliveryAddress || 'N/A'}\n`;
+    }
+    text += `Cashier: ${displayName}\n`;
+    text += "-".repeat(32) + "\n";
+    
+    text += padBoth("Item", "Qty   Total") + "\n";
+    text += "-".repeat(32) + "\n";
+    
+    cartItems.forEach(item => {
+      const name = item.name.length > 15 ? item.name.substring(0, 15) : item.name.padEnd(15, ' ');
+      const qty = item.quantity.toString().padStart(3, ' ');
+      const total = (item.price * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2 });
+      text += padBoth(`${name}  ${qty}`, total) + "\n";
+    });
+    
+    text += "-".repeat(32) + "\n";
+    text += padBoth("Subtotal", `Rs. ${subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+    if (effectiveDiscount > 0) text += padBoth("Discount", `- Rs. ${effectiveDiscount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+    text += padBoth(`Tax (${taxRate}%)`, `Rs. ${taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+    if (serviceChargeAmount > 0) text += padBoth(`Service Charge (${serviceChargeRate}%)`, `Rs. ${serviceChargeAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+    if (deliveryFee > 0) text += padBoth("Delivery Fee", `Rs. ${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+    text += "=".repeat(32) + "\n";
+    text += padBoth("GRAND TOTAL", `Rs. ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+    text += "-".repeat(32) + "\n";
+    text += padBoth("Cash Received", `Rs. ${amtReceived.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+    text += padBoth("Change Due", `Rs. ${changeAmt.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n\n";
+    
+    text += center("Thank you for your visit!") + "\n";
+    text += center("Software by EagleNest Creations") + "\n";
+    text += center("(0346-4451505)") + "\n\n\n\n"; // Feed
 
     try {
-      // Print internally using a hidden iframe instead of opening external browser
-      const printFrame = document.createElement('iframe');
-      printFrame.style.position = 'absolute';
-      printFrame.style.width = '0';
-      printFrame.style.height = '0';
-      printFrame.style.border = 'none';
-      document.body.appendChild(printFrame);
-
-      if (printFrame.contentWindow) {
-        const doc = printFrame.contentWindow.document;
-        doc.open();
-        doc.write(htmlContent);
-        doc.close();
-
-        printFrame.contentWindow.focus();
-        printFrame.contentWindow.print();
-        
-        // Remove frame after a delay to allow print dialog to initialize
-        setTimeout(() => {
-          document.body.removeChild(printFrame);
-          navigate(`${basePath}/pos/0`);
-        }, 1500);
-      } else {
-        navigate(`${basePath}/pos/0`);
-      }
+      await invoke("print_receipt_text", { text });
+      setTimeout(() => navigate(`${basePath}/pos/0`), 500);
     } catch (err) {
       console.error("Failed to generate receipt:", err);
-      navigate(`${basePath}/pos/0`);
+      showAlert("Print Error", String(err));
+      setTimeout(() => navigate(`${basePath}/pos/0`), 2000);
     }
   };
 
   const handleCheckout = async () => {
     if (!orderId || cartItems.length === 0) return;
     try {
+      let finalCustomerId = selectedCustomerId;
+
+      if (customerSearch.trim() || deliveryPhone.trim()) {
+        try {
+          const resolvedId: any = await invoke("resolve_customer", {
+            name: customerSearch.trim() || null,
+            phone: deliveryPhone.trim() || null,
+            address: deliveryAddress.trim() || null
+          });
+          finalCustomerId = resolvedId;
+          setSelectedCustomerId(resolvedId);
+        } catch (err) {
+          console.warn("Could not resolve customer:", err);
+        }
+      }
+
       if (orderType === "Delivery") {
-        if (!selectedCustomerId && !deliveryPhone.trim()) {
+        if (!finalCustomerId && !deliveryPhone.trim()) {
           showAlert("Validation Error", "Please provide a phone number for delivery.");
           return;
         }
-        if (!deliveryAddress) {
+        if (!deliveryAddress.trim()) {
           showAlert("Validation Error", "Please enter a delivery address.");
           return;
         }
         await invoke("place_delivery_order", {
           orderId,
-          customerId: selectedCustomerId,
+          customerId: finalCustomerId,
           deliveryAddress: deliveryAddress,
           customerPhone: deliveryPhone,
           deliveryFee: deliveryFee,
@@ -492,7 +457,7 @@ export default function POS() {
         orderId,
         tableNumber: parseInt(tableId || "0"),
         orderType: orderType,
-        customerId: selectedCustomerId,
+        customerId: finalCustomerId,
         subtotal: subtotal,
         taxAmount: taxAmount,
         discountAmount: effectiveDiscount,
@@ -515,72 +480,33 @@ export default function POS() {
     const dateStr = new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString();
     const tableStr = tableId === "0" ? "Walk-in" : `Table ${tableId?.padStart(2, '0')}`;
 
-    const htmlContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>KOT ${formattedId}</title>
-      <style>
-        @page { margin: 0; }
-        body { font-family: monospace; width: 80mm; margin: 0 auto; padding: 20px; font-size: 14px; color: #000; background: #fff; }
-        .text-center { text-align: center; }
-        .font-bold { font-weight: bold; }
-        .flex { display: flex; justify-content: space-between; }
-        .border-b { border-bottom: 2px dashed #000; margin: 15px 0; }
-        .items-header { font-weight: bold; margin-bottom: 10px; font-size: 16px; border-bottom: 1px solid #000; padding-bottom: 5px; }
-        h1 { font-size: 2em; margin: 0; text-decoration: underline; }
-        p { margin: 4px 0; font-size: 16px; }
-        .item-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 18px; font-weight: bold; }
-      </style>
-    </head>
-    <body>
-      <div class="text-center">
-        ${restaurantLogo ? `<img src="${restaurantLogo}" style="max-height: 80px; max-width: 100%; display: block; margin: 0 auto 10px;" />` : ''}
-        <h1>KOT</h1>
-        <p class="font-bold">*** KITCHEN COPY ***</p>
-        <div class="border-b"></div>
-      </div>
-      
-      <div>
-        <div class="flex"><span>Order #:</span><span class="font-bold">${formattedId}</span></div>
-        <div class="flex"><span>Date:</span><span>${dateStr}</span></div>
-        <div class="flex"><span>Type:</span><span class="font-bold">${orderType}</span></div>
-        ${orderType === "Dine-in" ? `<div class="flex"><span>Table:</span><span class="font-bold">${tableStr}</span></div>` : ''}
-        <div class="flex"><span>Cashier:</span><span>${displayName}</span></div>
-      </div>
-      
-      <div class="border-b"></div>
-      
-      <div class="flex items-header">
-        <span style="width: 80%">Item</span>
-        <span style="width: 20%; text-align: center;">Qty</span>
-      </div>
-      
-      ${cartItems.map(item => `
-      <div class="item-row">
-        <span style="width: 80%">${item.name}</span>
-        <span style="width: 20%; text-align: center;">[ ${item.quantity} ]</span>
-      </div>
-      `).join('')}
-      
-      <div class="border-b"></div>
-      <div class="text-center">
-        <p>End of Ticket</p>
-        <p style="margin-top: 20px; font-size: 12px;">Software provided by EagleNest Creations<br/>(0346-4451505)</p>
-      </div>
-      <script>
-        window.onload = () => { window.print(); }
-      </script>
-    </body>
-    </html>
-    `;
+    let text = "";
+    text += center("KOT") + "\n";
+    text += center("*** KITCHEN COPY ***") + "\n";
+    text += "-".repeat(32) + "\n";
+    
+    text += `Order #: ${formattedId}\n`;
+    text += `Date: ${dateStr}\n`;
+    text += `Type: ${orderType}\n`;
+    if (orderType === "Dine-in") text += `Table: ${tableStr}\n`;
+    text += `Cashier: ${displayName}\n`;
+    text += "-".repeat(32) + "\n";
+    
+    text += padBoth("Item", "Qty") + "\n";
+    text += "-".repeat(32) + "\n";
+    
+    cartItems.forEach(item => {
+      text += padBoth(item.name.substring(0, 25), `[ ${item.quantity} ]`) + "\n";
+    });
+    
+    text += "-".repeat(32) + "\n";
+    text += center("End of Ticket") + "\n\n\n\n"; // Feed
 
     try {
-      await invoke("save_print_html", { filename: "rms_kot.html", html: htmlContent });
-      // Do not navigate away for KOT
+      await invoke("print_receipt_text", { text });
     } catch (err) {
       console.error("Failed to generate KOT:", err);
-      showAlert("Error", "Failed to generate KOT");
+      showAlert("Print Error", String(err));
     }
   };
 
@@ -909,30 +835,32 @@ export default function POS() {
               <div className="p-5 border-b border-slate-200 dark:border-slate-800 shrink-0">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-base font-bold text-slate-900 dark:text-white">Order Summary</h2>
-                <select
-                  value={tableId || "0"}
-                  onChange={(e) => handleTableChange(e.target.value)}
-                  className="px-2 py-1.5 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 text-blue-600 dark:text-blue-400 text-xs font-bold rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer appearance-none text-center shadow-sm"
-                >
-                  <option value="0">Walk-in</option>
-                  {tables.map(t => {
-                    if (t.status === 'Available' || t.table_number.toString() === tableId) {
-                      return <option key={t.id} value={t.table_number}>Table {t.table_number.toString().padStart(2, '0')}</option>
-                    }
-                    return null;
-                  })}
-                </select>
+                <div className="flex items-center space-x-2">
+                  <div className="relative">
+                    <select
+                      value={tableId !== "0" && tableId ? tableId : "Dine-in"}
+                      onChange={(e) => handleTableChange(e.target.value)}
+                      className={`pl-3 pr-7 py-1.5 text-xs font-bold rounded-lg focus:outline-none cursor-pointer appearance-none shadow-sm transition-colors ${tableId !== "0" && tableId ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800/50 text-blue-600 dark:text-blue-400 border' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border border-transparent'}`}
+                    >
+                      <option value="Dine-in" disabled hidden>Dine-in</option>
+                      {tables.map(t => {
+                        if (t.status === 'Available' || t.table_number.toString() === tableId) {
+                          return <option key={t.id} value={t.table_number} className="text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-800">Table {t.table_number.toString().padStart(2, '0')}</option>
+                        }
+                        return null;
+                      })}
+                    </select>
+                    <ChevronDown size={12} className={`absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none ${tableId !== "0" && tableId ? 'text-blue-500 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'}`} />
+                  </div>
+                  <button
+                    onClick={() => handleTableChange("0")}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors shadow-sm border ${tableId === "0" || !tableId ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800/50 text-blue-600 dark:text-blue-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border-transparent'}`}
+                  >
+                    Walk-in
+                  </button>
+                </div>
               </div>
 
-              <div className="relative mb-4">
-                <button 
-                  onClick={() => navigate(`${basePath}/pos/0/new`)}
-                  className="w-full flex items-center justify-center bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 px-3 py-2.5 rounded-xl font-bold border border-blue-200 dark:border-blue-900/30 shadow-sm transition-colors hover:bg-blue-100 dark:hover:bg-blue-900/20"
-                >
-                  <Plus size={18} className="mr-2" />
-                  <span>New Order</span>
-                </button>
-              </div>
 
               <div className="flex flex-col space-y-3">
                 <div className="flex items-center justify-between">
@@ -974,9 +902,10 @@ export default function POS() {
                 <div className="pt-2 border-t border-slate-200 dark:border-slate-800/50 space-y-3">
                   <div className="relative">
                     <div className="relative">
+                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1 tracking-wider">Customer Name</label>
                       <input
                         type="text"
-                        placeholder="Search or Select Customer..."
+                        placeholder="Customer Name (or Search...)"
                         value={customerSearch}
                         onChange={e => {
                           setCustomerSearch(e.target.value);
@@ -1016,7 +945,7 @@ export default function POS() {
                               className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-xs text-slate-900 dark:text-white"
                               onClick={() => {
                                 setSelectedCustomerId(c.id);
-                                setCustomerSearch(`${c.name} (${c.phone}) - ${c.visits} Visits`);
+                                setCustomerSearch(c.name);
                                 setDeliveryAddress(c.address || "");
                                 setDeliveryPhone(c.phone || "");
                                 setShowCustomerDropdown(false);
@@ -1040,19 +969,27 @@ export default function POS() {
                     ) : null;
                   })()}
 
-                  {orderType === "Delivery" && (
-                    <div className="mt-3 space-y-3">
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1 tracking-wider">Phone Number</label>
+                  <div className="mt-3 space-y-3">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1 tracking-wider">Phone Number</label>
                         <input
-                          type="text"
-                          value={deliveryPhone}
-                          onChange={(e) => setDeliveryPhone(e.target.value)}
-                          onBlur={() => saveDeliveryDraft(undefined, deliveryPhone, undefined)}
-                          placeholder="Enter contact number..."
-                          className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-lg p-2 focus:outline-none focus:border-indigo-500 transition-colors"
-                        />
-                      </div>
+                        type="text"
+                        value={deliveryPhone}
+                        onChange={(e) => setDeliveryPhone(e.target.value)}
+                        onBlur={() => {
+                          const exactMatch = customers.find(c => c.phone === deliveryPhone.trim());
+                          if (exactMatch && !selectedCustomerId) {
+                            setSelectedCustomerId(exactMatch.id);
+                            setCustomerSearch(exactMatch.name);
+                            if (exactMatch.address) setDeliveryAddress(exactMatch.address);
+                          }
+                          saveDeliveryDraft(undefined, deliveryPhone, undefined);
+                        }}
+                        placeholder="Enter contact number..."
+                        className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-lg p-2 focus:outline-none focus:border-blue-500 transition-colors"
+                      />
+                    </div>
+                    {orderType === "Delivery" && (
                       <div>
                         <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1 tracking-wider">Delivery Address</label>
                         <textarea
@@ -1060,12 +997,12 @@ export default function POS() {
                           onChange={(e) => setDeliveryAddress(e.target.value)}
                           onBlur={() => saveDeliveryDraft(deliveryAddress, undefined, undefined)}
                           placeholder="Enter full delivery address..."
-                          className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-lg p-2 focus:outline-none focus:border-indigo-500 transition-colors custom-scrollbar"
+                          className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-lg p-2 focus:outline-none focus:border-blue-500 transition-colors custom-scrollbar"
                           rows={2}
                         />
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1107,23 +1044,16 @@ export default function POS() {
                   </div>
                 ))}
                 {cartItems.length === 0 && (
-                  <div className="text-center py-10 flex flex-col items-center justify-center text-slate-500">
-                    <div className="w-16 h-16 rounded-full bg-[#F8F9FF] dark:bg-slate-800 flex items-center justify-center mb-3 text-slate-300 dark:text-slate-500">
-                      <Receipt size={32} />
+                  <div className="text-center py-4 flex flex-col items-center justify-center text-slate-500">
+                    <div className="w-12 h-12 rounded-full bg-[#F8F9FF] dark:bg-slate-800 flex items-center justify-center mb-2 text-slate-300 dark:text-slate-500">
+                      <Receipt size={24} />
                     </div>
                     <span className="text-xs">Cart is empty. Click "+ Add Item" to begin.</span>
                   </div>
                 )}
               </div>
 
-              <button
-                onClick={() => setView('menu')}
-                className="w-full py-3 border-2 border-dashed border-[#CCEOFF] text-[#0066FF] hover:bg-[#F0F5FF] rounded-xl text-sm flex items-center justify-center transition-colors font-bold mb-6"
-              >
-                <Plus size={16} className="mr-2" strokeWidth={2.5} /> Add Item
-              </button>
-
-              <div className="space-y-3 pt-6 border-t border-slate-200 dark:border-slate-800">
+              <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800">
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-slate-500 dark:text-slate-400">Subtotal</span>
                   <span className="text-slate-900 dark:text-white">Rs. {subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
@@ -1153,6 +1083,13 @@ export default function POS() {
             </div> {/* Close scrollable container */}
 
             <div className="p-5 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0F172A] shrink-0">
+              <button
+                onClick={() => setView('menu')}
+                className="w-full py-2.5 mb-4 border-2 border-dashed border-[#CCE0FF] dark:border-[#0066FF]/30 text-[#0066FF] dark:text-[#3385FF] hover:bg-[#F0F5FF] dark:hover:bg-[#0066FF]/10 rounded-xl text-sm flex items-center justify-center transition-colors font-bold"
+              >
+                <Plus size={16} className="mr-2" strokeWidth={2.5} /> Add Item
+              </button>
+
               <div className="flex justify-between items-end mb-5">
                 <span className="text-sm font-bold text-slate-700 dark:text-slate-300">Total Amount</span>
                 <span className="text-2xl font-bold text-slate-900 dark:text-white">Rs. {totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>

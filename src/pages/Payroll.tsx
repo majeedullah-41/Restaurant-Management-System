@@ -236,127 +236,50 @@ export default function Payroll() {
       const adminName = localStorage.getItem('displayName') || localStorage.getItem('userRole') || 'Admin';
       const baseAmount = payout.amount - payout.bonus + payout.deduction + payout.advance_deduction;
 
-      const printWindow = document.createElement('iframe');
-      printWindow.style.position = 'absolute';
-      printWindow.style.width = '0px';
-      printWindow.style.height = '0px';
-      printWindow.style.border = 'none';
-      document.body.appendChild(printWindow);
+      const padBoth = (left: string, right: string, width = 32) => {
+        const spaces = width - left.length - right.length;
+        return left + " ".repeat(Math.max(1, spaces)) + right;
+      };
+    
+      const center = (text: string, width = 32) => {
+        if (text.length >= width) return text.substring(0, width);
+        const left = Math.floor((width - text.length) / 2);
+        return " ".repeat(left) + text;
+      };
 
-      const doc = printWindow.contentWindow?.document;
-      if (!doc) return;
+      let text = "";
+      text += center(restName) + "\n";
+      text += center("SALARY SLIP") + "\n";
+      text += "-".repeat(32) + "\n";
+      
+      text += `Staff: ${payout.staff_name}\n`;
+      text += `Date:  ${payout.date}\n`;
+      text += `Admin: ${adminName}\n`;
+      text += "-".repeat(32) + "\n";
+      
+      text += padBoth("Base Salary", `Rs. ${baseAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+      
+      if (payout.bonus > 0) {
+        text += padBoth("Bonus/Allowances", `+ Rs. ${payout.bonus.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+      }
+      if (payout.deduction > 0) {
+        text += padBoth("Deductions", `- Rs. ${payout.deduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+      }
+      if (payout.advance_deduction > 0) {
+        text += padBoth("Advance Ded.", `- Rs. ${payout.advance_deduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+      }
+      
+      text += "=".repeat(32) + "\n";
+      text += padBoth("NET PAY", `Rs. ${payout.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+      text += "-".repeat(32) + "\n\n";
+      
+      text += "Employer Sig: _________________\n\n";
+      text += "Employee Sig: _________________\n\n\n\n";
 
-      const html = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>Salary Slip - ${payout.staff_name}</title>
-          <style>
-            body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 40px; color: #1e293b; max-width: 800px; margin: 0 auto; }
-            .header { text-align: center; margin-bottom: 40px; border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; }
-            .header h1 { margin: 0; font-size: 28px; color: #0f172a; }
-            .header p { margin: 5px 0 0; color: #64748b; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
-            .info-grid { display: flex; justify-content: space-between; margin-bottom: 40px; background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; }
-            .info-item { display: flex; flex-direction: column; gap: 4px; }
-            .info-label { font-size: 12px; color: #64748b; text-transform: uppercase; font-weight: bold; }
-            .info-value { font-size: 16px; font-weight: 600; color: #0f172a; }
-            table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
-            th, td { padding: 15px; text-align: right; border-bottom: 1px solid #e2e8f0; }
-            th { text-align: left; font-size: 13px; color: #64748b; text-transform: uppercase; }
-            td:first-child, th:first-child { text-align: left; }
-            .amount { font-family: monospace; font-size: 15px; }
-            .total-row td { border-top: 2px solid #cbd5e1; border-bottom: none; font-weight: bold; font-size: 18px; color: #0f172a; }
-            .total-row td:first-child { text-align: right; text-transform: uppercase; font-size: 14px; color: #64748b; }
-            .footer { text-align: center; margin-top: 50px; font-size: 12px; color: #94a3b8; }
-            .signature { margin-top: 60px; display: flex; justify-content: space-between; padding: 0 40px; }
-            .sig-line { width: 200px; border-top: 1px solid #cbd5e1; text-align: center; padding-top: 8px; font-size: 12px; color: #64748b; }
-            @media print {
-              body { padding: 20px; }
-              @page { margin: 10mm; }
-            }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h1>${restName}</h1>
-            <p>Salary Slip</p>
-          </div>
-          
-          <div class="info-grid">
-            <div class="info-item">
-              <span class="info-label">Staff Member</span>
-              <span class="info-value">${payout.staff_name}</span>
-            </div>
-            <div class="info-item" style="text-align: center;">
-              <span class="info-label">Issued By</span>
-              <span class="info-value">${adminName}</span>
-            </div>
-            <div class="info-item" style="text-align: right;">
-              <span class="info-label">Date Issued</span>
-              <span class="info-value">${payout.date}</span>
-            </div>
-          </div>
-
-          <table>
-            <thead>
-              <tr>
-                <th>Description</th>
-                <th style="width: 200px;">Amount (Rs.)</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>Base Salary</td>
-                <td class="amount">${baseAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-              </tr>
-              ${payout.bonus > 0 ? `
-              <tr>
-                <td>Bonus / Allowances</td>
-                <td class="amount">+ ${payout.bonus.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-              </tr>` : ''}
-              ${payout.deduction > 0 ? `
-              <tr>
-                <td>Deductions</td>
-                <td class="amount">- ${payout.deduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-              </tr>` : ''}
-              ${payout.advance_deduction > 0 ? `
-              <tr>
-                <td>Advance Salary Deduction</td>
-                <td class="amount">- ${payout.advance_deduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-              </tr>` : ''}
-              <tr class="total-row">
-                <td>Net Pay</td>
-                <td class="amount">${payout.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <div class="signature">
-            <div class="sig-line">Employer Signature</div>
-            <div class="sig-line">Employee Signature</div>
-          </div>
-          
-          <div class="footer">
-            Generated by Restaurant Management System
-          </div>
-        </body>
-        </html>
-      `;
-
-      doc.open();
-      doc.write(html);
-      doc.close();
-
-      setTimeout(() => {
-        printWindow.contentWindow?.focus();
-        printWindow.contentWindow?.print();
-        setTimeout(() => {
-          document.body.removeChild(printWindow);
-        }, 1000);
-      }, 500);
-
+      await invoke("print_receipt_text", { text });
     } catch (e) {
       console.error('Failed to print slip:', e);
+      alert('Failed to print slip: ' + e);
     }
   };
 
@@ -478,7 +401,7 @@ export default function Payroll() {
           )}
 
           {/* Content Area */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden flex-1 flex flex-col">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden flex-1 flex flex-col min-h-[700px]">
             {loading ? (
               <div className="flex-1 flex items-center justify-center">
                 <div className="flex flex-col items-center space-y-3">
@@ -637,6 +560,20 @@ export default function Payroll() {
                           </tr>
                         );
                       })}
+                      {rows.length > 0 && rows.length < 10 && Array.from({ length: 10 - rows.length }).map((_, i) => (
+                        <tr key={`empty-${i}`} className="bg-transparent pointer-events-none">
+                          <td className="py-4 px-5 h-[62px]"></td>
+                          <td className="py-3 px-2"></td>
+                          <td className="py-3 px-2"></td>
+                          <td className="py-3 px-2"></td>
+                          <td className="py-3 px-2"></td>
+                          <td className="py-3 px-2"></td>
+                          <td className="py-3 px-2"></td>
+                          <td className="py-3 px-2"></td>
+                          <td className="py-3 px-2"></td>
+                          <td className="py-3 px-3"></td>
+                        </tr>
+                      ))}
                       {rows.length === 0 && (
                         <tr>
                           <td colSpan={9} className="py-16 text-center">
@@ -748,7 +685,7 @@ export default function Payroll() {
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
                     {history.map((record) => {
-                      const baseAmount = record.amount - record.bonus + record.deduction;
+                      const baseAmount = record.amount - record.bonus + record.deduction + record.advance_deduction;
                       return (
                         <tr key={record.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition-colors">
                           <td className="py-3 px-4">

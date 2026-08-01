@@ -729,6 +729,26 @@ pub fn save_print_html(filename: String, html: String) -> Result<String, String>
     Ok("Success".to_string())
 }
 
+#[tauri::command]
+pub async fn print_receipt_text(text: String) -> Result<String, String> {
+    let path = std::env::temp_dir().join("temp_receipt.txt");
+    std::fs::write(&path, &text).map_err(|e| e.to_string())?;
+    
+    // Use powershell to send the text directly to the default printer
+    // We use spawn() instead of output() so it doesn't block if the printer
+    // is a PDF printer waiting for a 'Save As' dialog.
+    std::process::Command::new("powershell")
+        .args(&[
+            "-WindowStyle", "Hidden",
+            "-Command",
+            &format!("Get-Content '{}' | Out-Printer", path.display())
+        ])
+        .spawn()
+        .map_err(|e| format!("Failed to spawn print command: {}", e))?;
+
+    Ok("Print job sent".to_string())
+}
+
 #[derive(serde::Serialize)]
 pub struct OrderHistory {
     pub id: i32,
@@ -1344,6 +1364,48 @@ pub fn add_customer(name: String, phone: String) -> Result<String, String> {
         [&name, &phone]
     ).map_err(|e| e.to_string())?;
     Ok("Customer added".into())
+}
+
+#[tauri::command]
+pub fn resolve_customer(name: Option<String>, phone: Option<String>, address: Option<String>) -> Result<i32, String> {
+    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    
+    let n = name.unwrap_or_default().trim().to_string();
+    let p = phone.unwrap_or_default().trim().to_string();
+    let a = address.unwrap_or_default().trim().to_string();
+
+    if p.is_empty() && n.is_empty() {
+        return Err("Name or Phone is required".into());
+    }
+
+    // 1. Try to find by phone if provided
+    if !p.is_empty() {
+        if let Ok(id) = conn.query_row("SELECT id FROM customers WHERE phone = ?1", [&p], |row| row.get(0)) {
+            if !a.is_empty() {
+                let _ = conn.execute("UPDATE customers SET address = ?1 WHERE id = ?2", rusqlite::params![&a, &id]);
+            }
+            return Ok(id);
+        }
+    }
+
+    // 2. Try to find by name if phone was empty
+    if p.is_empty() && !n.is_empty() {
+        if let Ok(id) = conn.query_row("SELECT id FROM customers WHERE name = ?1", [&n], |row| row.get(0)) {
+            if !a.is_empty() {
+                let _ = conn.execute("UPDATE customers SET address = ?1 WHERE id = ?2", rusqlite::params![&a, &id]);
+            }
+            return Ok(id);
+        }
+    }
+
+    // 3. Create new customer
+    conn.execute(
+        "INSERT INTO customers (name, phone, address, visits) VALUES (?1, ?2, ?3, 0)",
+        rusqlite::params![&n, &p, &a]
+    ).map_err(|e| e.to_string())?;
+    
+    let new_id = conn.last_insert_rowid() as i32;
+    Ok(new_id)
 }
 
 #[tauri::command]
@@ -1984,7 +2046,7 @@ pub fn get_payout_history(start_date: String, end_date: String) -> Result<Vec<Sa
     conn.execute("ALTER TABLE salary_payouts ADD COLUMN bonus REAL", []).ok();
     conn.execute("ALTER TABLE salary_payouts ADD COLUMN deduction REAL", []).ok();
     conn.execute("ALTER TABLE salary_payouts ADD COLUMN advance_deduction REAL", []).ok();
-    
+
     let mut stmt = conn.prepare(
         "SELECT p.id, s.name, p.amount, p.bonus, p.deduction, p.advance_deduction, p.date
          FROM salary_payouts p
@@ -2070,7 +2132,7 @@ pub fn process_batch_payout(payouts: Vec<BatchPayoutEntry>, payout_date: String)
         
         tx.execute(
             "INSERT INTO salary_payouts (staff_id, amount, bonus, deduction, advance_deduction, date) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![entry.staff_id, net_amount, entry.bonus, total_deduction, entry.advance_deduction, payout_date]
+            rusqlite::params![entry.staff_id, net_amount, entry.bonus, entry.deduction, entry.advance_deduction, payout_date]
         ).map_err(|e| e.to_string())?;
         
         if entry.advance_deduction > 0.0 {
