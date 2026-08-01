@@ -2,6 +2,21 @@
 
 use rusqlite::{Connection, Result};
 use serde::Serialize;
+use std::sync::{Mutex, OnceLock};
+
+static DB_CONN: OnceLock<Mutex<Connection>> = OnceLock::new();
+
+pub fn init_shared_connection() {
+    let db_path = std::env::var("DB_PATH").unwrap_or_else(|_| "../local.db".to_string());
+    let conn = Connection::open(&db_path).expect("Failed to open global database connection");
+    DB_CONN.set(Mutex::new(conn)).unwrap_or_else(|_| panic!("DB_CONN already initialized"));
+}
+
+pub fn get_conn() -> std::result::Result<std::sync::MutexGuard<'static, Connection>, String> {
+    DB_CONN.get()
+        .ok_or_else(|| "Database connection not initialized".to_string())
+        .and_then(|mutex| mutex.lock().map_err(|e| format!("Failed to lock DB connection: {}", e)))
+}
 
 #[derive(Serialize)]
 pub struct LoginResponse {
@@ -14,7 +29,7 @@ pub struct LoginResponse {
 
 pub fn init_db() -> Result<()> {
     // This creates a file called "local.db" in your app's folder
-    let conn = Connection::open("../local.db")?;
+    let conn = get_conn().map_err(|e| rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e)))?;
     
     // Create all the tables from the roadmap
     conn.execute_batch(
@@ -35,12 +50,10 @@ pub fn init_db() -> Result<()> {
     conn.execute("INSERT OR IGNORE INTO restaurant_settings (id, restaurant_name, tax_rate, total_tables) VALUES (1, 'My Restaurant', 16.0, 10)", [])?;
 
 
-    // NEW: Seed a default Admin user so the login actually works
-    // Using admin@restaurant.com to match your UI mockup. 
-    // Note: Storing plain-text 'password' here just for initial UI wiring. 
-    // We will upgrade this to bcrypt hashing later per NFR-003.
-    conn.execute("INSERT OR IGNORE INTO users (username, password_hash, role_id) VALUES ('admin@restaurant.com', 'password', 1)", [])?;
-    conn.execute("INSERT OR IGNORE INTO users (username, password_hash, role_id) VALUES ('cashier@restaurant.com', 'password', 2)", [])?;
+    // NEW: Seed a default Admin user with hashed password
+    let hash = bcrypt::hash("password", bcrypt::DEFAULT_COST).map_err(|e| rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e.to_string())))?;
+    conn.execute("INSERT OR IGNORE INTO users (username, password_hash, role_id) VALUES ('admin@restaurant.com', ?1, 1)", [&hash])?;
+    conn.execute("INSERT OR IGNORE INTO users (username, password_hash, role_id) VALUES ('cashier@restaurant.com', ?1, 2)", [&hash])?;
 
     println!("Database created and seeded successfully!");
     run_migrations(&conn).map_err(|e| rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e)))?;
@@ -99,6 +112,11 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
     let _ = conn.execute("ALTER TABLE orders ADD COLUMN delivery_driver_id INTEGER", []);
     let _ = conn.execute("ALTER TABLE orders ADD COLUMN delivery_fee REAL DEFAULT 0.0", []);
     let _ = conn.execute("ALTER TABLE orders ADD COLUMN customer_phone TEXT", []);
+    
+    // salary_payouts schema updates
+    let _ = conn.execute("ALTER TABLE salary_payouts ADD COLUMN bonus REAL", []);
+    let _ = conn.execute("ALTER TABLE salary_payouts ADD COLUMN deduction REAL", []);
+    let _ = conn.execute("ALTER TABLE salary_payouts ADD COLUMN advance_deduction REAL", []);
 
     // 4. staff, customers, attendance, payouts columns/tables if any
     let _ = conn.execute(
@@ -168,6 +186,27 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
     conn.execute("ALTER TABLE users ADD COLUMN security_question TEXT", []).ok();
     conn.execute("ALTER TABLE users ADD COLUMN security_answer TEXT", []).ok();
 
+    // 7. Password hashing migration
+    if let Ok(mut stmt) = conn.prepare("SELECT id, password_hash FROM users") {
+        let users_res: Result<Vec<(i32, String)>, _> = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        }).and_then(|iter| iter.collect());
+
+        if let Ok(users) = users_res {
+            let mut users_to_hash = Vec::new();
+            for (id, hash_or_plain) in users {
+                if !hash_or_plain.starts_with("$2") && !hash_or_plain.is_empty() {
+                    if let Ok(new_hash) = bcrypt::hash(hash_or_plain, bcrypt::DEFAULT_COST) {
+                        users_to_hash.push((id, new_hash));
+                    }
+                }
+            }
+            for (id, new_hash) in users_to_hash {
+                conn.execute("UPDATE users SET password_hash = ?1 WHERE id = ?2", rusqlite::params![new_hash, id]).ok();
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -181,7 +220,7 @@ pub fn update_user_profile(
     display_name: Option<String>,
     new_role: Option<String>,
 ) -> Result<(), String> {
-    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
 
     // First check if user exists
     let mut stmt = conn.prepare("SELECT password_hash FROM users WHERE username = ?").map_err(|e| e.to_string())?;
@@ -193,15 +232,21 @@ pub fn update_user_profile(
     if let Some(new_pw) = new_password {
         if !admin_override.unwrap_or(false) {
             let curr_pw = current_password.ok_or_else(|| "Current password is required to set a new password".to_string())?;
-            if db_password != curr_pw {
-                return Err("Incorrect current password".to_string());
+            if let Ok(is_valid) = bcrypt::verify(&curr_pw, &db_password) {
+                if !is_valid {
+                    return Err("Incorrect current password".to_string());
+                }
+            } else {
+                return Err("Failed to verify current password".to_string());
             }
         }
         
+        let new_pw_hash = bcrypt::hash(&new_pw, bcrypt::DEFAULT_COST).map_err(|e| e.to_string())?;
+
         // Update username, password, and display_name
         conn.execute(
             "UPDATE users SET username = ?, password_hash = ?, display_name = ? WHERE username = ?",
-            [&new_username, &new_pw, &display_name.unwrap_or_default(), &old_username],
+            [&new_username, &new_pw_hash, &display_name.unwrap_or_default(), &old_username],
         ).map_err(|e| e.to_string())?;
     } else {
         // Just update username and display_name
@@ -222,7 +267,7 @@ pub fn update_user_profile(
 
 #[tauri::command]
 pub fn update_security_question(username: String, question: String, answer: String) -> Result<(), String> {
-    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute(
         "UPDATE users SET security_question = ?, security_answer = ? WHERE username = ?",
         [&question, &answer, &username],
@@ -232,7 +277,7 @@ pub fn update_security_question(username: String, question: String, answer: Stri
 
 #[tauri::command]
 pub fn get_security_question(username: String) -> Result<String, String> {
-    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     let mut stmt = conn.prepare("SELECT security_question FROM users WHERE username = ?").map_err(|e| e.to_string())?;
     let question: Option<String> = stmt.query_row([&username], |row| row.get(0)).map_err(|_| "User not found".to_string())?;
     match question {
@@ -243,16 +288,17 @@ pub fn get_security_question(username: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn reset_password_with_security_answer(username: String, answer: String, new_password: String) -> Result<(), String> {
-    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     let mut stmt = conn.prepare("SELECT security_answer FROM users WHERE username = ?").map_err(|e| e.to_string())?;
     let db_answer: Option<String> = stmt.query_row([&username], |row| row.get(0)).map_err(|_| "User not found".to_string())?;
     
     match db_answer {
         Some(a) => {
             if a.to_lowercase() == answer.to_lowercase() {
+                let new_pw_hash = bcrypt::hash(&new_password, bcrypt::DEFAULT_COST).map_err(|e| e.to_string())?;
                 conn.execute(
                     "UPDATE users SET password_hash = ? WHERE username = ?",
-                    [&new_password, &username],
+                    [&new_pw_hash, &username],
                 ).map_err(|e| e.to_string())?;
                 Ok(())
             } else {
@@ -267,7 +313,7 @@ pub fn reset_password_with_security_answer(username: String, answer: String, new
 #[tauri::command]
 pub fn get_restaurant_name() -> Result<String, String> {
     // Open the database
-    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // Ask the database for the name where id = 1
     let name: String = conn
@@ -280,7 +326,7 @@ pub fn get_restaurant_name() -> Result<String, String> {
 
 #[tauri::command]
 pub fn get_user_role_by_username(username: String) -> Result<String, String> {
-    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     let mut stmt = conn.prepare("
         SELECT r.name FROM users u
@@ -297,27 +343,38 @@ pub fn get_user_role_by_username(username: String) -> Result<String, String> {
 // NEW: The authentication command
 #[tauri::command]
 pub fn login(email: String, password: String) -> LoginResponse {
-    let conn = match Connection::open("../local.db") {
+    let conn = match get_conn() {
         Ok(c) => c,
         Err(_) => return LoginResponse { success: false, role: None, username: None, display_name: None, message: "Database connection failed".into() },
     };
 
-    // Join the users table with the roles table to get the actual "Admin" or "Cashier" string
     let mut stmt = match conn.prepare(
-        "SELECT r.name, u.display_name FROM users u 
+        "SELECT r.name, u.display_name, u.password_hash FROM users u 
          JOIN roles r ON u.role_id = r.id 
-         WHERE u.username = ?1 AND u.password_hash = ?2"
+         WHERE u.username = ?1"
     ) {
         Ok(s) => s,
         Err(_) => return LoginResponse { success: false, role: None, username: None, display_name: None, message: "Query preparation failed".into() },
     };
 
-    let mut rows = stmt.query([&email, &password]).unwrap();
+    let mut rows = match stmt.query([&email]) {
+        Ok(r) => r,
+        Err(_) => return LoginResponse { success: false, role: None, username: None, display_name: None, message: "Query execution failed".into() },
+    };
 
     if let Ok(Some(row)) = rows.next() {
-        let role: String = row.get(0).unwrap();
+        let role: String = row.get(0).unwrap_or_default();
         let display_name: Option<String> = row.get(1).unwrap_or(None);
-        LoginResponse { success: true, role: Some(role), username: Some(email), display_name, message: "Login successful".into() }
+        let password_hash: String = row.get(2).unwrap_or_default();
+        
+        match bcrypt::verify(&password, &password_hash) {
+            Ok(true) => {
+                LoginResponse { success: true, role: Some(role), username: Some(email), display_name, message: "Login successful".into() }
+            },
+            _ => {
+                LoginResponse { success: false, role: None, username: None, display_name: None, message: "Invalid email or password".into() }
+            }
+        }
     } else {
         LoginResponse { success: false, role: None, username: None, display_name: None, message: "Invalid email or password".into() }
     }
@@ -332,7 +389,7 @@ pub struct Category {
 
 #[tauri::command]
 pub fn get_categories() -> Result<Vec<Category>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     let mut stmt = conn.prepare("SELECT id, name FROM categories").map_err(|e| e.to_string())?;
     
     let categories = stmt.query_map([], |row| {
@@ -359,7 +416,7 @@ pub struct MenuItem {
 
 #[tauri::command]
 pub fn get_menu_items() -> Result<Vec<MenuItem>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     let mut stmt = conn.prepare("SELECT id, name, category_id, price, is_active FROM menu_items").map_err(|e| e.to_string())?;
     
     let items = stmt.query_map([], |row| {
@@ -378,14 +435,14 @@ pub fn get_menu_items() -> Result<Vec<MenuItem>, String> {
 }
 #[tauri::command]
 pub fn add_category(name: String) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute("INSERT INTO categories (name) VALUES (?1)", [&name]).map_err(|e| e.to_string())?;
     Ok("Category added".into())
 }
 
 #[tauri::command]
 pub fn add_menu_item(name: String, category_id: i32, price: f64) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute(
         "INSERT INTO menu_items (name, category_id, price) VALUES (?1, ?2, ?3)",
         (&name, &category_id, &price),
@@ -396,7 +453,7 @@ pub fn add_menu_item(name: String, category_id: i32, price: f64) -> Result<Strin
 
 #[tauri::command]
 pub fn delete_category(id: i32) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     // Note: In a real production app, you'd want to handle menu items linked to this category first!
     conn.execute("DELETE FROM categories WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
     Ok("Category deleted".into())
@@ -404,7 +461,7 @@ pub fn delete_category(id: i32) -> Result<String, String> {
 
 #[tauri::command]
 pub fn update_category(id: i32, name: String) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute("UPDATE categories SET name = ?1 WHERE id = ?2", rusqlite::params![name, id]).map_err(|e| e.to_string())?;
     Ok("Category updated".into())
 }
@@ -413,7 +470,7 @@ pub fn update_category(id: i32, name: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn delete_menu_item(id: i32) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute("DELETE FROM menu_items WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
     Ok("Menu item deleted".into())
 }
@@ -421,7 +478,7 @@ pub fn delete_menu_item(id: i32) -> Result<String, String> {
 #[tauri::command]
 #[allow(non_snake_case)]
 pub fn update_menu_item(id: i32, name: String, categoryId: i32, price: f64) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute(
         "UPDATE menu_items SET name = ?1, category_id = ?2, price = ?3 WHERE id = ?4",
         rusqlite::params![name, categoryId, price, id],
@@ -431,7 +488,7 @@ pub fn update_menu_item(id: i32, name: String, categoryId: i32, price: f64) -> R
 
 #[tauri::command]
 pub fn toggle_menu_item_status(id: i32, is_active: bool) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute(
         "UPDATE menu_items SET is_active = ?1 WHERE id = ?2",
         rusqlite::params![if is_active { 1 } else { 0 }, id],
@@ -453,7 +510,7 @@ pub struct RestaurantSettings {
 
 #[tauri::command]
 pub fn get_settings() -> Result<RestaurantSettings, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     let mut stmt = conn.prepare("SELECT restaurant_name, logo_path, tax_rate, total_tables, address, COALESCE(service_charge_rate, 0.0), COALESCE(service_charge_types, 'Dine-in'), contact_number FROM restaurant_settings WHERE id = 1").map_err(|e| e.to_string())?;
     
     let settings = stmt.query_row([], |row| {
@@ -474,10 +531,10 @@ pub fn get_settings() -> Result<RestaurantSettings, String> {
 
 #[tauri::command]
 pub fn update_settings(name: String, address: Option<String>, logo_path: Option<String>, tax_rate: f64, total_tables: i32, service_charge_rate: f64, service_charge_types: String, contact_number: Option<String>) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // Check if we are reducing tables and if any of the tables to be removed are occupied
-    let mut stmt = conn.prepare("SELECT COUNT(*) FROM table_status WHERE table_number > ?1 AND status != 'Available'").unwrap();
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM table_status WHERE table_number > ?1 AND status != 'Available'").map_err(|e| e.to_string())?;
     let occupied_count: i32 = stmt.query_row([&total_tables], |row| row.get(0)).unwrap_or(0);
     if occupied_count > 0 {
         return Err("Cannot reduce total tables. Some tables to be removed are currently occupied or reserved.".to_string());
@@ -507,7 +564,7 @@ pub struct TableStatus {
 
 #[tauri::command]
 pub fn init_tables_if_needed() -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // Create the table to track orders and availability
     conn.execute(
@@ -550,7 +607,7 @@ pub fn init_tables_if_needed() -> Result<String, String> {
 
 #[tauri::command]
 pub fn get_table_statuses() -> Result<Vec<TableStatus>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     let mut stmt = conn.prepare("SELECT id, table_number, status FROM table_status ORDER BY table_number").map_err(|e| e.to_string())?;
     
     let tables = stmt.query_map([], |row| {
@@ -568,7 +625,7 @@ pub fn get_table_statuses() -> Result<Vec<TableStatus>, String> {
 
 #[tauri::command]
 pub fn add_table(table_number: i32) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // Create the table if it doesn't exist yet
     conn.execute(
@@ -590,10 +647,10 @@ pub fn add_table(table_number: i32) -> Result<String, String> {
 
 #[tauri::command]
 pub fn delete_table(id: i32) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // Check if table is occupied
-    let mut stmt = conn.prepare("SELECT status FROM table_status WHERE id = ?1").unwrap();
+    let mut stmt = conn.prepare("SELECT status FROM table_status WHERE id = ?1").map_err(|e| e.to_string())?;
     let status: String = stmt.query_row([&id], |row| row.get(0)).unwrap_or_default();
     
     if status == "Occupied" {
@@ -629,7 +686,7 @@ pub struct OrderItem {
 
 #[tauri::command]
 pub fn get_order_items(order_id: i32) -> Result<Vec<OrderItem>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     let mut stmt = conn.prepare("SELECT id, item_id, name, price, quantity FROM order_items WHERE order_id = ?1").map_err(|e| e.to_string())?;
     
     let items = stmt.query_map([&order_id], |row| {
@@ -647,10 +704,10 @@ pub fn get_order_items(order_id: i32) -> Result<Vec<OrderItem>, String> {
 
 #[tauri::command]
 pub fn add_item_to_order(order_id: i32, item_id: i32, name: String, price: f64) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // Check if item already exists in this specific order
-    let mut stmt = conn.prepare("SELECT id, quantity FROM order_items WHERE order_id = ?1 AND item_id = ?2").unwrap();
+    let mut stmt = conn.prepare("SELECT id, quantity FROM order_items WHERE order_id = ?1 AND item_id = ?2").map_err(|e| e.to_string())?;
     let existing = stmt.query_row([&order_id, &item_id], |row| Ok((row.get::<_, i32>(0)?, row.get::<_, i32>(1)?)));
 
     match existing {
@@ -671,9 +728,9 @@ pub fn add_item_to_order(order_id: i32, item_id: i32, name: String, price: f64) 
 
 #[tauri::command]
 pub fn remove_item_from_order(order_id: i32, item_id: i32) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
-    let mut stmt = conn.prepare("SELECT id, quantity FROM order_items WHERE order_id = ?1 AND item_id = ?2").unwrap();
+    let mut stmt = conn.prepare("SELECT id, quantity FROM order_items WHERE order_id = ?1 AND item_id = ?2").map_err(|e| e.to_string())?;
     let existing = stmt.query_row([&order_id, &item_id], |row| Ok((row.get::<_, i32>(0)?, row.get::<_, i32>(1)?)));
 
     if let Ok((id, quantity)) = existing {
@@ -690,7 +747,7 @@ pub fn remove_item_from_order(order_id: i32, item_id: i32) -> Result<String, Str
 
 #[tauri::command]
 pub fn update_order_type(order_id: i32, order_type: String) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute(
         "UPDATE orders SET order_type = ?1 WHERE id = ?2",
         rusqlite::params![order_type, order_id]
@@ -700,8 +757,7 @@ pub fn update_order_type(order_id: i32, order_type: String) -> Result<String, St
 
 #[tauri::command]
 pub fn update_order_delivery_draft(order_id: i32, delivery_address: Option<String>, customer_phone: Option<String>, customer_id: Option<i32>) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
-    conn.execute("ALTER TABLE orders ADD COLUMN customer_phone TEXT", []).ok();
+    let conn = get_conn()?;
     
     conn.execute(
         "UPDATE orders SET delivery_address = ?1, customer_phone = ?2, customer_id = ?3 WHERE id = ?4",
@@ -725,34 +781,27 @@ pub fn checkout_order(
     order_note: String,
     service_charge_amount: f64
 ) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // Ensure all new columns exist
-    conn.execute("ALTER TABLE orders ADD COLUMN closed_at TEXT", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN order_type TEXT DEFAULT 'Dine-in'", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN subtotal REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN tax_amount REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN discount_amount REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN amount_received REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN change_due REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN customer_id INTEGER", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN cashier_name TEXT", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN order_note TEXT", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN service_charge_amount REAL DEFAULT 0.0", []).ok();
 
-    // Close the order
+    let new_status = if order_type == "Delivery" { "Delivery Pending" } else { "Closed" };
+
+    // Close the order (or mark Delivery Pending)
     conn.execute(
-        "UPDATE orders SET status = 'Closed', closed_at = datetime('now', 'localtime'), 
+        "UPDATE orders SET status = ?12, closed_at = datetime('now', 'localtime'), 
         order_type = ?2, subtotal = ?3, tax_amount = ?4, discount_amount = ?5, 
         amount_received = ?6, change_due = ?7, customer_id = ?8, cashier_name = ?9, order_note = ?10, service_charge_amount = ?11 
         WHERE id = ?1", 
         rusqlite::params![
             order_id, order_type, subtotal, tax_amount, discount_amount, 
-            amount_received, change_due, customer_id, cashier_name, order_note, service_charge_amount
+            amount_received, change_due, customer_id, cashier_name, order_note, service_charge_amount,
+            new_status
         ]
     ).map_err(|e| e.to_string())?;
     // Free up the physical table
     conn.execute("UPDATE table_status SET status = 'Available' WHERE table_number = ?1", [&table_number]).map_err(|e| e.to_string())?;
+
     
     if let Some(c_id) = customer_id {
         conn.execute("UPDATE customers SET visits = visits + 1 WHERE id = ?1", [&c_id]).map_err(|e| e.to_string())?;
@@ -763,10 +812,9 @@ pub fn checkout_order(
 
 #[tauri::command]
 pub fn update_order_discount(order_id: i32, discount_amount: f64) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // Ensure column exists
-    conn.execute("ALTER TABLE orders ADD COLUMN discount_amount REAL DEFAULT 0.0", []).ok();
     
     conn.execute(
         "UPDATE orders SET discount_amount = ?1 WHERE id = ?2 AND status = 'Open'",
@@ -792,14 +840,31 @@ pub async fn print_receipt_text(text: String) -> Result<String, String> {
     // Use powershell to send the text directly to the default printer
     // We use spawn() instead of output() so it doesn't block if the printer
     // is a PDF printer waiting for a 'Save As' dialog.
-    std::process::Command::new("powershell")
-        .args(&[
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let mut cmd = std::process::Command::new("powershell");
+        cmd.args(&[
             "-WindowStyle", "Hidden",
             "-Command",
             &format!("Get-Content '{}' | Out-Printer", path.display())
-        ])
-        .spawn()
-        .map_err(|e| format!("Failed to spawn print command: {}", e))?;
+        ]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.spawn().map_err(|e| format!("Failed to spawn print command: {}", e))?;
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("powershell")
+            .args(&[
+                "-WindowStyle", "Hidden",
+                "-Command",
+                &format!("Get-Content '{}' | Out-Printer", path.display())
+            ])
+            .spawn()
+            .map_err(|e| format!("Failed to spawn print command: {}", e))?;
+    }
 
     Ok("Print job sent".to_string())
 }
@@ -830,7 +895,7 @@ pub struct OrderHistory {
 
 #[tauri::command]
 pub fn get_order_history() -> Result<Vec<OrderHistory>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // We join the orders and order_items tables, sum up the quantities and prices, 
     // and only fetch the orders that have been successfully checked out ('Closed').
@@ -877,10 +942,10 @@ pub fn get_order_history() -> Result<Vec<OrderHistory>, String> {
 }
 #[tauri::command]
 pub fn admin_update_table_status(table_number: i32, status: String) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // 1. Check current status to prevent overriding an active checkout session
-    let mut stmt = conn.prepare("SELECT status FROM table_status WHERE table_number = ?1").unwrap();
+    let mut stmt = conn.prepare("SELECT status FROM table_status WHERE table_number = ?1").map_err(|e| e.to_string())?;
     let current_status: String = stmt.query_row([&table_number], |row| row.get(0)).unwrap_or_default();
     
     // If the cashier is currently serving this table, block the admin override
@@ -898,7 +963,7 @@ pub fn admin_update_table_status(table_number: i32, status: String) -> Result<St
 }
 #[tauri::command]
 pub fn cancel_active_order(order_id: i32, table_number: i32) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
 
     // 1. Delete associated items (just in case they added items and changed their mind)
     conn.execute("DELETE FROM order_items WHERE order_id = ?1", [&order_id]).map_err(|e| e.to_string())?;
@@ -914,10 +979,10 @@ pub fn cancel_active_order(order_id: i32, table_number: i32) -> Result<String, S
 
 #[tauri::command]
 pub fn reassign_order_table(order_id: i32, old_table: i32, new_table: i32) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     if new_table != 0 {
-        let mut stmt = conn.prepare("SELECT status FROM table_status WHERE table_number = ?1").unwrap();
+        let mut stmt = conn.prepare("SELECT status FROM table_status WHERE table_number = ?1").map_err(|e| e.to_string())?;
         let status: String = stmt.query_row([&new_table], |row| row.get(0)).unwrap_or_default();
         if status != "Available" {
             return Err("Target table is not available".into());
@@ -951,7 +1016,7 @@ fn get_next_available_order_id(conn: &rusqlite::Connection) -> i32 {
 
 #[tauri::command]
 pub fn get_or_create_order(table_number: i32) -> Result<ActiveOrder, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // 1. Ensure the order tables exist
     conn.execute(
@@ -965,21 +1030,6 @@ pub fn get_or_create_order(table_number: i32) -> Result<ActiveOrder, String> {
     ).map_err(|e| e.to_string())?;
 
     // Attempt to migrate existing tables
-    conn.execute("ALTER TABLE orders ADD COLUMN created_at TEXT", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN closed_at TEXT", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN order_type TEXT DEFAULT 'Dine-in'", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN subtotal REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN tax_amount REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN discount_amount REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN amount_received REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN change_due REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN customer_id INTEGER", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN cashier_name TEXT", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN order_note TEXT", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN delivery_status TEXT", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN delivery_address TEXT", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN delivery_driver_id INTEGER", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN delivery_fee REAL DEFAULT 0.0", []).ok();
     
     conn.execute(
         "CREATE TABLE IF NOT EXISTS order_items (
@@ -993,7 +1043,7 @@ pub fn get_or_create_order(table_number: i32) -> Result<ActiveOrder, String> {
     ).map_err(|e| e.to_string())?;
 
     // 2. NEW SAFETY BLOCK: Check if the table is locked by the Admin
-    let mut stmt = conn.prepare("SELECT status FROM table_status WHERE table_number = ?1").unwrap();
+    let mut stmt = conn.prepare("SELECT status FROM table_status WHERE table_number = ?1").map_err(|e| e.to_string())?;
     let current_status: String = stmt.query_row([&table_number], |row| row.get(0)).unwrap_or_default();
     
     if current_status == "Maintenance" || current_status == "Reserved" {
@@ -1001,7 +1051,7 @@ pub fn get_or_create_order(table_number: i32) -> Result<ActiveOrder, String> {
     }
 
     // 3. Check if this table already has an 'Open' order
-    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address FROM orders WHERE table_number = ?1 AND status = 'Open'").unwrap();
+    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address FROM orders WHERE table_number = ?1 AND status = 'Open'").map_err(|e| e.to_string())?;
     let existing_order = stmt.query_row([&table_number], |row| {
         Ok(ActiveOrder {
             id: row.get(0)?,
@@ -1043,9 +1093,9 @@ pub fn get_or_create_order(table_number: i32) -> Result<ActiveOrder, String> {
 
 #[tauri::command]
 pub fn get_active_order(table_number: i32) -> Result<Option<ActiveOrder>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
-    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address FROM orders WHERE table_number = ?1 AND status = 'Open'").unwrap();
+    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address FROM orders WHERE table_number = ?1 AND status = 'Open'").map_err(|e| e.to_string())?;
     let existing_order = stmt.query_row([&table_number], |row| {
         Ok(ActiveOrder {
             id: row.get(0)?,
@@ -1068,9 +1118,9 @@ pub fn get_active_order(table_number: i32) -> Result<Option<ActiveOrder>, String
 
 #[tauri::command]
 pub fn get_order_by_id(order_id: i32) -> Result<ActiveOrder, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
-    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address FROM orders WHERE id = ?1").unwrap();
+    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address FROM orders WHERE id = ?1").map_err(|e| e.to_string())?;
     let order = stmt.query_row([&order_id], |row| {
         Ok(ActiveOrder {
             id: row.get(0)?,
@@ -1093,7 +1143,7 @@ pub fn create_walkin_order(
     customer_phone: Option<String>,
     delivery_address: Option<String>
 ) -> Result<ActiveOrder, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     let new_id = get_next_available_order_id(&conn);
     conn.execute(
@@ -1123,7 +1173,7 @@ pub struct StaffCategory {
 
 #[tauri::command]
 pub fn get_staff_categories() -> Result<Vec<StaffCategory>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     conn.execute(
         "CREATE TABLE IF NOT EXISTS staff_categories (
@@ -1132,24 +1182,24 @@ pub fn get_staff_categories() -> Result<Vec<StaffCategory>, String> {
         )", []
     ).map_err(|e| e.to_string())?;
 
-    let mut stmt = conn.prepare("SELECT id, name FROM staff_categories").unwrap();
+    let mut stmt = conn.prepare("SELECT id, name FROM staff_categories").map_err(|e| e.to_string())?;
     let category_iter = stmt.query_map([], |row| {
         Ok(StaffCategory {
             id: row.get(0)?,
             name: row.get(1)?,
         })
-    }).unwrap();
+    }).map_err(|e| e.to_string())?;
 
     let mut categories = Vec::new();
     for c in category_iter {
-        categories.push(c.unwrap());
+        categories.push(c.map_err(|e| e.to_string())?);
     }
     Ok(categories)
 }
 
 #[tauri::command]
 pub fn add_staff_category(name: String) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     conn.execute(
         "CREATE TABLE IF NOT EXISTS staff_categories (
@@ -1167,7 +1217,7 @@ pub fn add_staff_category(name: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn delete_staff_category(id: i32) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute("DELETE FROM staff_categories WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
     Ok("Category deleted".into())
 }
@@ -1188,7 +1238,7 @@ pub struct StaffMember {
 
 #[tauri::command]
 pub fn get_staff() -> Result<Vec<StaffMember>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     conn.execute(
         "CREATE TABLE IF NOT EXISTS staff (
@@ -1216,7 +1266,7 @@ pub fn get_staff() -> Result<Vec<StaffMember>, String> {
         "SELECT s.id, s.name, s.role, s.phone, s.category_id, s.salary, c.name as category_name, s.pin_code
          FROM staff s 
          LEFT JOIN staff_categories c ON s.category_id = c.id"
-    ).unwrap();
+    ).map_err(|e| e.to_string())?;
     
     let staff_iter = stmt.query_map([], |row| {
         Ok(StaffMember {
@@ -1229,18 +1279,18 @@ pub fn get_staff() -> Result<Vec<StaffMember>, String> {
             category_name: row.get(6).unwrap_or(None),
             pin_code: row.get(7).unwrap_or(None),
         })
-    }).unwrap();
+    }).map_err(|e| e.to_string())?;
 
     let mut staff = Vec::new();
     for person in staff_iter {
-        staff.push(person.unwrap());
+        staff.push(person.map_err(|e| e.to_string())?);
     }
     Ok(staff)
 }
 
 #[tauri::command]
 pub fn add_staff(name: String, category_id: Option<i32>, phone: String, salary: f64, pin_code: String) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // Initialize if needed
     conn.execute("ALTER TABLE staff ADD COLUMN category_id INTEGER", []).ok();
@@ -1256,14 +1306,14 @@ pub fn add_staff(name: String, category_id: Option<i32>, phone: String, salary: 
 
 #[tauri::command]
 pub fn delete_staff(id: i32) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute("DELETE FROM staff WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
     Ok("Staff deleted".into())
 }
 
 #[tauri::command]
 pub fn update_staff(id: i32, name: String, category_id: Option<i32>, phone: String, salary: f64, pin_code: String) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute("ALTER TABLE staff ADD COLUMN pin_code TEXT", []).ok();
     conn.execute(
         "UPDATE staff SET name = ?1, phone = ?2, category_id = ?3, salary = ?4, pin_code = ?5 WHERE id = ?6",
@@ -1284,7 +1334,7 @@ pub struct AttendanceRecord {
 
 #[tauri::command]
 pub fn clock_in_out(staff_id: i32) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     conn.execute(
         "CREATE TABLE IF NOT EXISTS staff_attendance (
@@ -1302,7 +1352,7 @@ pub fn clock_in_out(staff_id: i32) -> Result<String, String> {
     let mut rows = stmt.query([&staff_id]).map_err(|e| e.to_string())?;
     
     let (_staff_id, name): (i32, String) = if let Some(row) = rows.next().unwrap_or(None) {
-        (row.get(0).unwrap(), row.get(1).unwrap())
+        (row.get(0).map_err(|e| e.to_string())?, row.get(1).map_err(|e| e.to_string())?)
     } else {
         return Err("Invalid Staff ID".into());
     };
@@ -1310,11 +1360,11 @@ pub fn clock_in_out(staff_id: i32) -> Result<String, String> {
     let today = date_now(&conn);
     
     // Check if clocked in today without clocking out
-    let mut stmt = conn.prepare("SELECT id FROM staff_attendance WHERE staff_id = ?1 AND date = ?2 AND clock_out IS NULL").unwrap();
-    let mut rows = stmt.query(rusqlite::params![staff_id, today]).unwrap();
+    let mut stmt = conn.prepare("SELECT id FROM staff_attendance WHERE staff_id = ?1 AND date = ?2 AND clock_out IS NULL").map_err(|e| e.to_string())?;
+    let mut rows = stmt.query(rusqlite::params![staff_id, today]).map_err(|e| e.to_string())?;
     
     if let Some(row) = rows.next().unwrap_or(None) {
-        let record_id: i32 = row.get(0).unwrap();
+        let record_id: i32 = row.get(0).map_err(|e| e.to_string())?;
         // Clock out
         conn.execute(
             "UPDATE staff_attendance SET clock_out = datetime('now', 'localtime') WHERE id = ?1",
@@ -1333,7 +1383,7 @@ pub fn clock_in_out(staff_id: i32) -> Result<String, String> {
 
 #[tauri::command]
 pub fn get_attendance(date: String) -> Result<Vec<AttendanceRecord>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     conn.execute(
         "CREATE TABLE IF NOT EXISTS staff_attendance (
@@ -1352,7 +1402,7 @@ pub fn get_attendance(date: String) -> Result<Vec<AttendanceRecord>, String> {
          JOIN staff s ON a.staff_id = s.id 
          WHERE a.date = ?1 
          ORDER BY a.clock_in DESC"
-    ).unwrap();
+    ).map_err(|e| e.to_string())?;
     
     let iter = stmt.query_map([&date], |row| {
         Ok(AttendanceRecord {
@@ -1363,11 +1413,11 @@ pub fn get_attendance(date: String) -> Result<Vec<AttendanceRecord>, String> {
             clock_in: row.get(4)?,
             clock_out: row.get(5).unwrap_or(None),
         })
-    }).unwrap();
+    }).map_err(|e| e.to_string())?;
     
     let mut records = Vec::new();
     for rec in iter {
-        records.push(rec.unwrap());
+        records.push(rec.map_err(|e| e.to_string())?);
     }
     Ok(records)
 }
@@ -1382,7 +1432,7 @@ pub struct Customer {
 
 #[tauri::command]
 pub fn get_customers() -> Result<Vec<Customer>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     conn.execute(
         "CREATE TABLE IF NOT EXISTS customers (
@@ -1393,7 +1443,7 @@ pub fn get_customers() -> Result<Vec<Customer>, String> {
         )", []
     ).map_err(|e| e.to_string())?;
 
-    let mut stmt = conn.prepare("SELECT id, name, phone, visits FROM customers").unwrap();
+    let mut stmt = conn.prepare("SELECT id, name, phone, visits FROM customers").map_err(|e| e.to_string())?;
     let customer_iter = stmt.query_map([], |row| {
         Ok(Customer {
             id: row.get(0)?,
@@ -1401,18 +1451,18 @@ pub fn get_customers() -> Result<Vec<Customer>, String> {
             phone: row.get(2).unwrap_or_default(),
             visits: row.get(3).unwrap_or(0),
         })
-    }).unwrap();
+    }).map_err(|e| e.to_string())?;
 
     let mut customers = Vec::new();
     for c in customer_iter {
-        customers.push(c.unwrap());
+        customers.push(c.map_err(|e| e.to_string())?);
     }
     Ok(customers)
 }
 
 #[tauri::command]
 pub fn add_customer(name: String, phone: String) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     // We start them at 0 visits. Later we will increment this on checkout!
     conn.execute(
         "INSERT INTO customers (name, phone, visits) VALUES (?1, ?2, 0)",
@@ -1423,7 +1473,7 @@ pub fn add_customer(name: String, phone: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn resolve_customer(name: Option<String>, phone: Option<String>, address: Option<String>) -> Result<i32, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     let n = name.unwrap_or_default().trim().to_string();
     let p = phone.unwrap_or_default().trim().to_string();
@@ -1465,7 +1515,7 @@ pub fn resolve_customer(name: Option<String>, phone: Option<String>, address: Op
 
 #[tauri::command]
 pub fn delete_customer(id: i32) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute("DELETE FROM customers WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
     Ok("Customer deleted".into())
 }
@@ -1481,7 +1531,7 @@ pub struct Expense {
 
 #[tauri::command]
 pub fn get_expenses() -> Result<Vec<Expense>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // Ensure table exists just in case
     conn.execute(
@@ -1494,7 +1544,7 @@ pub fn get_expenses() -> Result<Vec<Expense>, String> {
         )", []
     ).map_err(|e| e.to_string())?;
 
-    let mut stmt = conn.prepare("SELECT id, amount, date, category, note FROM expenses ORDER BY date DESC, id DESC").unwrap();
+    let mut stmt = conn.prepare("SELECT id, amount, date, category, note FROM expenses ORDER BY date DESC, id DESC").map_err(|e| e.to_string())?;
     let expense_iter = stmt.query_map([], |row| {
         Ok(Expense {
             id: row.get(0)?,
@@ -1503,18 +1553,18 @@ pub fn get_expenses() -> Result<Vec<Expense>, String> {
             category: row.get(3)?,
             note: row.get(4).unwrap_or(None),
         })
-    }).unwrap();
+    }).map_err(|e| e.to_string())?;
 
     let mut expenses = Vec::new();
     for e in expense_iter {
-        expenses.push(e.unwrap());
+        expenses.push(e.map_err(|e| e.to_string())?);
     }
     Ok(expenses)
 }
 
 #[tauri::command]
 pub fn add_expense(amount: f64, date: String, category: String, note: Option<String>) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute(
         "INSERT INTO expenses (amount, date, category, note) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![amount, date, category, note]
@@ -1524,10 +1574,10 @@ pub fn add_expense(amount: f64, date: String, category: String, note: Option<Str
 
 #[tauri::command]
 pub fn delete_expense(id: i32) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // Fetch the expense details before deleting it
-    let mut stmt = conn.prepare("SELECT amount, date, note FROM expenses WHERE id = ?1").unwrap();
+    let mut stmt = conn.prepare("SELECT amount, date, note FROM expenses WHERE id = ?1").map_err(|e| e.to_string())?;
     let expense_data = stmt.query_row([&id], |row| {
         Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?))
     });
@@ -1538,7 +1588,7 @@ pub fn delete_expense(id: i32) -> Result<String, String> {
     if let Ok((_amount, date, Some(note))) = expense_data {
         if note.starts_with("Payroll: ") {
             let staff_name = note.trim_start_matches("Payroll: ");
-            let mut stmt = conn.prepare("SELECT id FROM staff WHERE name = ?1").unwrap();
+            let mut stmt = conn.prepare("SELECT id FROM staff WHERE name = ?1").map_err(|e| e.to_string())?;
             if let Ok(staff_id) = stmt.query_row([&staff_name], |row| row.get::<_, i32>(0)) {
                 conn.execute(
                     "DELETE FROM salary_payouts WHERE staff_id = ?1 AND date = ?2",
@@ -1568,7 +1618,7 @@ pub struct DashboardStats {
 
 #[tauri::command]
 pub fn get_dashboard_stats() -> Result<DashboardStats, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
 
     // Apply migrations for orders timestamps
     conn.execute(
@@ -1580,17 +1630,6 @@ pub fn get_dashboard_stats() -> Result<DashboardStats, String> {
             closed_at TEXT
         )", []
     ).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN created_at TEXT", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN closed_at TEXT", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN order_type TEXT DEFAULT 'Dine-in'", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN subtotal REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN tax_amount REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN discount_amount REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN amount_received REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN change_due REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN customer_id INTEGER", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN cashier_name TEXT", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN order_note TEXT", []).ok();
 
 
     // 1. Current Month Revenue
@@ -1665,7 +1704,7 @@ pub struct RevenueOverview {
 
 #[tauri::command]
 pub fn get_revenue_overview() -> Result<Vec<RevenueOverview>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
 
     // Last 7 days revenue
     let query = "
@@ -1715,7 +1754,7 @@ pub struct TopSellingItem {
 
 #[tauri::command]
 pub fn get_top_selling_items() -> Result<Vec<TopSellingItem>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     let query = "
         SELECT 
             oi.item_id,
@@ -1747,7 +1786,7 @@ pub fn get_top_selling_items() -> Result<Vec<TopSellingItem>, String> {
 
 #[tauri::command]
 pub fn get_recent_expenses() -> Result<Vec<Expense>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     conn.execute(
         "CREATE TABLE IF NOT EXISTS expenses (
@@ -1759,7 +1798,7 @@ pub fn get_recent_expenses() -> Result<Vec<Expense>, String> {
         )", []
     ).map_err(|e| e.to_string())?;
 
-    let mut stmt = conn.prepare("SELECT id, amount, date, category, note FROM expenses ORDER BY date DESC, id DESC LIMIT 5").unwrap();
+    let mut stmt = conn.prepare("SELECT id, amount, date, category, note FROM expenses ORDER BY date DESC, id DESC LIMIT 5").map_err(|e| e.to_string())?;
     let expense_iter = stmt.query_map([], |row| {
         Ok(Expense {
             id: row.get(0)?,
@@ -1768,11 +1807,11 @@ pub fn get_recent_expenses() -> Result<Vec<Expense>, String> {
             category: row.get(3)?,
             note: row.get(4).unwrap_or(None),
         })
-    }).unwrap();
+    }).map_err(|e| e.to_string())?;
 
     let mut expenses = Vec::new();
     for e in expense_iter {
-        expenses.push(e.unwrap());
+        expenses.push(e.map_err(|e| e.to_string())?);
     }
     Ok(expenses)
 }
@@ -1789,7 +1828,7 @@ pub struct TodaySale {
 
 #[tauri::command]
 pub fn get_todays_sales(client_date: String) -> Result<Vec<TodaySale>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     let query = "
         SELECT 
             o.id,
@@ -1842,7 +1881,7 @@ pub struct Shift {
 
 #[tauri::command]
 pub fn get_current_shift() -> Result<Option<Shift>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     let mut stmt = conn.prepare("SELECT id, start_time, end_time, opening_cash, closing_cash, status FROM shifts WHERE status = 'Open' ORDER BY id DESC LIMIT 1").map_err(|e| e.to_string())?;
     let mut rows = stmt.query_map([], |row| {
@@ -1865,7 +1904,7 @@ pub fn get_current_shift() -> Result<Option<Shift>, String> {
 
 #[tauri::command]
 pub fn start_shift(opening_cash: f64) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // Check if one is already open
     let count: i32 = conn.query_row("SELECT COUNT(*) FROM shifts WHERE status = 'Open'", [], |row| row.get(0)).unwrap_or(0);
@@ -1883,7 +1922,7 @@ pub fn start_shift(opening_cash: f64) -> Result<String, String> {
 
 #[tauri::command]
 pub fn end_shift(shift_id: i32, closing_cash: f64) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     conn.execute(
         "UPDATE shifts SET closing_cash = ?1, end_time = datetime('now', 'localtime'), status = 'Closed' WHERE id = ?2",
@@ -1905,7 +1944,7 @@ pub struct DetailedTableStatus {
 
 #[tauri::command]
 pub fn get_detailed_table_statuses() -> Result<Vec<DetailedTableStatus>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     let query = "
         SELECT 
@@ -1953,7 +1992,7 @@ pub struct CashierStats {
 
 #[tauri::command]
 pub fn get_cashier_dashboard_stats(client_date: String) -> Result<CashierStats, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
 
     // 2. Sales for today (sum of item prices)
     let sales_query = "
@@ -2017,7 +2056,7 @@ pub struct PayrollSummary {
 
 #[tauri::command]
 pub fn get_payroll_summary(start_date: String, end_date: String) -> Result<Vec<PayrollSummary>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // We get distinct days a staff was present within the date range, plus their pending advance balance
     let mut stmt = conn.prepare(
@@ -2065,18 +2104,11 @@ pub struct SalaryPayout {
 
 #[tauri::command]
 pub fn process_payout(staff_id: i32, amount: f64, bonus: f64, deduction: f64, date: String) -> Result<String, String> {
-    let mut conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
-    
-    conn.execute("CREATE TABLE IF NOT EXISTS salary_payouts (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, amount REAL NOT NULL, date TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
-    conn.execute("ALTER TABLE salary_payouts ADD COLUMN bonus REAL", []).ok();
-    conn.execute("ALTER TABLE salary_payouts ADD COLUMN deduction REAL", []).ok();
-    conn.execute("ALTER TABLE salary_payouts ADD COLUMN advance_deduction REAL", []).ok();
-    
-    conn.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, amount REAL NOT NULL, date TEXT NOT NULL, category TEXT NOT NULL, note TEXT)", []).map_err(|e| e.to_string())?;
+    let mut conn_guard = get_conn()?;
     
     let net_amount = amount + bonus - deduction;
     
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
     
     tx.execute(
         "INSERT INTO salary_payouts (staff_id, amount, bonus, deduction, advance_deduction, date) VALUES (?1, ?2, ?3, ?4, 0.0, ?5)",
@@ -2095,9 +2127,8 @@ pub fn process_payout(staff_id: i32, amount: f64, bonus: f64, deduction: f64, da
 
 #[tauri::command]
 pub fn get_payout_history(start_date: String, end_date: String) -> Result<Vec<SalaryPayout>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
-    conn.execute("CREATE TABLE IF NOT EXISTS salary_payouts (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, amount REAL NOT NULL, date TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
     conn.execute("ALTER TABLE salary_payouts ADD COLUMN bonus REAL", []).ok();
     conn.execute("ALTER TABLE salary_payouts ADD COLUMN deduction REAL", []).ok();
     conn.execute("ALTER TABLE salary_payouts ADD COLUMN advance_deduction REAL", []).ok();
@@ -2134,9 +2165,8 @@ pub fn get_payout_history(start_date: String, end_date: String) -> Result<Vec<Sa
 
 #[tauri::command]
 pub fn get_paid_staff_ids(start_date: String, end_date: String) -> Result<Vec<i32>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
-    conn.execute("CREATE TABLE IF NOT EXISTS salary_payouts (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, amount REAL NOT NULL, date TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
     
     let mut stmt = conn.prepare(
         "SELECT DISTINCT staff_id FROM salary_payouts WHERE date >= ?1 AND date <= ?2"
@@ -2168,15 +2198,8 @@ pub struct BatchPayoutEntry {
 
 #[tauri::command]
 pub fn process_batch_payout(payouts: Vec<BatchPayoutEntry>, payout_date: String) -> Result<String, String> {
-    let mut conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
-    
-    conn.execute("CREATE TABLE IF NOT EXISTS salary_payouts (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, amount REAL NOT NULL, date TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
-    conn.execute("ALTER TABLE salary_payouts ADD COLUMN bonus REAL", []).ok();
-    conn.execute("ALTER TABLE salary_payouts ADD COLUMN deduction REAL", []).ok();
-    conn.execute("ALTER TABLE salary_payouts ADD COLUMN advance_deduction REAL", []).ok();
-    conn.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, amount REAL NOT NULL, date TEXT NOT NULL, category TEXT NOT NULL, note TEXT)", []).map_err(|e| e.to_string())?;
-    
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let mut conn_guard = get_conn()?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
     
     let mut total_paid = 0.0;
     let mut count = 0;
@@ -2213,21 +2236,8 @@ pub fn process_batch_payout(payouts: Vec<BatchPayoutEntry>, payout_date: String)
 
 #[tauri::command]
 pub fn pay_advance_salary(staff_id: i32, amount: f64, date: String, note: String, staff_name: String) -> Result<String, String> {
-    let mut conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
-    
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS advance_salaries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            staff_id INTEGER NOT NULL,
-            amount REAL NOT NULL,
-            date TEXT NOT NULL,
-            note TEXT,
-            is_deducted BOOLEAN DEFAULT 0
-        )", []
-    ).map_err(|e| e.to_string())?;
-    conn.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, amount REAL NOT NULL, date TEXT NOT NULL, category TEXT NOT NULL, note TEXT)", []).map_err(|e| e.to_string())?;
-    
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let mut conn_guard = get_conn()?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
     
     tx.execute(
         "INSERT INTO advance_salaries (staff_id, amount, date, note) VALUES (?1, ?2, ?3, ?4)",
@@ -2279,7 +2289,7 @@ pub struct AnalyticsReport {
 
 #[tauri::command]
 pub fn get_analytics_report(start_date: String, end_date: String) -> Result<AnalyticsReport, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
 
     let mut total_sales = 0.0;
     let mut total_orders = 0;
@@ -2425,7 +2435,7 @@ pub struct BackupSettings {
 
 #[tauri::command]
 pub fn get_backup_settings() -> Result<BackupSettings, String> {
-    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     run_migrations(&conn)?;
 
     let mut stmt = conn.prepare(
@@ -2445,7 +2455,7 @@ pub fn get_backup_settings() -> Result<BackupSettings, String> {
 
 #[tauri::command]
 pub fn update_backup_settings(frequency: String, path: Option<String>) -> Result<(), String> {
-    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     run_migrations(&conn)?;
 
     conn.execute(
@@ -2458,7 +2468,7 @@ pub fn update_backup_settings(frequency: String, path: Option<String>) -> Result
 
 #[tauri::command]
 pub fn perform_backup(destination: Option<String>) -> Result<String, String> {
-    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     run_migrations(&conn)?;
 
     let target_path_str = match destination {
@@ -2504,60 +2514,71 @@ pub fn perform_backup(destination: Option<String>) -> Result<String, String> {
 
 #[tauri::command]
 pub fn check_and_run_auto_backup() -> Result<Option<String>, String> {
-    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
-    run_migrations(&conn)?;
+    // Determine if backup is needed, then DROP the lock before calling perform_backup
+    let backup_path: Option<String> = {
+        let conn = get_conn()?;
+        run_migrations(&conn)?;
 
-    let row: Result<(Option<String>, String, Option<String>), _> = conn.query_row(
-        "SELECT last_backup_at, COALESCE(backup_frequency, 'Off'), backup_path FROM restaurant_settings WHERE id = 1",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-    );
+        let row: Result<(Option<String>, String, Option<String>), _> = conn.query_row(
+            "SELECT last_backup_at, COALESCE(backup_frequency, 'Off'), backup_path FROM restaurant_settings WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        );
 
-    let (last_backup_at, frequency, backup_path) = match row {
-        Ok(vals) => vals,
-        Err(_) => return Ok(None),
-    };
+        let (last_backup_at, frequency, backup_path) = match row {
+            Ok(vals) => vals,
+            Err(_) => return Ok(None),
+        };
 
-    if frequency == "Off" {
-        return Ok(None);
-    }
+        if frequency == "Off" {
+            return Ok(None);
+        }
 
-    let path_str = match backup_path {
-        Some(p) if !p.trim().is_empty() => p,
-        _ => return Ok(None),
-    };
+        let path_str = match backup_path {
+            Some(p) if !p.trim().is_empty() => p,
+            _ => return Ok(None),
+        };
 
-    let should_backup = match last_backup_at {
-        None => true,
-        Some(last_str) => {
-            let days_elapsed: Option<f64> = conn.query_row(
-                "SELECT julianday('now', 'localtime') - julianday(?1)",
-                [&last_str],
-                |r| r.get(0)
-            ).unwrap_or(None);
+        let should_backup = match last_backup_at {
+            None => true,
+            Some(last_str) => {
+                let days_elapsed: Option<f64> = conn.query_row(
+                    "SELECT julianday('now', 'localtime') - julianday(?1)",
+                    [&last_str],
+                    |r| r.get(0)
+                ).unwrap_or(None);
 
-            match days_elapsed {
-                Some(days) => {
-                    if frequency == "Daily" && days >= 1.0 {
-                        true
-                    } else if frequency == "Weekly" && days >= 7.0 {
-                        true
-                    } else {
-                        false
-                    }
-                },
-                None => true,
+                match days_elapsed {
+                    Some(days) => {
+                        if frequency == "Daily" && days >= 1.0 {
+                            true
+                        } else if frequency == "Weekly" && days >= 7.0 {
+                            true
+                        } else {
+                            false
+                        }
+                    },
+                    None => true,
+                }
+            }
+        };
+
+        if should_backup {
+            Some(path_str)
+        } else {
+            None
+        }
+    }; // <-- MutexGuard dropped here
+
+    // Now call perform_backup WITHOUT holding the lock
+    match backup_path {
+        Some(path) => {
+            match perform_backup(Some(path)) {
+                Ok(backed_path) => Ok(Some(backed_path)),
+                Err(e) => Err(e),
             }
         }
-    };
-
-    if should_backup {
-        match perform_backup(Some(path_str)) {
-            Ok(backed_path) => Ok(Some(backed_path)),
-            Err(e) => Err(e),
-        }
-    } else {
-        Ok(None)
+        None => Ok(None),
     }
 }
 
@@ -2594,7 +2615,8 @@ pub fn validate_backup_file(file_path: String) -> Result<String, String> {
 pub fn import_backup_file(file_path: String) -> Result<String, String> {
     validate_backup_file(file_path.clone())?;
 
-    let db_path = std::path::Path::new("../local.db");
+    let db_path_str = std::env::var("DB_PATH").unwrap_or_else(|_| "../local.db".to_string());
+    let db_path = std::path::Path::new(&db_path_str);
     
     let backups_dir = std::path::Path::new("../backups");
     if let Err(e) = std::fs::create_dir_all(backups_dir) {
@@ -2607,16 +2629,37 @@ pub fn import_backup_file(file_path: String) -> Result<String, String> {
     };
     let safety_file = backups_dir.join(format!("pre-import-{}.db", timestamp));
 
+    // Save existing license before overwriting
+    let mut current_license: Option<(String, String)> = None;
     if db_path.exists() {
         std::fs::copy(db_path, &safety_file)
             .map_err(|e| format!("Failed to create safety backup of current database: {}", e))?;
+            
+        if let Ok(old_conn) = Connection::open(db_path) {
+            if let Ok(mut stmt) = old_conn.prepare("SELECT current_key, expiry_date FROM license LIMIT 1") {
+                if let Ok(mut rows) = stmt.query([]) {
+                    if let Ok(Some(row)) = rows.next() {
+                        if let (Ok(k), Ok(e)) = (row.get::<_, String>(0), row.get::<_, String>(1)) {
+                            current_license = Some((k, e));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     std::fs::copy(&file_path, db_path)
         .map_err(|e| format!("Failed to import database file: {}", e))?;
 
-    let conn = Connection::open("../local.db")
+    let conn = Connection::open(&db_path_str)
         .map_err(|e| format!("Database overwritten, but failed to reopen connection: {}", e))?;
+
+    // Restore the license to the newly imported database
+    if let Some((key, expiry)) = current_license {
+        let _ = conn.execute("CREATE TABLE IF NOT EXISTS license (id INTEGER PRIMARY KEY, current_key TEXT, expiry_date TEXT)", []);
+        let _ = conn.execute("DELETE FROM license", []);
+        let _ = conn.execute("INSERT INTO license (current_key, expiry_date) VALUES (?1, ?2)", rusqlite::params![key, expiry]);
+    }
 
     run_migrations(&conn)?;
 
@@ -2625,19 +2668,20 @@ pub fn import_backup_file(file_path: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn verify_admin_password(password: String) -> Result<bool, String> {
-    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
-    let count: i32 = conn.query_row(
-        "SELECT COUNT(*) FROM users u JOIN roles r ON u.role_id = r.id WHERE r.name = 'Admin' AND u.password_hash = ?1",
-        [&password],
-        |r| r.get(0)
-    ).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT password_hash FROM users u JOIN roles r ON u.role_id = r.id WHERE r.name = 'Admin'").map_err(|e| e.to_string())?;
+    let admin_hashes = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
 
-    if count > 0 {
-        Ok(true)
-    } else {
-        Err("Incorrect Admin Password".to_string())
+    for hash_result in admin_hashes {
+        if let Ok(hash) = hash_result {
+            if let Ok(true) = bcrypt::verify(&password, &hash) {
+                return Ok(true);
+            }
+        }
     }
+    
+    Ok(false)
 }
 
 #[derive(Serialize)]
@@ -2687,7 +2731,7 @@ pub struct DetailedReport {
 
 #[tauri::command]
 pub fn get_detailed_report(start_date: String, end_date: String) -> Result<DetailedReport, String> {
-    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
 
     // Orders
     let mut orders = Vec::new();
@@ -2923,7 +2967,7 @@ pub struct DeliverySettings {
 
 #[tauri::command]
 pub fn get_delivery_settings() -> Result<DeliverySettings, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     let settings = conn.query_row(
         "SELECT base_delivery_fee, free_delivery_threshold FROM restaurant_settings WHERE id = 1",
@@ -2939,7 +2983,7 @@ pub fn get_delivery_settings() -> Result<DeliverySettings, String> {
 
 #[tauri::command]
 pub fn update_delivery_settings(base_delivery_fee: f64, free_delivery_threshold: f64) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute(
         "UPDATE restaurant_settings SET base_delivery_fee = ?1, free_delivery_threshold = ?2 WHERE id = 1",
         rusqlite::params![base_delivery_fee, free_delivery_threshold]
@@ -2950,7 +2994,7 @@ pub fn update_delivery_settings(base_delivery_fee: f64, free_delivery_threshold:
 
 #[tauri::command]
 pub fn get_active_deliveries() -> Result<Vec<DeliveryOrder>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     let mut stmt = conn.prepare(
         "SELECT o.id, o.created_at, c.name, c.phone, o.delivery_address, o.status, o.delivery_status, 
@@ -2984,7 +3028,7 @@ pub fn get_active_deliveries() -> Result<Vec<DeliveryOrder>, String> {
 
 #[tauri::command]
 pub fn update_delivery_status(order_id: i32, status: String) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     conn.execute(
         "UPDATE orders SET delivery_status = ?1 WHERE id = ?2",
@@ -3003,7 +3047,7 @@ pub fn update_delivery_status(order_id: i32, status: String) -> Result<String, S
 
 #[tauri::command]
 pub fn assign_delivery_driver(order_id: i32, driver_id: i32) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     conn.execute(
         "UPDATE orders SET delivery_driver_id = ?1, delivery_status = 'Dispatched' WHERE id = ?2",
@@ -3027,14 +3071,9 @@ pub fn place_delivery_order(
     order_note: String,
     service_charge_amount: f64
 ) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     
     // Ensure all new columns exist
-    conn.execute("ALTER TABLE orders ADD COLUMN delivery_status TEXT", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN delivery_address TEXT", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN delivery_fee REAL DEFAULT 0.0", []).ok();
-    conn.execute("ALTER TABLE orders ADD COLUMN order_type TEXT", []).ok();
-    conn.execute("ALTER TABLE customers ADD COLUMN address TEXT", []).ok();
 
     let mut final_customer_id = customer_id;
 
@@ -3061,7 +3100,7 @@ pub fn place_delivery_order(
     } else if let Some(phone) = &customer_phone {
         if !phone.trim().is_empty() {
             // Check if a customer with this phone exists
-            let mut stmt = conn.prepare("SELECT id FROM customers WHERE phone = ?1").unwrap();
+            let mut stmt = conn.prepare("SELECT id FROM customers WHERE phone = ?1").map_err(|e| e.to_string())?;
             let existing_id: Result<i32, _> = stmt.query_row([phone], |row| row.get(0));
             
             if let Ok(id) = existing_id {
@@ -3132,7 +3171,7 @@ pub struct InventorySummary {
 
 #[tauri::command]
 pub fn get_inventory_items() -> Result<Vec<InventoryItem>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
 
     let mut stmt = conn.prepare(
         "SELECT i.id, i.name, i.unit, i.low_stock_threshold,
@@ -3165,7 +3204,7 @@ pub fn get_inventory_items() -> Result<Vec<InventoryItem>, String> {
 
 #[tauri::command]
 pub fn add_inventory_item(name: String, unit: String, low_stock_threshold: f64, default_supplier: Option<String>) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute(
         "INSERT INTO inventory_items (name, unit, low_stock_threshold, default_supplier) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![name, unit, low_stock_threshold, default_supplier]
@@ -3181,7 +3220,7 @@ pub fn add_inventory_item(name: String, unit: String, low_stock_threshold: f64, 
 
 #[tauri::command]
 pub fn update_inventory_item(id: i32, name: String, unit: String, low_stock_threshold: f64, default_supplier: Option<String>) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute(
         "UPDATE inventory_items SET name = ?1, unit = ?2, low_stock_threshold = ?3, default_supplier = ?4 WHERE id = ?5",
         rusqlite::params![name, unit, low_stock_threshold, default_supplier, id]
@@ -3197,7 +3236,7 @@ pub fn update_inventory_item(id: i32, name: String, unit: String, low_stock_thre
 
 #[tauri::command]
 pub fn delete_inventory_item(id: i32) -> Result<String, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
     conn.execute("DELETE FROM inventory_transactions WHERE item_id = ?1", [&id]).map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM inventory_items WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
     Ok("Item and all its transactions deleted".into())
@@ -3208,7 +3247,7 @@ pub fn record_inventory_usage(item_id: i32, quantity: f64, note: Option<String>)
     if quantity <= 0.0 {
         return Err("Quantity must be greater than 0".into());
     }
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
 
     // Verify item exists
     let _name: String = conn.query_row(
@@ -3241,7 +3280,7 @@ pub fn record_inventory_purchase(
     if total_cost < 0.0 {
         return Err("Total cost cannot be negative".into());
     }
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
 
     // Fetch item details
     let (item_name, item_unit): (String, String) = conn.query_row(
@@ -3270,10 +3309,7 @@ pub fn record_inventory_purchase(
 }
 
 fn chrono_today() -> String {
-    let conn = rusqlite::Connection::open("../local.db").unwrap();
-    conn.query_row("SELECT date('now', 'localtime')", [], |row| row.get(0)).unwrap_or_else(|_| {
-        "2026-01-01".to_string()
-    })
+    chrono::Local::now().date_naive().format("%Y-%m-%d").to_string()
 }
 
 #[tauri::command]
@@ -3283,7 +3319,7 @@ pub fn get_inventory_transactions(
     item_id: Option<i32>,
     transaction_type: Option<String>,
 ) -> Result<Vec<InventoryTransaction>, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
 
     let mut sql = String::from(
         "SELECT t.id, t.item_id, i.name, i.unit, t.type, t.quantity, t.unit_price, t.total_cost, t.supplier, t.note, t.date
@@ -3340,7 +3376,7 @@ pub fn get_inventory_transactions(
 
 #[tauri::command]
 pub fn get_inventory_summary(start_date: Option<String>, end_date: Option<String>) -> Result<InventorySummary, String> {
-    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = get_conn()?;
 
     let total_items: i32 = conn.query_row(
         "SELECT COUNT(*) FROM inventory_items", [],

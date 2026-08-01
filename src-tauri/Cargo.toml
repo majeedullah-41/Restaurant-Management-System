@@ -31,4 +31,4 @@ sha2 = { version = "0.10", features = ["oid"] }
 rand = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
-
+bcrypt = "0.15"

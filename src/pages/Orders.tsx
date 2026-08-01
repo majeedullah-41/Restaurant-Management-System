@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Search, CheckCircle2, ChevronDown, ChevronRight, PackageOpen, User, Clock, Banknote, FileText, Tag, AlertCircle, ExternalLink, Percent, Phone, MapPin, Calendar, Receipt } from "lucide-react";
+import { Search, CheckCircle2, ChevronDown, ChevronRight, PackageOpen, User, Clock, Banknote, FileText, Tag, AlertCircle, ExternalLink, Percent, Phone, MapPin } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import DateFilterToolbar from "../components/DateFilterToolbar";

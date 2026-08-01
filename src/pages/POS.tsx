@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 
@@ -86,23 +86,35 @@ export default function POS() {
     setAlertModal({ isOpen: true, title, message, type });
   };
 
-  const filteredCustomers = customers.filter(c =>
+  const filteredCustomers = useMemo(() => customers.filter(c =>
     c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
     c.phone.includes(customerSearch)
-  );
+  ), [customers, customerSearch]);
 
-  const subtotal = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const taxAmount = (subtotal * taxRate) / 100;
-  const serviceChargeAmount = serviceChargeTypes.includes(orderType) ? (subtotal * serviceChargeRate) / 100 : 0;
-  
-  const deliveryFee = orderType === "Delivery" 
-    ? (deliverySettings.free_delivery_threshold > 0 && subtotal >= deliverySettings.free_delivery_threshold ? 0 : deliverySettings.base_delivery_fee) 
-    : 0;
+  const { subtotal, taxAmount, serviceChargeAmount, deliveryFee, effectiveDiscount, totalAmount, maxDiscount } = useMemo(() => {
+    const sub = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const tax = (sub * taxRate) / 100;
+    const sc = serviceChargeTypes.includes(orderType) ? (sub * serviceChargeRate) / 100 : 0;
+    
+    const fee = orderType === "Delivery" 
+      ? (deliverySettings.free_delivery_threshold > 0 && sub >= deliverySettings.free_delivery_threshold ? 0 : deliverySettings.base_delivery_fee) 
+      : 0;
 
-  // Ensure discount never exceeds payable amount
-  const maxDiscount = subtotal + taxAmount + deliveryFee + serviceChargeAmount;
-  const effectiveDiscount = Math.min(discount, maxDiscount);
-  const totalAmount = maxDiscount - effectiveDiscount;
+    // Ensure discount never exceeds payable amount
+    const max = sub + tax + fee + sc;
+    const eff = Math.min(discount, max);
+    const total = max - eff;
+
+    return { 
+      subtotal: sub, 
+      taxAmount: tax, 
+      serviceChargeAmount: sc, 
+      deliveryFee: fee, 
+      effectiveDiscount: eff, 
+      totalAmount: total,
+      maxDiscount: max
+    };
+  }, [cartItems, taxRate, serviceChargeTypes, serviceChargeRate, orderType, deliverySettings, discount]);
 
 
 

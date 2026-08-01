@@ -6,7 +6,6 @@ use rsa::pkcs1v15::{Signature, VerifyingKey};
 use rsa::pkcs8::DecodePublicKey;
 use rsa::signature::Verifier;
 use rsa::RsaPublicKey;
-use rusqlite::Connection;
 use serde::Serialize;
 use sha2::Sha256;
 use sysinfo::System;
@@ -46,11 +45,15 @@ pub fn get_hwid() -> String {
 fn get_primary_mac() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
         // On Windows, use ipconfig /all to parse MAC address
-        let output = std::process::Command::new("getmac")
-            .args(["/FO", "CSV", "/NH"])
-            .output()
-            .ok()?;
+        let mut cmd = std::process::Command::new("getmac");
+        cmd.args(["/FO", "CSV", "/NH"]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        
+        let output = cmd.output().ok()?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines() {
             // getmac CSV: "AA-BB-CC-DD-EE-FF","..."
@@ -293,7 +296,7 @@ pub fn get_machine_hwid() -> String {
 /// Checks the license status by reading the stored key from the database.
 #[tauri::command]
 pub fn check_license_status() -> Result<LicenseStatus, String> {
-    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = crate::db::get_conn()?;
 
     let hwid = get_hwid();
 
@@ -328,7 +331,7 @@ pub fn activate_license(key: String) -> Result<LicenseStatus, String> {
     }
 
     // Key is valid — store it in the database
-    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = crate::db::get_conn()?;
 
     let expiry = status.expiry_date.as_deref().unwrap_or("");
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -355,7 +358,7 @@ pub struct LicenseInfo {
 
 #[tauri::command]
 pub fn get_license_info() -> Result<LicenseInfo, String> {
-    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let conn = crate::db::get_conn()?;
     let hwid = get_hwid();
 
     // Read license data from DB
