@@ -1,5 +1,44 @@
 @import "tailwindcss";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+@import "@fontsource-variable/hanken-grotesk";
 
 @custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Hanken Grotesk Variable", sans-serif;
+
+  /* Primary Accent: #0066FF */
+  --color-blue-500: #0066FF;
+  --color-blue-600: #0066FF;
+
+  /* Surface: #F8F9FF (Main light-wash background) */
+  --color-slate-50: #F8F9FF;
+
+  /* Surface Bright: #FFFFFF is default for white */
+  
+  /* Surface Dim: #CBDBF5 (Subtle borders and secondary backgrounds) */
+  --color-slate-200: #CBDBF5;
+
+  /* On-Surface: High-contrast dark grays/blacks (Default slate-900 is good, but we can enforce it) */
+
+  /* Success: Emerald greens */
+  --color-emerald-500: #10B981;
+  --color-emerald-600: #059669;
+
+  /* Alert/Loss: Soft reds */
+  --color-red-500: #EF4444;
+  --color-red-600: #DC2626;
+
+  /* Roundness: ROUND_EIGHT (8px corner radius) */
+  --radius-3xl: 0.5rem;
+  --radius-2xl: 0.5rem;
+  --radius-xl: 0.5rem;
+  --radius-lg: 0.5rem;
+  --radius-md: calc(0.5rem - 2px);
+  --radius-sm: calc(0.5rem - 4px);
+  --radius: 0.5rem;
+}
+
+:root {
+  --radius: 0.5rem;
+}

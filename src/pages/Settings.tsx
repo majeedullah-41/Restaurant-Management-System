@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Save, ShieldCheck, Copy, CheckCircle, CalendarClock, Clock, Cpu, RefreshCw, Key, XCircle, Loader2 } from "lucide-react";
+import { Save, ShieldCheck, Copy, CheckCircle, CalendarClock, Clock, Cpu, RefreshCw, Key, XCircle, Loader2, Upload, Trash } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import BackupSection from "../components/BackupSection";
@@ -9,8 +9,11 @@ import DeliverySettingsSection from "../components/DeliverySettingsSection";
 
 export default function SettingsPage() {
   const [name, setName] = useState("");
+  const [address, setAddress] = useState("");
   const [taxRate, setTaxRate] = useState("");
   const [tables, setTables] = useState("");
+  const [serviceChargeRate, setServiceChargeRate] = useState("");
+  const [serviceChargeTypes, setServiceChargeTypes] = useState<string[]>(["Dine-in"]);
   const [logo, setLogo] = useState<string | null>(null);
   const [message, setMessage] = useState("");
 
@@ -22,14 +25,34 @@ export default function SettingsPage() {
   const [renewLoading, setRenewLoading] = useState(false);
   const [renewMessage, setRenewMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setLogo(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleServiceChargeTypeChange = (type: string) => {
+    setServiceChargeTypes(prev => 
+      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+    );
+  };
+
   useEffect(() => {
     async function fetchSettings() {
       try {
         const data: any = await invoke("get_settings");
         setName(data.restaurant_name);
+        setAddress(data.address || "");
         setLogo(data.logo_path || null);
         setTaxRate(data.tax_rate.toString());
         setTables(data.total_tables.toString());
+        setServiceChargeRate(data.service_charge_rate?.toString() || "0");
+        setServiceChargeTypes(data.service_charge_types ? data.service_charge_types.split(",") : ["Dine-in"]);
       } catch (err) {
         console.error("Failed to load settings", err);
       }
@@ -68,9 +91,12 @@ export default function SettingsPage() {
     try {
       await invoke("update_settings", {
         name: name,
+        address: address,
         logoPath: logo ? logo : null,
-        taxRate: parseFloat(taxRate),
-        totalTables: parseInt(tables)
+        taxRate: parseFloat(taxRate) || 0,
+        totalTables: parseInt(tables) || 0,
+        serviceChargeRate: parseFloat(serviceChargeRate) || 0,
+        serviceChargeTypes: serviceChargeTypes.join(",")
       });
       setMessage("Settings saved successfully!");
       window.dispatchEvent(new Event("settingsUpdated"));
@@ -93,6 +119,45 @@ export default function SettingsPage() {
             <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6">General Preferences</h2>
             
             <form onSubmit={handleSave} className="space-y-6">
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Restaurant Name</label>
+                  <input 
+                    type="text" value={name} onChange={(e) => setName(e.target.value)}
+                    className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Restaurant Address</label>
+                  <textarea 
+                    value={address} onChange={(e) => setAddress(e.target.value)} rows={2}
+                    className="w-full bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 py-2 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none" placeholder="123 Main St, City"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Restaurant Logo</label>
+                  <div className="flex items-center space-x-4">
+                    {logo ? (
+                      <div className="relative group">
+                        <img src={logo} alt="Logo" className="w-16 h-16 rounded-xl object-contain bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700" />
+                        <button type="button" onClick={() => setLogo(null)} className="absolute -top-2 -right-2 bg-red-500 hover:bg-red-600 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer shadow-md">
+                          <Trash size={14} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="w-16 h-16 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center">
+                        <span className="text-xs text-slate-400">No logo</span>
+                      </div>
+                    )}
+                    <label className="cursor-pointer inline-flex items-center space-x-2 px-4 py-2.5 bg-white dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-sm font-semibold rounded-xl transition-colors shadow-sm">
+                      <Upload size={16} />
+                      <span>Upload Logo</span>
+                      <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Tax Rate (%)</label>
@@ -107,6 +172,32 @@ export default function SettingsPage() {
                     type="number" value={tables} onChange={(e) => setTables(e.target.value)}
                     className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" required
                   />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 rounded-xl border border-blue-100 dark:border-blue-900/30 bg-blue-50/50 dark:bg-blue-900/10">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Service Charge Rate (%)</label>
+                  <input 
+                    type="number" step="0.1" value={serviceChargeRate} onChange={(e) => setServiceChargeRate(e.target.value)}
+                    className="w-full h-11 bg-white dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Apply Service Charge To:</label>
+                  <div className="flex flex-col space-y-2 mt-2">
+                    {['Dine-in', 'Takeaway', 'Delivery'].map(type => (
+                      <label key={type} className="flex items-center space-x-2 cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={serviceChargeTypes.includes(type)}
+                          onChange={() => handleServiceChargeTypeChange(type)}
+                          className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="text-sm text-slate-700 dark:text-slate-300">{type}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               </div>
 

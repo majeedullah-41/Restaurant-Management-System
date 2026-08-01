@@ -9,6 +9,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+    db::pay_advance_salary,
     db::get_user_role_by_username,
     db::get_restaurant_name,
     db::login,
@@ -29,6 +30,7 @@ pub fn run() {
     db::add_table,
     db::delete_table,
     db::get_or_create_order,
+    db::get_active_order,
     db::create_walkin_order,
     db::get_order_by_id,
     db::get_order_items,
@@ -92,6 +94,15 @@ pub fn run() {
     db::update_delivery_status,
     db::assign_delivery_driver,
     db::place_delivery_order,
+
+    db::get_inventory_items,
+    db::add_inventory_item,
+    db::update_inventory_item,
+    db::delete_inventory_item,
+    db::record_inventory_usage,
+    db::record_inventory_purchase,
+    db::get_inventory_transactions,
+    db::get_inventory_summary,
 
     license::get_machine_hwid,
     license::check_license_status,

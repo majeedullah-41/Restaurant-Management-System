@@ -1,10 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { 
   LayoutDashboard, MenuSquare, ClipboardList, Table2, Users, 
   UserSquare2, CalendarClock, Receipt, BarChart3, 
-  Settings, LogOut, ShoppingCart, Truck
+  Settings, LogOut, ShoppingCart, Truck, Package
 } from "lucide-react";
 
 export default function Sidebar({ activePage }: { activePage: string }) {
@@ -13,6 +13,7 @@ export default function Sidebar({ activePage }: { activePage: string }) {
 
   const [restaurantName, setRestaurantName] = useState("RESTAURANT");
   const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
+  const navRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const loadName = async () => {
@@ -26,11 +27,22 @@ export default function Sidebar({ activePage }: { activePage: string }) {
 
     const handleSettingsUpdated = () => loadName();
     window.addEventListener("settingsUpdated", handleSettingsUpdated);
+    
+    // Restore scroll position
+    const savedScroll = sessionStorage.getItem("sidebarScroll");
+    if (savedScroll && navRef.current) {
+      navRef.current.scrollTop = parseInt(savedScroll, 10);
+    }
+    
     return () => window.removeEventListener("settingsUpdated", handleSettingsUpdated);
   }, []);
 
+  const handleScroll = (e: React.UIEvent<HTMLElement>) => {
+    sessionStorage.setItem("sidebarScroll", e.currentTarget.scrollTop.toString());
+  };
+
   return (
-    <aside className="w-64 bg-white dark:bg-[#0B1120] border-r border-slate-200 dark:border-slate-800 flex flex-col z-10 shrink-0 transition-colors">
+    <aside className="w-[260px] bg-white dark:bg-[#0B1120] border-r border-slate-200 dark:border-slate-800 flex flex-col z-10 shrink-0 transition-colors">
       <div className="min-h-[5rem] py-4 flex items-center px-6 border-b border-slate-200 dark:border-slate-800">
         {restaurantLogo && (
           <div className="h-10 w-10 shrink-0 bg-white rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden mr-3">
@@ -54,7 +66,11 @@ export default function Sidebar({ activePage }: { activePage: string }) {
       </div>
       
       {/* Centralized Navigation */}
-      <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1 custom-scrollbar">
+      <nav 
+        ref={navRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto py-4 px-3 space-y-1 custom-scrollbar"
+      >
         {role === "Cashier" ? (
           <>
             <NavItem icon={<LayoutDashboard size={20} />} label="Cashier Dashboard" active={activePage === "cashier_dashboard"} onClick={() => navigate('/cashier/dashboard')} />
@@ -78,6 +94,7 @@ export default function Sidebar({ activePage }: { activePage: string }) {
             <NavItem icon={<UserSquare2 size={20} />} label="Staff Management" active={activePage === "staff"} onClick={() => navigate('/admin/staff')} />
             <NavItem icon={<Receipt size={20} />} label="Payroll" active={activePage === "payroll"} onClick={() => navigate('/admin/payroll')} />
             <NavItem icon={<Receipt size={20} />} label="Expenses" active={activePage === "expenses"} onClick={() => navigate('/admin/expenses')} />
+            <NavItem icon={<Package size={20} />} label="Inventory" active={activePage === "inventory"} onClick={() => navigate('/admin/inventory')} />
             <NavItem icon={<BarChart3 size={20} />} label="Reports" active={activePage === "reports"} onClick={() => navigate('/admin/reports')} />
             <NavItem icon={<Settings size={20} />} label="Settings" active={activePage === "settings"} onClick={() => navigate('/admin/settings')} />
             <NavItem icon={<UserSquare2 size={20} />} label="User Profile" active={activePage === "profile"} onClick={() => navigate('/admin/profile')} />

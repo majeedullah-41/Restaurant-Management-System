@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { CreditCard, Calendar, CheckCircle, Clock, History, Users, Check, AlertCircle, ArrowUpRight, ArrowDownRight, Banknote, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CreditCard, Calendar, CheckCircle, Clock, History, Users, Check, AlertCircle, ArrowUpRight, ArrowDownRight, Banknote, Printer } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
+import DateFilterToolbar from '../components/DateFilterToolbar';
 
 interface PayrollSummary {
   staff_id: number;
@@ -10,6 +11,8 @@ interface PayrollSummary {
   category_name: string | null;
   base_salary: number;
   days_present: number;
+  advance_balance: number;
+  paid_amount: number | null;
 }
 
 interface SalaryPayout {
@@ -18,6 +21,7 @@ interface SalaryPayout {
   amount: number;
   bonus: number;
   deduction: number;
+  advance_deduction: number;
   date: string;
 }
 
@@ -31,45 +35,7 @@ interface InlinePayrollRow extends PayrollSummary {
 export default function Payroll() {
   const [activeTab, setActiveTab] = useState<'process' | 'history'>('process');
   
-  const today = new Date();
-  const [selectedMonth, setSelectedMonth] = useState(today.getMonth()); // 0-indexed
-  const [selectedYear, setSelectedYear] = useState(today.getFullYear());
-
-  // Derive date range from selected month (using local formatting to avoid UTC shift)
-  const formatLocalDate = (y: number, m: number, d: number) =>
-    `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-
-  const startDate = formatLocalDate(selectedYear, selectedMonth, 1);
-  const lastDayOfMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
-  const endDate = formatLocalDate(selectedYear, selectedMonth, lastDayOfMonth);
-
-  const isCurrentMonth = selectedMonth === today.getMonth() && selectedYear === today.getFullYear();
-  const isFutureMonth = selectedYear > today.getFullYear() || (selectedYear === today.getFullYear() && selectedMonth > today.getMonth());
-
-  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-
-  const goToPrevMonth = () => {
-    if (selectedMonth === 0) {
-      setSelectedMonth(11);
-      setSelectedYear(y => y - 1);
-    } else {
-      setSelectedMonth(m => m - 1);
-    }
-  };
-
-  const goToNextMonth = () => {
-    if (selectedMonth === 11) {
-      setSelectedMonth(0);
-      setSelectedYear(y => y + 1);
-    } else {
-      setSelectedMonth(m => m + 1);
-    }
-  };
-
-  const goToCurrentMonth = () => {
-    setSelectedMonth(today.getMonth());
-    setSelectedYear(today.getFullYear());
-  };
+  const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
   
   const [rows, setRows] = useState<InlinePayrollRow[]>([]);
   const [history, setHistory] = useState<SalaryPayout[]>([]);
@@ -79,19 +45,28 @@ export default function Payroll() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
+  const [showAdvanceModal, setShowAdvanceModal] = useState(false);
+  const [advanceStaffId, setAdvanceStaffId] = useState<number | ''>('');
+  const [advanceAmount, setAdvanceAmount] = useState('');
+  const [advanceDate, setAdvanceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [advanceNote, setAdvanceNote] = useState('');
+  const [advancing, setAdvancing] = useState(false);
+
   useEffect(() => {
     setSuccessMsg(null);
     setErrorMsg(null);
+    if (!dateRange.startDate || !dateRange.endDate) return;
+    
     if (activeTab === 'process') {
       fetchSummary();
     } else {
       fetchHistory();
     }
-  }, [activeTab, selectedMonth, selectedYear]);
+  }, [activeTab, dateRange]);
 
   const fetchSummary = async (sd?: string, ed?: string) => {
-    const queryStart = sd || startDate;
-    const queryEnd = ed || endDate;
+    const queryStart = sd || dateRange.startDate;
+    const queryEnd = ed || dateRange.endDate;
     try {
       setLoading(true);
       setErrorMsg(null);
@@ -107,6 +82,7 @@ export default function Payroll() {
         ...s,
         bonus: 0,
         deduction: 0,
+        advance_balance: s.advance_balance || 0,
         selected: false,
         isPaid: paidSet.has(s.staff_id),
       }));
@@ -127,10 +103,12 @@ export default function Payroll() {
     }
   };
 
-  const fetchHistory = async () => {
+  const fetchHistory = async (sd?: string, ed?: string) => {
+    const queryStart = sd || dateRange.startDate;
+    const queryEnd = ed || dateRange.endDate;
     try {
       setLoading(true);
-      const data = await invoke<SalaryPayout[]>('get_payout_history');
+      const data = await invoke<SalaryPayout[]>('get_payout_history', { startDate: queryStart, endDate: queryEnd });
       setHistory(data);
     } catch (e) {
       console.error(e);
@@ -166,7 +144,8 @@ export default function Payroll() {
   const totalBase = selectedRows.reduce((s, r) => s + r.base_salary, 0);
   const totalBonus = selectedRows.reduce((s, r) => s + r.bonus, 0);
   const totalDeduction = selectedRows.reduce((s, r) => s + r.deduction, 0);
-  const totalNet = totalBase + totalBonus - totalDeduction;
+  const totalAdvanceDeduction = selectedRows.reduce((s, r) => s + r.advance_balance, 0);
+  const totalNet = totalBase + totalBonus - totalDeduction - totalAdvanceDeduction;
 
   // Stats for cards
   const totalStaff = rows.length;
@@ -191,19 +170,193 @@ export default function Payroll() {
         base_salary: r.base_salary,
         bonus: r.bonus,
         deduction: r.deduction,
+        advance_deduction: r.advance_balance,
         staff_name: r.name,
       }));
       
-      const msg = await invoke<string>('process_batch_payout', { payouts, payoutDate: endDate });
+      const msg = await invoke<string>('process_batch_payout', { payouts, payoutDate: dateRange.endDate });
       setSuccessMsg(msg);
       
       // Refresh data — pass dates explicitly to avoid stale closure
-      await fetchSummary(startDate, endDate);
+      await fetchSummary(dateRange.startDate, dateRange.endDate);
     } catch (e: any) {
       console.error(e);
       setErrorMsg(String(e));
     } finally {
       setProcessing(false);
+    }
+  };
+
+  const handlePayAdvanceSalary = async () => {
+    if (!advanceStaffId || !advanceAmount || !advanceDate) {
+      setErrorMsg('Please fill in all required fields.');
+      setShowAdvanceModal(false);
+      return;
+    }
+
+    try {
+      setAdvancing(true);
+      setErrorMsg(null);
+
+      const staff = rows.find(r => r.staff_id === Number(advanceStaffId));
+      if (!staff) throw new Error('Staff not found');
+
+      const msg = await invoke<string>('pay_advance_salary', {
+        staffId: Number(advanceStaffId),
+        amount: Number(advanceAmount),
+        date: advanceDate,
+        note: advanceNote,
+        staffName: staff.name
+      });
+
+      setSuccessMsg(msg);
+      setShowAdvanceModal(false);
+      
+      // Reset form
+      setAdvanceStaffId('');
+      setAdvanceAmount('');
+      setAdvanceNote('');
+      
+      // Refresh summary to see updated advance balance
+      if (activeTab === 'process' && dateRange.startDate) {
+        await fetchSummary(dateRange.startDate, dateRange.endDate);
+      }
+    } catch (e: any) {
+      console.error(e);
+      setErrorMsg(String(e));
+      setShowAdvanceModal(false);
+    } finally {
+      setAdvancing(false);
+    }
+  };
+
+  const handlePrintSlip = async (payout: SalaryPayout) => {
+    try {
+      const restName = await invoke<string>('get_restaurant_name').catch(() => 'Restaurant');
+      const adminName = localStorage.getItem('displayName') || localStorage.getItem('userRole') || 'Admin';
+      const baseAmount = payout.amount - payout.bonus + payout.deduction + payout.advance_deduction;
+
+      const printWindow = document.createElement('iframe');
+      printWindow.style.position = 'absolute';
+      printWindow.style.width = '0px';
+      printWindow.style.height = '0px';
+      printWindow.style.border = 'none';
+      document.body.appendChild(printWindow);
+
+      const doc = printWindow.contentWindow?.document;
+      if (!doc) return;
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Salary Slip - ${payout.staff_name}</title>
+          <style>
+            body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 40px; color: #1e293b; max-width: 800px; margin: 0 auto; }
+            .header { text-align: center; margin-bottom: 40px; border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; }
+            .header h1 { margin: 0; font-size: 28px; color: #0f172a; }
+            .header p { margin: 5px 0 0; color: #64748b; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
+            .info-grid { display: flex; justify-content: space-between; margin-bottom: 40px; background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; }
+            .info-item { display: flex; flex-direction: column; gap: 4px; }
+            .info-label { font-size: 12px; color: #64748b; text-transform: uppercase; font-weight: bold; }
+            .info-value { font-size: 16px; font-weight: 600; color: #0f172a; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+            th, td { padding: 15px; text-align: right; border-bottom: 1px solid #e2e8f0; }
+            th { text-align: left; font-size: 13px; color: #64748b; text-transform: uppercase; }
+            td:first-child, th:first-child { text-align: left; }
+            .amount { font-family: monospace; font-size: 15px; }
+            .total-row td { border-top: 2px solid #cbd5e1; border-bottom: none; font-weight: bold; font-size: 18px; color: #0f172a; }
+            .total-row td:first-child { text-align: right; text-transform: uppercase; font-size: 14px; color: #64748b; }
+            .footer { text-align: center; margin-top: 50px; font-size: 12px; color: #94a3b8; }
+            .signature { margin-top: 60px; display: flex; justify-content: space-between; padding: 0 40px; }
+            .sig-line { width: 200px; border-top: 1px solid #cbd5e1; text-align: center; padding-top: 8px; font-size: 12px; color: #64748b; }
+            @media print {
+              body { padding: 20px; }
+              @page { margin: 10mm; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>${restName}</h1>
+            <p>Salary Slip</p>
+          </div>
+          
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="info-label">Staff Member</span>
+              <span class="info-value">${payout.staff_name}</span>
+            </div>
+            <div class="info-item" style="text-align: center;">
+              <span class="info-label">Issued By</span>
+              <span class="info-value">${adminName}</span>
+            </div>
+            <div class="info-item" style="text-align: right;">
+              <span class="info-label">Date Issued</span>
+              <span class="info-value">${payout.date}</span>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Description</th>
+                <th style="width: 200px;">Amount (Rs.)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Base Salary</td>
+                <td class="amount">${baseAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              </tr>
+              ${payout.bonus > 0 ? `
+              <tr>
+                <td>Bonus / Allowances</td>
+                <td class="amount">+ ${payout.bonus.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              </tr>` : ''}
+              ${payout.deduction > 0 ? `
+              <tr>
+                <td>Deductions</td>
+                <td class="amount">- ${payout.deduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              </tr>` : ''}
+              ${payout.advance_deduction > 0 ? `
+              <tr>
+                <td>Advance Salary Deduction</td>
+                <td class="amount">- ${payout.advance_deduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              </tr>` : ''}
+              <tr class="total-row">
+                <td>Net Pay</td>
+                <td class="amount">${payout.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="signature">
+            <div class="sig-line">Employer Signature</div>
+            <div class="sig-line">Employee Signature</div>
+          </div>
+          
+          <div class="footer">
+            Generated by Restaurant Management System
+          </div>
+        </body>
+        </html>
+      `;
+
+      doc.open();
+      doc.write(html);
+      doc.close();
+
+      setTimeout(() => {
+        printWindow.contentWindow?.focus();
+        printWindow.contentWindow?.print();
+        setTimeout(() => {
+          document.body.removeChild(printWindow);
+        }, 1000);
+      }, 500);
+
+    } catch (e) {
+      console.error('Failed to print slip:', e);
     }
   };
 
@@ -287,47 +440,19 @@ export default function Payroll() {
               </button>
             </div>
 
-            {activeTab === 'process' && (
-              <div className="flex items-center space-x-2">
-                {/* Month Navigator */}
-                <div className="flex items-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-sm overflow-hidden">
-                  <button
-                    onClick={goToPrevMonth}
-                    className="px-3 py-2.5 text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-r border-slate-200 dark:border-slate-700"
-                  >
-                    <ChevronLeft size={16} />
-                  </button>
-                  <div className="px-5 py-2.5 flex items-center space-x-2.5 min-w-[200px] justify-center">
-                    <Calendar size={15} className="text-blue-500 shrink-0" />
-                    <div className="text-center">
-                      <span className="text-sm font-bold text-slate-900 dark:text-white">
-                        {monthNames[selectedMonth]} {selectedYear}
-                      </span>
-                      <span className="text-[10px] text-slate-400 ml-2 font-medium">
-                        {startDate.slice(8)}/{startDate.slice(5,7)} — {endDate.slice(8)}/{endDate.slice(5,7)}
-                      </span>
-                    </div>
-                  </div>
-                  <button
-                    onClick={goToNextMonth}
-                    disabled={isFutureMonth}
-                    className="px-3 py-2.5 text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-l border-slate-200 dark:border-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <ChevronRight size={16} />
-                  </button>
-                </div>
-
-                {/* This Month Quick Button */}
-                {!isCurrentMonth && (
-                  <button
-                    onClick={goToCurrentMonth}
-                    className="px-3.5 py-2.5 text-xs font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-500/20 transition-colors"
-                  >
-                    This Month
-                  </button>
-                )}
-              </div>
-            )}
+            <div className="flex items-center space-x-3">
+              <button 
+                onClick={() => setShowAdvanceModal(true)}
+                className="bg-amber-100 hover:bg-amber-200 text-amber-700 dark:bg-amber-500/20 dark:hover:bg-amber-500/30 dark:text-amber-400 px-4 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center space-x-2"
+              >
+                <Banknote size={15} />
+                <span>Pay Advance Salary</span>
+              </button>
+              <DateFilterToolbar 
+                onDateRangeChange={(startDate, endDate) => setDateRange({ startDate, endDate })}
+                defaultMode="month"
+              />
+            </div>
           </div>
 
           {/* Success message */}
@@ -379,19 +504,22 @@ export default function Payroll() {
                             />
                           </label>
                         </th>
-                        <th className="py-4 px-4 font-semibold">Staff Member</th>
-                        <th className="py-4 px-4 font-semibold">Category</th>
-                        <th className="py-4 px-4 font-semibold text-center">Attendance</th>
-                        <th className="py-4 px-4 font-semibold text-right">Base Salary</th>
-                        <th className="py-4 px-4 font-semibold text-center">Bonus</th>
-                        <th className="py-4 px-4 font-semibold text-center">Deduction</th>
-                        <th className="py-4 px-4 font-semibold text-right">Net Pay</th>
-                        <th className="py-4 px-5 font-semibold text-center">Status</th>
+                        <th className="py-4 px-2 font-semibold whitespace-nowrap">Staff Member</th>
+                        <th className="py-4 px-2 font-semibold whitespace-nowrap">Category</th>
+                        <th className="py-4 px-2 font-semibold text-center whitespace-nowrap">Attendance</th>
+                        <th className="py-4 px-2 font-semibold text-right whitespace-nowrap">Base Salary</th>
+                        <th className="py-4 px-2 font-semibold text-center whitespace-nowrap">Bonus</th>
+                        <th className="py-4 px-2 font-semibold text-center whitespace-nowrap">Deduction</th>
+                        <th className="py-4 px-2 font-semibold text-center whitespace-nowrap">Advance Bal.</th>
+                        <th className="py-4 px-2 font-semibold text-right whitespace-nowrap">Net Pay</th>
+                        <th className="py-4 px-3 font-semibold text-center whitespace-nowrap">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
                       {rows.map((row) => {
-                        const netPay = row.base_salary + row.bonus - row.deduction;
+                        const netPay = row.isPaid 
+                          ? (row.paid_amount || row.base_salary) 
+                          : (row.base_salary + row.bonus - row.deduction - row.advance_balance);
                         return (
                           <tr 
                             key={row.staff_id} 
@@ -415,7 +543,7 @@ export default function Payroll() {
                                 />
                               </label>
                             </td>
-                            <td className="py-4 px-4">
+                            <td className="py-3 px-2">
                               <div className="flex items-center space-x-3">
                                 <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold border shrink-0 ${getAvatarColor(row.name)}`}>
                                   {getInitials(row.name)}
@@ -425,7 +553,7 @@ export default function Payroll() {
                                 </span>
                               </div>
                             </td>
-                            <td className="py-4 px-4">
+                            <td className="py-3 px-2">
                               <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${
                                 row.isPaid 
                                   ? 'bg-slate-50 dark:bg-slate-800/50 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700' 
@@ -434,7 +562,7 @@ export default function Payroll() {
                                 {row.category_name || 'Uncategorized'}
                               </span>
                             </td>
-                            <td className="py-4 px-4 text-center">
+                            <td className="py-3 px-2 text-center">
                               <div className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-bold border ${
                                 row.days_present > 0 
                                   ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20' 
@@ -444,12 +572,12 @@ export default function Payroll() {
                                 <span>{row.days_present} Day{row.days_present !== 1 ? 's' : ''}</span>
                               </div>
                             </td>
-                            <td className="py-4 px-4 text-right">
-                              <span className={`font-mono font-bold text-sm ${row.isPaid ? 'text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
+                            <td className="py-3 px-2 text-right">
+                              <span className={`font-mono font-bold text-sm whitespace-nowrap ${row.isPaid ? 'text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
                                 Rs. {row.base_salary.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                               </span>
                             </td>
-                            <td className="py-4 px-4 text-center" onClick={(e) => e.stopPropagation()}>
+                            <td className="py-3 px-2 text-center" onClick={(e) => e.stopPropagation()}>
                               {row.isPaid ? (
                                 <span className="text-slate-300 dark:text-slate-600 font-mono text-sm">—</span>
                               ) : (
@@ -462,7 +590,7 @@ export default function Payroll() {
                                 />
                               )}
                             </td>
-                            <td className="py-4 px-4 text-center" onClick={(e) => e.stopPropagation()}>
+                            <td className="py-3 px-2 text-center" onClick={(e) => e.stopPropagation()}>
                               {row.isPaid ? (
                                 <span className="text-slate-300 dark:text-slate-600 font-mono text-sm">—</span>
                               ) : (
@@ -475,8 +603,17 @@ export default function Payroll() {
                                 />
                               )}
                             </td>
-                            <td className="py-4 px-4 text-right">
-                              <span className={`font-mono font-bold text-base ${
+                            <td className="py-3 px-2 text-center">
+                              {row.advance_balance > 0 ? (
+                                <span className="font-mono text-sm font-semibold text-orange-600 dark:text-orange-400 whitespace-nowrap">
+                                  - Rs. {row.advance_balance}
+                                </span>
+                              ) : (
+                                <span className="text-slate-300 dark:text-slate-600 font-mono text-sm">—</span>
+                              )}
+                            </td>
+                            <td className="py-3 px-2 text-right">
+                              <span className={`font-mono font-bold text-base whitespace-nowrap ${
                                 row.isPaid 
                                   ? 'text-slate-400 dark:text-slate-500' 
                                   : 'text-slate-900 dark:text-white'
@@ -484,7 +621,7 @@ export default function Payroll() {
                                 Rs. {netPay.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                               </span>
                             </td>
-                            <td className="py-4 px-5 text-center">
+                            <td className="py-3 px-3 text-center">
                               {row.isPaid ? (
                                 <span className="inline-flex items-center space-x-1.5 bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 px-3.5 py-1.5 rounded-full text-xs font-bold border border-emerald-200 dark:border-emerald-500/25 shadow-sm shadow-emerald-500/5">
                                   <Check size={12} strokeWidth={3} />
@@ -561,6 +698,14 @@ export default function Payroll() {
                               </div>
                             )}
 
+                            {/* Advance Deduction */}
+                            {totalAdvanceDeduction > 0 && (
+                              <div>
+                                <p className="text-[10px] text-orange-500 font-semibold uppercase tracking-wider leading-tight">− Advance</p>
+                                <p className="text-sm font-mono font-bold text-orange-600 dark:text-orange-400">Rs. {totalAdvanceDeduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                              </div>
+                            )}
+
                             <div className="h-10 w-px bg-slate-200 dark:bg-slate-700"></div>
 
                             {/* Net */}
@@ -590,13 +735,15 @@ export default function Payroll() {
                 <table className="w-full text-left border-collapse">
                   <thead className="sticky top-0 z-10">
                     <tr className="bg-slate-50/80 dark:bg-slate-800/60 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider">
-                      <th className="py-4 px-6 font-semibold">Date Paid</th>
-                      <th className="py-4 px-6 font-semibold">Staff Member</th>
-                      <th className="py-4 px-6 font-semibold text-right">Base Amount</th>
-                      <th className="py-4 px-6 font-semibold text-right">Bonus</th>
-                      <th className="py-4 px-6 font-semibold text-right">Deduction</th>
-                      <th className="py-4 px-6 font-semibold text-right">Net Paid</th>
-                      <th className="py-4 px-6 font-semibold text-center">Status</th>
+                      <th className="py-4 px-4 font-semibold whitespace-nowrap">Date Paid</th>
+                      <th className="py-4 px-4 font-semibold whitespace-nowrap">Staff Member</th>
+                      <th className="py-4 px-4 font-semibold text-right whitespace-nowrap">Base Amount</th>
+                      <th className="py-4 px-4 font-semibold text-right whitespace-nowrap">Bonus</th>
+                      <th className="py-4 px-4 font-semibold text-right whitespace-nowrap">Deduction</th>
+                      <th className="py-4 px-4 font-semibold text-right whitespace-nowrap">Advance</th>
+                      <th className="py-4 px-4 font-semibold text-right whitespace-nowrap">Net Paid</th>
+                      <th className="py-4 px-4 font-semibold text-center whitespace-nowrap">Status</th>
+                      <th className="py-4 px-4 font-semibold text-center whitespace-nowrap">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
@@ -604,30 +751,30 @@ export default function Payroll() {
                       const baseAmount = record.amount - record.bonus + record.deduction;
                       return (
                         <tr key={record.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition-colors">
-                          <td className="py-4 px-6">
+                          <td className="py-3 px-4">
                             <div className="flex items-center space-x-2.5">
                               <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0">
                                 <Calendar size={14} className="text-slate-400" />
                               </div>
-                              <span className="text-sm font-medium text-slate-600 dark:text-slate-300">{record.date}</span>
+                              <span className="text-sm font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap">{record.date}</span>
                             </div>
                           </td>
-                          <td className="py-4 px-6">
+                          <td className="py-3 px-4">
                             <div className="flex items-center space-x-3">
                               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold border shrink-0 ${getAvatarColor(record.staff_name)}`}>
                                 {getInitials(record.staff_name)}
                               </div>
-                              <span className="font-bold text-sm text-slate-900 dark:text-white">{record.staff_name}</span>
+                              <span className="font-bold text-sm text-slate-900 dark:text-white whitespace-nowrap">{record.staff_name}</span>
                             </div>
                           </td>
-                          <td className="py-4 px-6 text-right">
-                            <span className="font-mono font-medium text-sm text-slate-600 dark:text-slate-400">
+                          <td className="py-3 px-4 text-right">
+                            <span className="font-mono font-medium text-sm text-slate-600 dark:text-400 whitespace-nowrap">
                               Rs. {baseAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </span>
                           </td>
-                          <td className="py-4 px-6 text-right">
+                          <td className="py-3 px-4 text-right">
                             {record.bonus > 0 ? (
-                              <span className="inline-flex items-center space-x-1 font-mono font-semibold text-sm text-emerald-600 dark:text-emerald-400">
+                              <span className="inline-flex items-center space-x-1 font-mono font-semibold text-sm text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                                 <ArrowUpRight size={12} />
                                 <span>Rs. {record.bonus.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                               </span>
@@ -635,9 +782,9 @@ export default function Payroll() {
                               <span className="text-slate-300 dark:text-slate-600 font-mono text-sm">—</span>
                             )}
                           </td>
-                          <td className="py-4 px-6 text-right">
+                          <td className="py-3 px-4 text-right">
                             {record.deduction > 0 ? (
-                              <span className="inline-flex items-center space-x-1 font-mono font-semibold text-sm text-red-500 dark:text-red-400">
+                              <span className="inline-flex items-center space-x-1 font-mono font-semibold text-sm text-red-500 dark:text-red-400 whitespace-nowrap">
                                 <ArrowDownRight size={12} />
                                 <span>Rs. {record.deduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                               </span>
@@ -645,23 +792,41 @@ export default function Payroll() {
                               <span className="text-slate-300 dark:text-slate-600 font-mono text-sm">—</span>
                             )}
                           </td>
-                          <td className="py-4 px-6 text-right">
-                            <span className="font-mono font-extrabold text-base text-slate-900 dark:text-white">
+                          <td className="py-3 px-4 text-right">
+                            {record.advance_deduction > 0 ? (
+                              <span className="inline-flex items-center space-x-1 font-mono font-semibold text-sm text-orange-500 dark:text-orange-400 whitespace-nowrap">
+                                <span>Rs. {record.advance_deduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-300 dark:text-slate-600 font-mono text-sm">—</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <span className="font-mono font-extrabold text-base text-slate-900 dark:text-white whitespace-nowrap">
                               Rs. {record.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </span>
                           </td>
-                          <td className="py-4 px-6 text-center">
-                            <span className="inline-flex items-center space-x-1.5 bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 px-3 py-1.5 rounded-full text-xs font-bold border border-emerald-200 dark:border-emerald-500/25">
+                          <td className="py-3 px-4 text-center">
+                            <span className="inline-flex items-center space-x-1.5 bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 px-3 py-1.5 rounded-full text-xs font-bold border border-emerald-200 dark:border-emerald-500/25 whitespace-nowrap">
                               <Check size={11} strokeWidth={3} />
                               <span>Completed</span>
                             </span>
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <button
+                              onClick={() => handlePrintSlip(record)}
+                              className="inline-flex items-center space-x-1.5 bg-blue-50 hover:bg-blue-100 dark:bg-blue-500/10 dark:hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap"
+                            >
+                              <Printer size={14} />
+                              <span>Slip</span>
+                            </button>
                           </td>
                         </tr>
                       );
                     })}
                     {history.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="py-16 text-center">
+                        <td colSpan={8} className="py-16 text-center">
                           <div className="flex flex-col items-center space-y-3">
                             <div className="w-14 h-14 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
                               <History size={24} className="text-slate-400" />
@@ -723,6 +888,90 @@ export default function Payroll() {
                   className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold shadow-lg shadow-blue-600/20 transition-colors disabled:opacity-50 flex items-center justify-center space-x-2"
                 >
                   <span>Confirm & Pay</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Advance Salary Modal */}
+      {showAdvanceModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200 dark:border-slate-800 animate-in fade-in zoom-in duration-200">
+            <div className="p-6">
+              <div className="flex items-center space-x-4 mb-5">
+                <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-500/20 flex items-center justify-center shrink-0">
+                  <Banknote size={24} className="text-amber-600 dark:text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-slate-900 dark:text-white">Advance Salary</h3>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">Record an advance payment.</p>
+                </div>
+              </div>
+
+              <div className="space-y-4 mb-6">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Staff Member</label>
+                  <select
+                    value={advanceStaffId}
+                    onChange={(e) => setAdvanceStaffId(Number(e.target.value))}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 dark:text-white"
+                  >
+                    <option value="" disabled>Select Staff</option>
+                    {rows.map(r => (
+                      <option key={r.staff_id} value={r.staff_id}>{r.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Amount (Rs.)</label>
+                  <input
+                    type="number"
+                    value={advanceAmount}
+                    onChange={(e) => setAdvanceAmount(e.target.value)}
+                    placeholder="Enter amount"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 dark:text-white font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Date</label>
+                  <input
+                    type="date"
+                    value={advanceDate}
+                    onChange={(e) => setAdvanceDate(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Note (Optional)</label>
+                  <input
+                    type="text"
+                    value={advanceNote}
+                    onChange={(e) => setAdvanceNote(e.target.value)}
+                    placeholder="Reason for advance"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={() => setShowAdvanceModal(false)}
+                  disabled={advancing}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handlePayAdvanceSalary}
+                  disabled={advancing || !advanceStaffId || !advanceAmount}
+                  className="flex-1 px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-semibold shadow-lg shadow-amber-600/20 transition-colors disabled:opacity-50 flex items-center justify-center space-x-2"
+                >
+                  <span>{advancing ? 'Saving...' : 'Record Advance'}</span>
                 </button>
               </div>
             </div>

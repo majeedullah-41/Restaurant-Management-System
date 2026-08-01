@@ -17,6 +17,7 @@ import Payroll from "./pages/Payroll";
 import UserProfile from "./pages/UserProfile";
 import Reports from "./pages/Reports";
 import DeliveryManagement from "./pages/DeliveryManagement";
+import Inventory from "./pages/Inventory";
 import './App.css';
 
 interface LicenseStatus {
@@ -155,14 +156,12 @@ function App() {
         <Route path="/admin/settings" element={<SettingsPage />} />
         <Route path="/admin/orders" element={<Orders />} />
         <Route path="/admin/tables" element={<TableManagement />} />
-        <Route path="/admin/pos/:tableId" element={<POS />} />
-        <Route path="/admin/pos/:tableId/:orderId" element={<POS />} />
+        <Route path="/admin/pos/:tableId/:orderId?" element={<POS />} />
 
         {/* Cashier Routes */}
         <Route path="/cashier/orders" element={<Orders />} />
         <Route path="/cashier/tables" element={<TableManagement />} />
-        <Route path="/cashier/pos/:tableId" element={<POS />} />
-        <Route path="/cashier/pos/:tableId/:orderId" element={<POS />} />
+        <Route path="/cashier/pos/:tableId/:orderId?" element={<POS />} />
         <Route path="/cashier/customers" element={<Customers />} />
         <Route path="/cashier/history" element={<Orders />} />
         <Route path="/cashier/deliveries" element={<DeliveryManagement />} />
@@ -171,6 +170,7 @@ function App() {
         <Route path="/admin/staff" element={<StaffManagement />} />
         <Route path="/admin/customers" element={<Customers />} />
         <Route path="/admin/expenses" element={<Expenses />} />
+        <Route path="/admin/inventory" element={<Inventory />} />
         <Route path="/admin/payroll" element={<Payroll />} />
         <Route path="/admin/profile" element={<UserProfile />} />
         <Route path="/admin/reports" element={<Reports />} />

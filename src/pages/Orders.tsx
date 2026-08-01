@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Search, CheckCircle2, ChevronDown, ChevronRight, PackageOpen, User, Clock, Banknote, FileText, Tag, AlertCircle, ExternalLink, Percent, ChevronLeft, Calendar } from "lucide-react";
+import { Search, CheckCircle2, ChevronDown, ChevronRight, PackageOpen, User, Clock, Banknote, FileText, Tag, AlertCircle, ExternalLink, Percent, Phone, MapPin, Calendar, Receipt } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
+import DateFilterToolbar from "../components/DateFilterToolbar";
 
 interface OrderHistory {
   id: number;
@@ -22,6 +23,10 @@ interface OrderHistory {
   order_type: string | null;
   created_at: string | null;
   closed_at: string | null;
+  delivery_fee?: number;
+  customer_phone?: string;
+  delivery_address?: string;
+  service_charge_amount?: number;
 }
 
 interface OrderItem {
@@ -92,29 +97,7 @@ export default function Orders() {
   const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
   const [orderItems, setOrderItems] = useState<Record<number, OrderItem[]>>({});
   const [loadingItems, setLoadingItems] = useState<Record<number, boolean>>({});
-  const currentDate = new Date();
-  const [selectedMonth, setSelectedMonth] = useState(currentDate.getMonth());
-  const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear());
-
-  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-
-  const goToPrevMonth = () => {
-    if (selectedMonth === 0) {
-      setSelectedMonth(11);
-      setSelectedYear(selectedYear - 1);
-    } else {
-      setSelectedMonth(selectedMonth - 1);
-    }
-  };
-
-  const goToNextMonth = () => {
-    if (selectedMonth === 11) {
-      setSelectedMonth(0);
-      setSelectedYear(selectedYear + 1);
-    } else {
-      setSelectedMonth(selectedMonth + 1);
-    }
-  };
+  const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
 
   const handleDiscountUpdated = (orderId: number, discountAmt: number) => {
     setAllOrders(prev => prev.map(o => o.id === orderId ? { ...o, discount_amount: discountAmt } : o));
@@ -129,8 +112,18 @@ export default function Orders() {
       const dateStr = order.closed_at || order.created_at;
       if (!dateStr) return false;
       const orderDate = new Date(dateStr);
-      if (orderDate.getMonth() !== selectedMonth || orderDate.getFullYear() !== selectedYear) {
-        return false;
+      const start = dateRange.startDate ? new Date(dateRange.startDate) : null;
+      const end = dateRange.endDate ? new Date(dateRange.endDate) : null;
+      
+      if (start && end) {
+        const d = new Date(orderDate.getFullYear(), orderDate.getMonth(), orderDate.getDate());
+        const s = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+        const e = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+        if (d < s || d > e) {
+           return false;
+        }
+      } else {
+        return false; // don't show anything until dateRange is set
       }
     }
     
@@ -210,26 +203,10 @@ export default function Orders() {
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">{isHistoryPage ? 'Completed Transactions' : 'Active Orders'}</h2>
               <div className="flex items-center space-x-4">
                 {isHistoryPage && (
-                  <div className="flex items-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden h-10">
-                    <button
-                      onClick={goToPrevMonth}
-                      className="px-3 h-full text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-r border-slate-200 dark:border-slate-800 flex items-center justify-center"
-                    >
-                      <ChevronLeft size={16} />
-                    </button>
-                    <div className="px-5 h-full flex items-center space-x-2.5 min-w-[160px] justify-center">
-                      <Calendar size={15} className="text-blue-500 shrink-0" />
-                      <span className="text-sm font-bold text-slate-900 dark:text-white">
-                        {monthNames[selectedMonth]} {selectedYear}
-                      </span>
-                    </div>
-                    <button
-                      onClick={goToNextMonth}
-                      className="px-3 h-full text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-l border-slate-200 dark:border-slate-800 flex items-center justify-center"
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                  </div>
+                  <DateFilterToolbar 
+                    onDateRangeChange={(startDate, endDate) => setDateRange({ startDate, endDate })}
+                    defaultMode="month"
+                  />
                 )}
                 <div className="relative">
                   <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
@@ -283,7 +260,7 @@ export default function Orders() {
                                 : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20'
                             }`}>
                               {order.status === 'Open' ? <AlertCircle size={12} /> : <CheckCircle2 size={12} />}
-                              <span>{order.status}</span>
+                              <span>{order.order_type === 'Delivery' && order.status === 'Placed' ? 'Delivery Pending' : order.status}</span>
                             </span>
                           </td>
                           <td className="p-4 font-medium text-slate-700 dark:text-slate-300 text-center">{order.total_items}</td>
@@ -340,6 +317,20 @@ export default function Orders() {
                                           <span className="text-slate-500 dark:text-slate-400 w-24">Type:</span>
                                           <span className="font-medium text-slate-900 dark:text-white">{order.order_type || 'Dine-in'}</span>
                                         </div>
+                                        {order.order_type === 'Delivery' && (
+                                          <>
+                                            <div className="flex items-center text-sm">
+                                              <Phone size={14} className="text-slate-400 mr-2" />
+                                              <span className="text-slate-500 dark:text-slate-400 w-24">Phone:</span>
+                                              <span className="font-medium text-slate-900 dark:text-white">{order.customer_phone || 'N/A'}</span>
+                                            </div>
+                                            <div className="flex items-start text-sm">
+                                              <MapPin size={14} className="text-slate-400 mr-2 mt-0.5" />
+                                              <span className="text-slate-500 dark:text-slate-400 w-24">Address:</span>
+                                              <span className="font-medium text-slate-900 dark:text-white flex-1">{order.delivery_address || 'N/A'}</span>
+                                            </div>
+                                          </>
+                                        )}
                                         <div className="flex items-center text-sm">
                                           <User size={14} className="text-slate-400 mr-2" />
                                           <span className="text-slate-500 dark:text-slate-400 w-24">Customer:</span>
@@ -382,6 +373,12 @@ export default function Orders() {
                                             <div className="flex justify-between text-sm">
                                               <span className="text-slate-500 dark:text-slate-400">Tax Amount</span>
                                               <span className="font-medium text-slate-900 dark:text-white">Rs. {order.tax_amount.toFixed(2)}</span>
+                                            </div>
+                                          )}
+                                          {(order.service_charge_amount || 0) > 0 && (
+                                            <div className="flex justify-between text-sm">
+                                              <span className="text-slate-500 dark:text-slate-400">Service Charge</span>
+                                              <span className="font-medium text-slate-900 dark:text-white">Rs. {order.service_charge_amount?.toFixed(2)}</span>
                                             </div>
                                           )}
                                           {order.discount_amount > 0 && (

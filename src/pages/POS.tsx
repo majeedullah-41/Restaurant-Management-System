@@ -1,38 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-const EditablePayableAmount = ({ maxDiscount, totalAmount, onDiscountChange }: { maxDiscount: number, totalAmount: number, onDiscountChange: (discount: number) => void }) => {
-  const [val, setVal] = useState(totalAmount.toFixed(2));
 
-  useEffect(() => {
-    setVal(totalAmount.toFixed(2));
-  }, [totalAmount]);
-
-  return (
-    <div className="flex items-center text-xl font-bold text-slate-900 dark:text-white">
-      <span className="mr-1">Rs.</span>
-      <input
-        type="text"
-        value={val}
-        onChange={(e) => setVal(e.target.value)}
-        onBlur={() => {
-          const parsed = parseFloat(val);
-          if (isNaN(parsed) || parsed < 0) {
-            setVal(totalAmount.toFixed(2));
-            return;
-          }
-          const capped = Math.min(parsed, maxDiscount);
-          onDiscountChange(maxDiscount - capped);
-          setVal(capped.toFixed(2));
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') e.currentTarget.blur();
-        }}
-        className="bg-transparent w-full focus:outline-none"
-      />
-    </div>
-  );
-};
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { useParams, useNavigate } from "react-router-dom";
@@ -40,7 +9,7 @@ import {
   ArrowLeft, Plus, Receipt,
   X, Trash2,
   Users,
-  Tag, Percent, Calculator, FileText, Printer, ChevronDown
+  Tag, Percent, Calculator, FileText, Printer, ChevronDown, ClipboardList
 } from "lucide-react";
 
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -56,6 +25,7 @@ export default function POS() {
   const { tableId, orderId: routeOrderId } = useParams();
   const navigate = useNavigate();
   const role = localStorage.getItem("userRole") || "Admin";
+  const displayName = localStorage.getItem("displayName") || role;
   const basePath = role === "Cashier" ? "/cashier" : "/admin";
   const returnUrl = role === "Cashier" ? "/cashier/dashboard" : "/admin/dashboard";
 
@@ -64,6 +34,8 @@ export default function POS() {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [taxRate, setTaxRate] = useState<number>(0);
+  const [serviceChargeRate, setServiceChargeRate] = useState<number>(0);
+  const [serviceChargeTypes, setServiceChargeTypes] = useState<string[]>(["Dine-in"]);
   const [tables, setTables] = useState<DetailedTableStatus[]>([]);
 
   // State
@@ -77,6 +49,7 @@ export default function POS() {
 
   const [view, setView] = useState<'payment' | 'menu'>('payment');
   const [restaurantName, setRestaurantName] = useState("RMS");
+  const [restaurantAddress, setRestaurantAddress] = useState("");
   const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
 
   // Delivery State
@@ -89,6 +62,10 @@ export default function POS() {
   const [amountReceived, setAmountReceived] = useState<string>("");
   const [orderNote] = useState("");
   const [discount, setDiscount] = useState<number>(0);
+
+  // Pending Orders State
+  const [pendingOrders, setPendingOrders] = useState<any[]>([]);
+  const [showPendingDropdown, setShowPendingDropdown] = useState(false);
 
   // Customer State
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -116,24 +93,65 @@ export default function POS() {
 
   const subtotal = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
   const taxAmount = (subtotal * taxRate) / 100;
+  const serviceChargeAmount = serviceChargeTypes.includes(orderType) ? (subtotal * serviceChargeRate) / 100 : 0;
   
   const deliveryFee = orderType === "Delivery" 
     ? (deliverySettings.free_delivery_threshold > 0 && subtotal >= deliverySettings.free_delivery_threshold ? 0 : deliverySettings.base_delivery_fee) 
     : 0;
 
   // Ensure discount never exceeds payable amount
-  const maxDiscount = subtotal + taxAmount + deliveryFee;
+  const maxDiscount = subtotal + taxAmount + deliveryFee + serviceChargeAmount;
   const effectiveDiscount = Math.min(discount, maxDiscount);
   const totalAmount = maxDiscount - effectiveDiscount;
 
-  // Calculate Quick Cash Options
-  const roundedTotal = Math.ceil(totalAmount / 100) * 100;
-  const quickCashOptions = totalAmount > 0
-    ? [roundedTotal, roundedTotal + 100, roundedTotal + 200, roundedTotal + 300, roundedTotal + 400]
-    : [1000, 2000, 3000, 4000, 5000];
+
+
+  const getQuickCashSuggestions = (total: number) => {
+    if (total <= 0) return [100, 500, 1000, 5000];
+    const suggestions = new Set<number>();
+    
+    const notes = [100, 500, 1000, 5000];
+    for (const note of notes) {
+      const nextMultiple = Math.ceil(total / note) * note;
+      if (nextMultiple >= total) {
+        suggestions.add(nextMultiple);
+      }
+    }
+    
+    // Ensure we always have 4 options by adding combinations if needed
+    if (suggestions.size < 4) {
+      let current = Math.max(...Array.from(suggestions));
+      for (const note of notes) {
+          if (suggestions.size >= 4) break;
+          suggestions.add(current + note);
+      }
+    }
+
+    return Array.from(suggestions).slice(0, 4).sort((a, b) => a - b);
+  };
+  
+  const quickCashOptions = getQuickCashSuggestions(totalAmount);
 
   const changeAmount = amountReceived ? Math.max(0, parseFloat(amountReceived) - totalAmount) : 0;
 
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F9') {
+        e.preventDefault();
+        document.getElementById('complete-payment-btn')?.click();
+      } else if (e.key === 'F10') {
+        e.preventDefault();
+        document.getElementById('draft-btn')?.click();
+      } else if (e.key === 'F12') {
+        e.preventDefault();
+        document.getElementById('cancel-btn')?.click();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Load everything on mount
   useEffect(() => {
@@ -151,11 +169,17 @@ export default function POS() {
 
         const settings: any = await invoke("get_settings");
         setTaxRate(settings.tax_rate);
+        setServiceChargeRate(settings.service_charge_rate || 0);
+        setServiceChargeTypes(settings.service_charge_types ? settings.service_charge_types.split(",") : ["Dine-in"]);
         setRestaurantName(settings.restaurant_name);
+        setRestaurantAddress(settings.address || "");
         setRestaurantLogo(settings.logo_path || null);
 
         const delSettings: any = await invoke("get_delivery_settings");
         setDeliverySettings(delSettings);
+
+        const history: any = await invoke("get_order_history");
+        setPendingOrders(history.filter((o: any) => o.status === 'Open' || o.status === 'Placed'));
 
         // Only create/fetch order for physical tables or when resuming an existing order
         if (routeOrderId && routeOrderId !== 'new') {
@@ -164,23 +188,43 @@ export default function POS() {
           setOrderId(order.id);
           setDiscount(order.discount_amount || 0);
           if (order.order_type) setOrderType(order.order_type);
-          if (order.customer_phone) setDeliveryPhone(order.customer_phone);
-          if (order.delivery_address) setDeliveryAddress(order.delivery_address);
-          if (order.customer_id) setSelectedCustomerId(order.customer_id);
+          setDeliveryPhone(order.customer_phone || "");
+          setDeliveryAddress(order.delivery_address || "");
+          setSelectedCustomerId(order.customer_id || null);
           refreshCart(order.id);
         } else if (tableId !== "0") {
-          // Physical table lookup — get or create order
-          const order: any = await invoke("get_or_create_order", { tableNumber: parseInt(tableId!) });
-          setOrderId(order.id);
-          setDiscount(order.discount_amount || 0);
-          if (order.order_type) setOrderType(order.order_type);
-          if (order.customer_phone) setDeliveryPhone(order.customer_phone);
-          if (order.delivery_address) setDeliveryAddress(order.delivery_address);
-          if (order.customer_id) setSelectedCustomerId(order.customer_id);
-          refreshCart(order.id);
+          // Physical table lookup — get active order (do not create one automatically)
+          const order: any = await invoke("get_active_order", { tableNumber: parseInt(tableId!) });
+          if (order) {
+            setOrderId(order.id);
+            setDiscount(order.discount_amount || 0);
+            if (order.order_type) setOrderType(order.order_type);
+            setDeliveryPhone(order.customer_phone || "");
+            setDeliveryAddress(order.delivery_address || "");
+            setSelectedCustomerId(order.customer_id || null);
+            refreshCart(order.id);
+          } else {
+            // No active order exists for this table
+            setOrderId(null);
+            setCartItems([]);
+            setDiscount(0);
+            setOrderType("Dine-in");
+            setDeliveryPhone("");
+            setDeliveryAddress("");
+            setSelectedCustomerId(null);
+            setAmountReceived("");
+          }
+        } else if (tableId === "0" && (!routeOrderId || routeOrderId === 'new')) {
+          // For walk-in (table 0) with 'new' or no routeOrderId: 
+          // Clear state for a fresh order. It will be created lazily when the first item is added.
+          setOrderId(null);
+          setCartItems([]);
+          setDiscount(0);
+          setDeliveryPhone("");
+          setDeliveryAddress("");
+          setSelectedCustomerId(null);
+          setAmountReceived("");
         }
-        // For walk-in (table 0) with 'new' or no routeOrderId: 
-        // Don't create any order yet — it will be created lazily when the first item is added
       } catch (err) {
         console.error("Failed to initialize POS", err);
         showAlert("Initialization Error", String(err));
@@ -204,8 +248,11 @@ export default function POS() {
     const currentTableId = parseInt(tableId || "0");
     if (newTableId === currentTableId) return;
     
+    const newOrderType = newTableId === 0 ? "Takeaway" : "Dine-in";
+    
     if (orderId) {
       try {
+        await invoke("update_order_type", { orderId, orderType: newOrderType });
         await invoke("reassign_order_table", {
           orderId: orderId,
           oldTable: currentTableId,
@@ -227,17 +274,28 @@ export default function POS() {
   const handleAddToCart = async (item: MenuItem) => {
     let currentOrderId = orderId;
 
-    // Lazy order creation for walk-in: create the order now if it doesn't exist yet
+    // Lazy order creation: create the order now if it doesn't exist yet
     if (!currentOrderId) {
       try {
-        const order: any = await invoke("create_walkin_order", { orderType: orderType });
-        currentOrderId = order.id;
-        setOrderId(order.id);
-        if (order.order_type) setOrderType(order.order_type);
-        // Update URL so refresh doesn't create another order
-        navigate(`${basePath}/pos/0/${order.id}${location.search}`, { replace: true });
+        if (tableId === "0") {
+          const order: any = await invoke("create_walkin_order", { 
+            orderType: orderType,
+            customerPhone: deliveryPhone || null,
+            deliveryAddress: deliveryAddress || null
+          });
+          currentOrderId = order.id;
+          setOrderId(order.id);
+          if (order.order_type) setOrderType(order.order_type);
+          // Update URL so refresh doesn't create another order
+          navigate(`${basePath}/pos/0/${order.id}${location.search}`, { replace: true });
+        } else {
+          const order: any = await invoke("get_or_create_order", { tableNumber: parseInt(tableId!) });
+          currentOrderId = order.id;
+          setOrderId(order.id);
+          if (order.order_type) setOrderType(order.order_type);
+        }
       } catch (err) {
-        console.error("Failed to create walk-in order", err);
+        console.error("Failed to create order", err);
         return;
       }
     }
@@ -293,6 +351,7 @@ export default function POS() {
     <head>
       <title>Receipt ${formattedId}</title>
       <style>
+        @page { margin: 0; }
         body { font-family: monospace; width: 80mm; margin: 0 auto; padding: 20px; font-size: 12px; color: #000; background: #fff; }
         .text-center { text-align: center; }
         .font-bold { font-weight: bold; }
@@ -308,7 +367,7 @@ export default function POS() {
       <div class="text-center">
         ${restaurantLogo ? `<img src="${restaurantLogo}" style="max-height: 80px; max-width: 100%; display: block; margin: 0 auto 10px;" />` : ''}
         <h1>${restaurantName || "Restaurant Name"}</h1>
-        <p>Generated via RMS POS</p>
+        <p>${restaurantAddress || "Generated via RMS POS"}</p>
         <div class="border-b"></div>
       </div>
       
@@ -317,7 +376,13 @@ export default function POS() {
         <div class="flex"><span>Date:</span><span>${dateStr}</span></div>
         <div class="flex"><span>Type:</span><span>${orderType}</span></div>
         ${orderType === "Dine-in" ? `<div class="flex"><span>Table:</span><span>${tableStr}</span></div>` : ''}
-        <div class="flex"><span>Cashier:</span><span>Cashier</span></div>
+        ${orderType === "Delivery" ? `
+        <div class="flex"><span>Phone:</span><span>${deliveryPhone || 'N/A'}</span></div>
+        <div class="flex" style="align-items: flex-start;">
+          <span>Address:</span>
+          <span style="text-align: right; margin-left: 10px; max-width: 60%; word-break: break-word;">${deliveryAddress || 'N/A'}</span>
+        </div>` : ''}
+        <div class="flex"><span>Cashier:</span><span>${displayName}</span></div>
       </div>
       
       <div class="border-b"></div>
@@ -341,6 +406,7 @@ export default function POS() {
       <div class="flex"><span>Subtotal</span><span>Rs. ${subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
       ${effectiveDiscount > 0 ? `<div class="flex"><span>Discount</span><span>- Rs. ${effectiveDiscount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>` : ''}
       <div class="flex"><span>Tax (${taxRate}%)</span><span>Rs. ${taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+      ${serviceChargeAmount > 0 ? `<div class="flex"><span>Service Charge (${serviceChargeRate}%)</span><span>Rs. ${serviceChargeAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>` : ''}
       ${deliveryFee > 0 ? `<div class="flex"><span>Delivery Fee</span><span>Rs. ${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>` : ''}
       
       <div class="border-b" style="border-style: solid"></div>
@@ -362,11 +428,34 @@ export default function POS() {
     `;
 
     try {
-      await invoke("save_print_html", { filename: "rms_receipt.html", html: htmlContent });
-      navigate(returnUrl);
+      // Print internally using a hidden iframe instead of opening external browser
+      const printFrame = document.createElement('iframe');
+      printFrame.style.position = 'absolute';
+      printFrame.style.width = '0';
+      printFrame.style.height = '0';
+      printFrame.style.border = 'none';
+      document.body.appendChild(printFrame);
+
+      if (printFrame.contentWindow) {
+        const doc = printFrame.contentWindow.document;
+        doc.open();
+        doc.write(htmlContent);
+        doc.close();
+
+        printFrame.contentWindow.focus();
+        printFrame.contentWindow.print();
+        
+        // Remove frame after a delay to allow print dialog to initialize
+        setTimeout(() => {
+          document.body.removeChild(printFrame);
+          navigate(`${basePath}/pos/0`);
+        }, 1500);
+      } else {
+        navigate(`${basePath}/pos/0`);
+      }
     } catch (err) {
       console.error("Failed to generate receipt:", err);
-      navigate(returnUrl);
+      navigate(`${basePath}/pos/0`);
     }
   };
 
@@ -391,11 +480,11 @@ export default function POS() {
           subtotal: subtotal,
           taxAmount: taxAmount,
           discountAmount: effectiveDiscount,
-          cashierName: role,
-          orderNote: orderNote
+          cashierName: displayName,
+          orderNote: orderNote,
+          serviceChargeAmount: serviceChargeAmount
         });
         await handlePrint(); // Still print receipt
-        navigate(returnUrl); // Navigate away since place_delivery_order doesn't close it instantly, it dispatches it
         return;
       }
 
@@ -409,8 +498,9 @@ export default function POS() {
         discountAmount: effectiveDiscount,
         amountReceived: amountReceived ? parseFloat(amountReceived) : totalAmount,
         changeDue: changeAmount,
-        cashierName: role,
-        orderNote: orderNote
+        cashierName: displayName,
+        orderNote: orderNote,
+        serviceChargeAmount: serviceChargeAmount
       });
       await handlePrint();
     } catch (err) {
@@ -431,6 +521,7 @@ export default function POS() {
     <head>
       <title>KOT ${formattedId}</title>
       <style>
+        @page { margin: 0; }
         body { font-family: monospace; width: 80mm; margin: 0 auto; padding: 20px; font-size: 14px; color: #000; background: #fff; }
         .text-center { text-align: center; }
         .font-bold { font-weight: bold; }
@@ -455,7 +546,7 @@ export default function POS() {
         <div class="flex"><span>Date:</span><span>${dateStr}</span></div>
         <div class="flex"><span>Type:</span><span class="font-bold">${orderType}</span></div>
         ${orderType === "Dine-in" ? `<div class="flex"><span>Table:</span><span class="font-bold">${tableStr}</span></div>` : ''}
-        <div class="flex"><span>Cashier:</span><span>Cashier</span></div>
+        <div class="flex"><span>Cashier:</span><span>${displayName}</span></div>
       </div>
       
       <div class="border-b"></div>
@@ -506,7 +597,7 @@ export default function POS() {
             orderId,
             tableNumber: parseInt(tableId || "0")
           });
-          navigate(returnUrl);
+          navigate(`${basePath}/pos/0`);
         } catch (err) {
           showAlert("Cancel Failed", "Failed to cancel order: " + err);
         }
@@ -517,14 +608,75 @@ export default function POS() {
   // Render Left Sidebar (Navigation)
 
 
+  const pendingOrdersDropdown = (
+    <div className="relative w-64 z-50">
+      <button 
+        onClick={() => setShowPendingDropdown(!showPendingDropdown)}
+        className="w-full flex items-center justify-between bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 px-3 py-2.5 rounded-xl font-bold border border-amber-200 dark:border-amber-500/20 shadow-sm transition-colors hover:bg-amber-100 dark:hover:bg-amber-500/20"
+      >
+        <div className="flex items-center space-x-2">
+          <ClipboardList size={18} />
+          <span>{pendingOrders.length} Pending Orders</span>
+        </div>
+        <ChevronDown size={16} />
+      </button>
+
+      {showPendingDropdown && (
+        <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+            <h3 className="text-sm font-bold text-slate-800 dark:text-white">Open Orders</h3>
+          </div>
+          <div className="max-h-72 overflow-y-auto custom-scrollbar p-2 space-y-1">
+            {pendingOrders.length === 0 ? (
+              <p className="text-xs text-slate-500 text-center py-4">No pending orders.</p>
+            ) : (
+              pendingOrders.map(po => (
+                <button
+                  key={po.id}
+                  onClick={() => {
+                    setShowPendingDropdown(false);
+                    navigate(`${basePath}/pos/${po.table_number || 0}/${po.id}`);
+                  }}
+                  className="w-full text-left px-3 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg flex items-start justify-between transition-colors"
+                >
+                  <div>
+                    <span className="font-bold text-slate-900 dark:text-white block">#{po.id} - {po.table_number ? `Table ${po.table_number}` : 'Walk-in'}</span>
+                    <span className="text-xs text-slate-500">{po.order_type === 'Delivery' ? 'Delivery Pending' : po.status}</span>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">Rs. {po.total_price.toFixed(0)}</p>
+                    <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">{po.status}</p>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   // Render the Menu Overlay
   const renderMenuGrid = () => (
     <div className="flex-1 flex flex-col p-6 animate-in fade-in zoom-in-95 duration-200">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Select Items</h2>
-        <button onClick={() => setView('payment')} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg flex items-center font-medium shadow-md transition-colors">
-          <X size={18} className="mr-2" /> Close Menu
-        </button>
+        <div className="flex items-center space-x-6">
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Select Items</h2>
+          {pendingOrdersDropdown}
+        </div>
+        <div className="flex items-center space-x-4">
+          <button onClick={() => {
+              if (tableId === "0") navigate(`${basePath}/pos/0/new`);
+              else navigate(`${basePath}/dashboard`);
+            }} 
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold shadow-md transition-colors"
+          >
+            New Order
+          </button>
+          <button onClick={() => setView('payment')} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg flex items-center font-medium shadow-md transition-colors">
+            <X size={18} className="mr-2" /> Close Menu
+          </button>
+        </div>
       </div>
 
       {/* Categories */}
@@ -592,103 +744,131 @@ export default function POS() {
   // Render Payment View (The main image reference)
   const renderPaymentView = () => (
     <div className="flex-1 flex flex-col p-6 animate-in fade-in zoom-in-95 duration-200 overflow-y-auto custom-scrollbar">
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">Payment</h2>
-        <p className="text-slate-500 dark:text-slate-400 text-sm">Complete the order and receive payment.</p>
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center space-x-6">
+          <div>
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">Payment</h2>
+            <p className="text-slate-500 dark:text-slate-400 text-sm">Complete the order and receive payment.</p>
+          </div>
+          {pendingOrdersDropdown}
+        </div>
+        <button onClick={() => {
+            if (tableId === "0") navigate(`${basePath}/pos/0/new`);
+            else navigate(`${basePath}/dashboard`);
+          }} 
+          className="px-4 py-2 bg-[#0066FF] hover:bg-blue-700 text-white rounded-lg font-bold shadow-md transition-colors"
+        >
+          New Order
+        </button>
       </div>
 
       {/* Top 4 Cards */}
-      <div className="grid grid-cols-4 gap-4 mb-6 shrink-0">
-        <div className="bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex items-center justify-between">
-          <div className="w-12 h-12 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500">
-            <FileText size={20} />
+      <div className="grid grid-cols-2 gap-4 mb-6 shrink-0">
+        <div className="bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex items-center justify-between shadow-sm">
+          <div className="w-12 h-12 rounded-lg bg-[#E6F0FF] dark:bg-blue-900/20 flex items-center justify-center text-[#0066FF] dark:text-blue-400 shrink-0">
+            <FileText size={20} strokeWidth={2.5} />
           </div>
           <div className="text-right">
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Total Amount</p>
-            <p className="text-lg font-bold text-slate-900 dark:text-white">Rs. {subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+            <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1 uppercase tracking-wider">Total Amount</p>
+            <p className="text-2xl font-black text-slate-900 dark:text-white leading-none">Rs. {subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
           </div>
         </div>
-        <div className="bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex items-center justify-between">
-          <div className="w-12 h-12 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500">
-            <Percent size={20} />
+        <div className="bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex items-center justify-between shadow-sm">
+          <div className="w-12 h-12 rounded-lg bg-[#D1FAE5] dark:bg-emerald-900/20 flex items-center justify-center text-[#059669] dark:text-emerald-400 shrink-0">
+            <Percent size={20} strokeWidth={2.5} />
           </div>
           <div className="text-right">
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Discount (Rs)</p>
+            <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1 uppercase tracking-wider">Discount (Rs)</p>
             <input
               type="number"
               value={discount || ''}
               onChange={e => setDiscount(Number(e.target.value))}
               placeholder="0"
-              className="w-20 bg-transparent text-right text-lg font-bold text-emerald-500 border-b border-slate-200 dark:border-slate-700 focus:outline-none focus:border-emerald-500"
+              className="w-24 bg-transparent text-right text-2xl font-black text-[#059669] border-b-2 border-transparent focus:border-[#059669] focus:outline-none transition-colors"
             />
           </div>
         </div>
-        <div className="bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex items-center justify-between">
-          <div className="w-12 h-12 rounded-lg bg-purple-500/10 flex items-center justify-center text-purple-500">
-            <Calculator size={20} />
+        <div className="bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex items-center justify-between shadow-sm">
+          <div className="w-12 h-12 rounded-lg bg-[#FEF3C7] dark:bg-amber-900/20 flex items-center justify-center text-[#D97706] dark:text-amber-400 shrink-0">
+            <Calculator size={20} strokeWidth={2.5} />
           </div>
           <div className="text-right">
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Tax ({taxRate}%)</p>
-            <p className="text-lg font-bold text-purple-400">Rs. {taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+            <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1 uppercase tracking-wider">Tax ({taxRate}%)</p>
+            <p className="text-2xl font-black text-[#D97706]">Rs. {taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
           </div>
         </div>
-        <div className="bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex items-center justify-between">
-          <div className="w-12 h-12 rounded-lg bg-blue-500 flex items-center justify-center text-slate-900 dark:text-white">
-            <Receipt size={20} />
+        <div className="bg-[#0066FF] border border-[#0052CC] rounded-xl p-5 flex items-center justify-between shadow-md">
+          <div className="w-12 h-12 rounded-lg bg-white/20 flex items-center justify-center text-white shrink-0">
+            <Receipt size={20} strokeWidth={2.5} />
           </div>
           <div className="text-right">
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Payable Amount</p>
-            <p className="text-lg font-bold text-slate-900 dark:text-white">Rs. {maxDiscount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+            <p className="text-[11px] font-bold text-blue-100 mb-1 uppercase tracking-wider">Payable Amount</p>
+            <p className="text-2xl font-black text-white leading-none">Rs. {totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
           </div>
         </div>
       </div>
-
       {/* Receive Cash Section */}
       <div className="bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-800 rounded-xl p-6 mb-6">
-        <h3 className="text-slate-900 dark:text-white font-bold mb-4">Receive Cash</h3>
+        <h3 className="text-[#0066FF] dark:text-blue-400 font-bold mb-4 flex items-center">
+          Receive Cash
+        </h3>
 
         <div className="grid grid-cols-3 gap-6 mb-6">
-          <div className="bg-slate-50 dark:bg-[#0F172A] rounded-lg p-4 border border-blue-500/30 focus-within:border-blue-500 transition-colors">
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Payable Amount</p>
-            <EditablePayableAmount
-              maxDiscount={maxDiscount}
-              totalAmount={totalAmount}
-              onDiscountChange={(d) => setDiscount(d)}
-            />
+          <div>
+            <div className="bg-[#EEF2FF] dark:bg-blue-900/10 rounded-lg p-4 border border-[#C7D2FE] dark:border-blue-900/30 focus-within:border-[#0066FF] transition-colors relative mb-2">
+              <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Payable Amount</p>
+              <div className="flex items-center">
+                <input
+                  type="number"
+                  value={totalAmount || ""}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value) || 0;
+                    const diff = maxDiscount - val;
+                    setDiscount(diff >= 0 ? diff : 0);
+                  }}
+                  className="bg-transparent text-xl font-bold text-[#0066FF] dark:text-blue-400 w-full focus:outline-none"
+                />
+              </div>
+            </div>
+            {/* Quick Cash Options directly under Payable Amount */}
+            <div className="flex items-center space-x-2">
+              <span className="text-[10px] uppercase font-bold text-slate-400">Quick Cash:</span>
+              <div className="flex flex-wrap gap-2">
+                {quickCashOptions.map(amt => (
+                  <button
+                    key={amt}
+                    onClick={() => setAmountReceived(amt.toString())}
+                    className={`px-3 py-1.5 rounded border text-xs font-bold transition-colors ${parseFloat(amountReceived) === amt
+                      ? 'bg-blue-50 border-[#0066FF] text-[#0066FF]'
+                      : 'bg-white dark:bg-[#0F172A] border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-300'
+                      }`}
+                  >
+                    {amt}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
-          <div className="bg-slate-50 dark:bg-[#0F172A] rounded-lg p-4 border border-blue-500/30 focus-within:border-blue-500 transition-colors">
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Amount Received</p>
-            <input
-              type="text"
-              value={amountReceived}
-              onChange={(e) => setAmountReceived(e.target.value)}
-              placeholder="0.00"
-              className="bg-transparent text-xl font-bold text-slate-900 dark:text-white w-full focus:outline-none"
-            />
+          
+          <div className="bg-white dark:bg-[#0F172A] rounded-lg p-4 border border-slate-300 dark:border-slate-600 focus-within:border-[#0066FF] transition-colors relative h-[78px]">
+            <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Amount Received</p>
+            <div className="flex items-center">
+              <input
+                type="number"
+                value={amountReceived}
+                onChange={(e) => setAmountReceived(e.target.value)}
+                placeholder="0.00"
+                className="bg-transparent text-xl font-bold text-slate-900 dark:text-white w-full focus:outline-none"
+              />
+              <div className="text-slate-400"><Calculator size={16} /></div>
+            </div>
           </div>
-          <div className="bg-slate-50 dark:bg-[#0F172A] rounded-lg p-4 border border-slate-200 dark:border-slate-800">
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Change Amount</p>
-            <p className="text-xl font-bold text-emerald-500">Rs. {changeAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+          <div className="bg-[#D1FAE5] dark:bg-emerald-900/10 rounded-lg p-4 border border-[#A7F3D0] dark:border-emerald-900/30 h-[78px]">
+            <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Change Amount</p>
+            <div className="text-xl font-bold text-[#059669]">Rs. {changeAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
           </div>
-        </div>
-
-        <div className="grid grid-cols-5 gap-3">
-          {quickCashOptions.map(amt => (
-            <button
-              key={amt}
-              onClick={() => setAmountReceived(amt.toString())}
-              className={`py-3 rounded-lg border text-sm font-bold transition-colors ${parseFloat(amountReceived) === amt
-                ? 'bg-blue-600/20 border-blue-500 text-blue-400'
-                : 'border-slate-200 dark:border-slate-700 hover:border-slate-500 text-slate-700 dark:text-slate-300'
-                }`}
-            >
-              Rs. {amt.toLocaleString()}
-            </button>
-          ))}
         </div>
       </div>
-
-
 
       {/* Action Buttons */}
       <div className="flex space-x-4 mt-auto shrink-0">
@@ -696,11 +876,12 @@ export default function POS() {
           <ArrowLeft size={18} className="mr-2" /> Back
         </button>
         <button
+          id="complete-payment-btn"
           onClick={handleCheckout}
           disabled={!orderId || cartItems.length === 0}
-          className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-slate-900 dark:text-white rounded-xl py-4 flex items-center justify-center font-bold transition-colors relative"
+          className="flex-1 bg-[#0066FF] hover:bg-[#0052CC] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl py-4 flex items-center justify-center font-bold transition-colors relative shadow-md"
         >
-          <span className="absolute right-4 text-xs bg-blue-800 px-2 py-1 rounded">F9</span>
+          <span className="absolute right-4 text-xs bg-[#0047B3] px-2 py-1 rounded">F9</span>
           Complete Payment
         </button>
       </div>
@@ -741,6 +922,16 @@ export default function POS() {
                     return null;
                   })}
                 </select>
+              </div>
+
+              <div className="relative mb-4">
+                <button 
+                  onClick={() => navigate(`${basePath}/pos/0/new`)}
+                  className="w-full flex items-center justify-center bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 px-3 py-2.5 rounded-xl font-bold border border-blue-200 dark:border-blue-900/30 shadow-sm transition-colors hover:bg-blue-100 dark:hover:bg-blue-900/20"
+                >
+                  <Plus size={18} className="mr-2" />
+                  <span>New Order</span>
+                </button>
               </div>
 
               <div className="flex flex-col space-y-3">
@@ -883,47 +1074,53 @@ export default function POS() {
             <div className="p-5 flex-1 flex flex-col">
               <div className="grid grid-cols-12 gap-2 text-[10px] text-slate-500 uppercase tracking-wider mb-3 px-2">
                 <div className="col-span-1">#</div>
-                <div className="col-span-5">Item Name</div>
+                <div className="col-span-4">Item Name</div>
                 <div className="col-span-2 text-center">Qty</div>
                 <div className="col-span-2 text-right">Price</div>
                 <div className="col-span-2 text-right">Total</div>
+                <div className="col-span-1 text-center"></div>
               </div>
 
               <div className="space-y-3 mb-4">
                 {cartItems.map((item, index) => (
-                  <div key={item.id} className="grid grid-cols-12 gap-2 items-center text-xs group">
+                  <div key={item.id} className="grid grid-cols-12 gap-2 items-center text-xs px-2 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded-lg transition-colors">
                     <div className="col-span-1 text-slate-500">{index + 1}</div>
-                    <div className="col-span-5 flex items-center space-x-2">
+                    <div className="col-span-4 flex items-center space-x-2">
                       <div className="w-6 h-6 rounded bg-slate-200 dark:bg-slate-800 flex items-center justify-center shrink-0">
                         <Tag size={12} className="text-slate-500" />
                       </div>
                       <span className="text-slate-900 dark:text-white truncate">{item.name}</span>
                     </div>
-                    <div className="col-span-2 text-center text-slate-900 dark:text-white">{item.quantity}</div>
+                    <div className="col-span-2 text-center text-slate-900 dark:text-white font-medium">{item.quantity}</div>
                     <div className="col-span-2 text-right text-slate-500 dark:text-slate-400">{(item.price).toLocaleString()}</div>
                     <div className="col-span-2 text-right text-slate-900 dark:text-white font-bold">{(item.price * item.quantity).toLocaleString()}</div>
 
-                    {/* Hover delete button (absolute positioned to not mess up grid) */}
-                    <button
-                      onClick={() => handleRemoveFromCart(item.item_id)}
-                      className="absolute right-8 p-1.5 bg-red-500/90 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
-                    >
-                      <Trash2 size={12} />
-                    </button>
+                    <div className="col-span-1 flex justify-center">
+                      <button
+                        onClick={() => handleRemoveFromCart(item.item_id)}
+                        className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-500/20 rounded transition-colors"
+                        title="Remove item"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </div>
                 ))}
                 {cartItems.length === 0 && (
-                  <div className="text-center py-6 text-slate-500 text-sm">
-                    Cart is empty. Click "+ Add Item" to begin.
+                  <div className="text-center py-10 flex flex-col items-center justify-center text-slate-500">
+                    <div className="w-16 h-16 rounded-full bg-[#F8F9FF] dark:bg-slate-800 flex items-center justify-center mb-3 text-slate-300 dark:text-slate-500">
+                      <Receipt size={32} />
+                    </div>
+                    <span className="text-xs">Cart is empty. Click "+ Add Item" to begin.</span>
                   </div>
                 )}
               </div>
 
               <button
                 onClick={() => setView('menu')}
-                className="w-full py-3 border border-blue-900/50 text-blue-500 hover:bg-blue-900/20 rounded-xl text-sm flex items-center justify-center transition-colors font-medium mb-6"
+                className="w-full py-3 border-2 border-dashed border-[#CCEOFF] text-[#0066FF] hover:bg-[#F0F5FF] rounded-xl text-sm flex items-center justify-center transition-colors font-bold mb-6"
               >
-                <Plus size={16} className="mr-2" /> Add Item
+                <Plus size={16} className="mr-2" strokeWidth={2.5} /> Add Item
               </button>
 
               <div className="space-y-3 pt-6 border-t border-slate-200 dark:border-slate-800">
@@ -939,6 +1136,12 @@ export default function POS() {
                   <span className="text-slate-500 dark:text-slate-400">Tax ({taxRate}%)</span>
                   <span className="text-slate-900 dark:text-white">Rs. {taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                 </div>
+                {serviceChargeAmount > 0 && (
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-slate-500 dark:text-slate-400">Service Charge ({serviceChargeRate}%)</span>
+                    <span className="text-slate-900 dark:text-white">Rs. {serviceChargeAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  </div>
+                )}
                 {deliveryFee > 0 && (
                   <div className="flex justify-between items-center text-sm">
                     <span className="text-slate-500 dark:text-slate-400">Delivery Fee</span>
@@ -955,26 +1158,29 @@ export default function POS() {
                 <span className="text-2xl font-bold text-slate-900 dark:text-white">Rs. {totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
               </div>
 
-              <div className="flex space-x-2 mt-4">
+              <div className="grid grid-cols-3 gap-2 mt-4">
                 <button
                   onClick={handlePrintKOT}
-                  className="flex-1 py-3 bg-blue-900 border border-blue-700 hover:bg-blue-800 text-blue-100 rounded-xl text-sm font-medium transition-colors flex items-center justify-center relative"
+                  className="py-3 bg-[#002B5E] hover:bg-[#001D40] text-white rounded-xl text-[11px] font-bold uppercase transition-colors flex flex-col items-center justify-center space-y-1.5 shadow-sm"
                 >
-                  <Printer size={16} className="mr-2" /> Print KOT
+                  <Printer size={18} strokeWidth={2} />
+                  <span>Print KOT</span>
                 </button>
                 <button
-                  onClick={() => navigate(returnUrl)}
-                  className="flex-1 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-sm font-medium transition-colors flex items-center justify-center relative"
+                  id="draft-btn"
+                  onClick={() => navigate(`${basePath}/pos/0`)}
+                  className="py-3 bg-[#E6F0FF] hover:bg-[#D4E4FF] text-[#0066FF] rounded-xl text-[11px] font-bold uppercase transition-colors flex flex-col items-center justify-center space-y-1.5 shadow-sm"
                 >
-                  <span className="absolute right-2 top-2 text-[10px] bg-slate-100 dark:bg-slate-900 px-1.5 rounded text-slate-500">F10</span>
-                  <FileText size={16} className="mr-2" /> Draft
+                  <FileText size={18} strokeWidth={2} />
+                  <span>Draft</span>
                 </button>
                 <button
+                  id="cancel-btn"
                   onClick={handleCancelOrder}
-                  className="flex-1 py-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 hover:bg-red-100 dark:hover:bg-red-900/30 text-red-600 dark:text-red-500 rounded-xl text-sm font-medium transition-colors flex items-center justify-center relative"
+                  className="py-3 bg-[#FEE2E2] hover:bg-[#FCD5D5] text-[#EF4444] rounded-xl text-[11px] font-bold uppercase transition-colors flex flex-col items-center justify-center space-y-1.5 shadow-sm"
                 >
-                  <span className="absolute right-2 top-2 text-[10px] bg-red-100 dark:bg-red-950 px-1.5 rounded text-red-600 dark:text-red-700">F12</span>
-                  <Trash2 size={16} className="mr-2" /> Cancel
+                  <X size={18} strokeWidth={2.5} />
+                  <span>Cancel</span>
                 </button>
               </div>
             </div>

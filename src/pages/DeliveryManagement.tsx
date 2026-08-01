@@ -226,7 +226,7 @@ export default function DeliveryManagement() {
                           order.delivery_status === 'Dispatched' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400' :
                           'bg-slate-100 text-slate-700'
                         }`}>
-                          {order.delivery_status}
+                          {order.delivery_status === 'Pending' ? 'Delivery Pending' : order.delivery_status}
                         </span>
                         <button 
                           onClick={() => handlePrintTicket(order)}

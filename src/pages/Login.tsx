@@ -36,6 +36,7 @@ export default function Login() {
       if (res.success) {
         localStorage.setItem("userRole", res.role);
         localStorage.setItem("userName", res.username);
+        localStorage.setItem("displayName", res.display_name || "");
         
         if (res.role === "Admin") {
           navigate("/admin/dashboard");
@@ -93,10 +94,10 @@ export default function Login() {
         </div>
 
         {/* RIGHT SIDE: The Login Form */}
-        <div className="flex w-full md:w-1/2 flex-col justify-center px-8 lg:px-24 bg-white dark:bg-[#1E293B] relative transition-colors">
-          <div className="w-full max-w-md mx-auto">
+        <div className="flex w-full md:w-1/2 flex-col px-8 lg:px-24 bg-white dark:bg-[#1E293B] transition-colors py-8 overflow-y-auto">
+          <div className="flex-1 flex flex-col justify-center w-full max-w-md mx-auto">
             <div className="flex items-center space-x-4 mb-10">
-              <div className="w-12 h-12 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center border border-blue-100 dark:border-blue-800">
+              <div className="w-12 h-12 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center border border-blue-100 dark:border-blue-800 shrink-0">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-600 dark:text-blue-500"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
               </div>
               <div>
@@ -145,21 +146,21 @@ export default function Login() {
               </Button>
             </form>
 
-            <div className="mt-12 pt-8 border-t border-slate-200 dark:border-slate-800 flex items-center justify-center space-x-6 text-sm text-slate-500 dark:text-slate-400">
-              <div className="flex items-center space-x-1.5"><ShieldCheck size={16} /><span>Secure</span></div>
-              <div className="flex items-center space-x-1.5"><Server size={16} /><span>Reliable</span></div>
-              <div className="flex items-center space-x-1.5"><Settings2 size={16} /><span>Built for Restaurants</span></div>
+            <div className="mt-12 pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-wrap gap-4 items-center justify-center text-sm text-slate-500 dark:text-slate-400">
+              <div className="flex items-center space-x-1.5 whitespace-nowrap"><ShieldCheck size={16} /><span>Secure</span></div>
+              <div className="flex items-center space-x-1.5 whitespace-nowrap"><Server size={16} /><span>Reliable</span></div>
+              <div className="flex items-center space-x-1.5 whitespace-nowrap"><Settings2 size={16} /><span>Built for Restaurants</span></div>
             </div>
           </div>
           
           {/* Bottom Footer Info */}
-          <div className="absolute bottom-8 left-0 right-0 px-8 lg:px-24 flex justify-between items-center text-xs text-slate-400 dark:text-slate-500">
-            <span>Version 1.0.0</span>
-            <div className="flex items-center space-x-1.5">
+          <div className="mt-8 flex flex-col md:flex-row justify-between items-center gap-2 text-xs text-slate-400 dark:text-slate-500 max-w-full">
+            <span className="whitespace-nowrap">Version 1.0.0</span>
+            <div className="flex items-center space-x-1.5 whitespace-nowrap">
                <ShieldCheck size={14} className="text-blue-500" />
                <span>Your data is safe and secure</span>
             </div>
-            <span>© {new Date().getFullYear()} {restaurantName}</span>
+            <span className="whitespace-nowrap truncate">© {new Date().getFullYear()} {restaurantName}</span>
           </div>
         </div>
       </div>

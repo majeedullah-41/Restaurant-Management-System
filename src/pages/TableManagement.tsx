@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { X, AlertTriangle, CheckCircle2, Lock } from "lucide-react";
+import { X, AlertTriangle, CheckCircle2, Lock, Trash2 } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 
@@ -99,7 +99,7 @@ export default function TableManagement() {
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">Manage Table {selectedTable.table_number}</h3>
               <div className="flex items-center space-x-2">
-                <button onClick={() => handleDeleteTable(selectedTable.id)} className="text-red-500 hover:text-red-700 p-1 bg-red-50 dark:bg-red-500/10 rounded-md transition-colors"><X size={18} /></button>
+                <button onClick={() => handleDeleteTable(selectedTable.id)} className="text-red-500 hover:text-red-700 p-1 bg-red-50 dark:bg-red-500/10 rounded-md transition-colors" title="Delete Table"><Trash2 size={18} /></button>
                 <button onClick={closeAdminModal} className="text-slate-400 hover:text-slate-600 dark:hover:text-white bg-slate-100 dark:bg-slate-800 p-1 rounded-md transition-colors"><X size={18}/></button>
               </div>
             </div>

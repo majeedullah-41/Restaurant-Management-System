@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { 
-  Search, Plus, X, Pencil, Trash2, Filter, MoreVertical, 
+  Search, Plus, X, Pencil, Trash2, Filter, 
   Pizza, Coffee, Sandwich, Beef, Croissant, Utensils
 } from "lucide-react";
 import Sidebar from "../components/Sidebar";

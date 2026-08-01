@@ -12,6 +12,10 @@ interface DashboardStats {
   total_expenses: number;
   net_profit: number;
   total_orders: number;
+  today_revenue: number;
+  today_expenses: number;
+  today_profit: number;
+  today_orders: number;
 }
 
 interface RevenueOverview {
@@ -49,7 +53,11 @@ export default function Dashboard() {
     total_revenue: 0,
     total_expenses: 0,
     net_profit: 0,
-    total_orders: 0
+    total_orders: 0,
+    today_revenue: 0,
+    today_expenses: 0,
+    today_profit: 0,
+    today_orders: 0
   });
   
   const [revenueData, setRevenueData] = useState<RevenueOverview[]>([]);
@@ -87,162 +95,149 @@ export default function Dashboard() {
     loadDashboardData();
   }, []);
 
-  const orderStatusData = [
-    { name: 'Completed', value: stats.total_orders, color: '#22c55e' },
-    // Later we can add pending/cancelled order fetching
+  const completedOrders = todaysSalesData.filter(s => s.status === 'Closed').length;
+  const processingOrders = todaysSalesData.filter(s => s.status === 'Open').length;
+  const pieData = [
+    { name: 'Completed', value: completedOrders > 0 ? completedOrders : (processingOrders === 0 ? 1 : 0), fill: '#10b981' },
+    { name: 'Processing', value: processingOrders, fill: '#2563eb' }
   ];
+  
+  const currentMonthName = new Date().toLocaleString('default', { month: 'long' }).toUpperCase();
+
   return (
-    <div className="flex h-screen w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
+    <div className="flex h-screen w-full bg-[#F8F9FF] dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
       <Sidebar activePage="dashboard" />
 
-      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors">
+      <main className="flex-1 flex flex-col z-10 overflow-hidden transition-colors">
         <Header title="Dashboard" subtitle="Welcome back, Admin!" />
 
-        <div className="flex-1 p-8 overflow-y-auto">
+        <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
           {/* Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <SummaryCard title="Total Revenue" amount={`Rs. ${stats.total_revenue.toLocaleString(undefined, {minimumFractionDigits: 2})}`} trend="Today" trendUp={true} color="blue" icon={<DollarSign size={20} />} />
-            <SummaryCard title="Total Expenses" amount={`Rs. ${stats.total_expenses.toLocaleString(undefined, {minimumFractionDigits: 2})}`} trend="Today" trendUp={false} color="green" icon={<TrendingDown size={20} />} />
-            <SummaryCard title="Net Profit" amount={`Rs. ${stats.net_profit.toLocaleString(undefined, {minimumFractionDigits: 2})}`} trend="Today" trendUp={stats.net_profit >= 0} color="purple" icon={<BarChart2 size={20} />} />
-            <SummaryCard title="Total Orders" amount={stats.total_orders.toString()} trend="Today" trendUp={true} color="orange" icon={<ShoppingBag size={20} />} />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+            <SummaryCard title="TODAY'S SALES" amount={`Rs.\n${stats.today_revenue.toLocaleString(undefined, {minimumFractionDigits: 2})}`} progress={Math.min(100, (stats.today_revenue / 10000) * 100)} trend="Today" color="blue" icon={<DollarSign size={20} strokeWidth={2.5} />} />
+            <SummaryCard title="TODAY'S EXPENSES" amount={`Rs.\n${stats.today_expenses.toLocaleString(undefined, {minimumFractionDigits: 2})}`} progress={Math.min(100, (stats.today_expenses / 5000) * 100)} trend="Today" color="red" icon={<TrendingDown size={20} strokeWidth={2.5} />} />
+            <SummaryCard title="TODAY'S PROFIT" amount={`Rs.\n${stats.today_profit.toLocaleString(undefined, {minimumFractionDigits: 2})}`} progress={Math.min(100, (Math.max(0, stats.today_profit) / 5000) * 100)} trend="Today" color="amber" icon={<BarChart2 size={20} strokeWidth={2.5} />} />
+            <SummaryCard title="TODAY'S ORDERS" amount={stats.today_orders.toString()} progress={Math.min(100, (stats.today_orders / 20) * 100)} trend="Today" color="emerald" icon={<ShoppingBag size={20} strokeWidth={2.5} />} />
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+            <SummaryCard title={`${currentMonthName} REVENUE`} amount={`Rs.\n${stats.total_revenue.toLocaleString(undefined, {minimumFractionDigits: 2})}`} progress={Math.min(100, (stats.total_revenue / 50000) * 100)} trend="This Month" color="blue" icon={<DollarSign size={20} strokeWidth={2.5} />} />
+            <SummaryCard title={`${currentMonthName} EXPENSES`} amount={`Rs.\n${stats.total_expenses.toLocaleString(undefined, {minimumFractionDigits: 2})}`} progress={Math.min(100, (stats.total_expenses / 20000) * 100)} trend="This Month" color="red" icon={<TrendingDown size={20} strokeWidth={2.5} />} />
+            <SummaryCard title={`${currentMonthName} PROFIT`} amount={`Rs.\n${stats.net_profit.toLocaleString(undefined, {minimumFractionDigits: 2})}`} progress={Math.min(100, (Math.max(0, stats.net_profit) / 30000) * 100)} trend="This Month" color="amber" icon={<BarChart2 size={20} strokeWidth={2.5} />} />
+            <SummaryCard title={`${currentMonthName} ORDERS`} amount={stats.total_orders.toString()} progress={Math.min(100, (stats.total_orders / 50) * 100)} trend="This Month" color="emerald" icon={<ShoppingBag size={20} strokeWidth={2.5} />} />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
             {/* Revenue Overview Chart */}
-            <div className="lg:col-span-2 xl:col-span-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
+            <div className="lg:col-span-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[8px] p-6 shadow-sm">
               <div className="flex justify-between items-center mb-6">
-                <h3 className="font-bold text-slate-900 dark:text-white">Revenue Overview</h3>
-                <select className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-sm rounded-lg px-3 py-1 outline-none">
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white">Revenue Overview</h3>
+                <select className="bg-[#F8F9FF] dark:bg-slate-950 border border-slate-200 dark:border-slate-700 font-semibold text-slate-700 dark:text-slate-400 text-sm rounded-[8px] px-4 py-1.5 outline-none cursor-pointer">
                   <option>This Week</option>
                 </select>
               </div>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={revenueData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#334155" opacity={0.5} />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} dy={10} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} dx={-10} tickFormatter={(val) => `${val/1000}K`} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" opacity={0.8} />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94A3B8', fontSize: 13, fontWeight: 600}} dy={10} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#94A3B8', fontSize: 13, fontWeight: 600}} dx={-10} tickFormatter={(val) => `${val/1000}K`} />
                     <Tooltip 
                       contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '8px', color: '#fff' }}
                       itemStyle={{ color: '#fff' }}
                     />
-                    <Area type="monotone" dataKey="revenue" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" />
+                    <Area type="monotone" dataKey="revenue" stroke="#CBD5E1" strokeWidth={2} fillOpacity={0} />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
             </div>
 
             {/* Order Status Chart */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm flex flex-col">
-              <h3 className="font-bold text-slate-900 dark:text-white mb-2">Order Status</h3>
-              <div className="flex-1 flex items-center justify-center relative">
-                <ResponsiveContainer width="100%" height="100%">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[8px] p-6 shadow-sm flex flex-col">
+              <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Order Status</h3>
+              <div className="flex-1 flex items-center justify-center relative my-4">
+                <ResponsiveContainer width="100%" height={200}>
                   <PieChart>
                     <Pie
-                      data={orderStatusData}
+                      data={pieData}
                       cx="50%" cy="50%"
-                      innerRadius={60}
-                      outerRadius={80}
-                      paddingAngle={5}
+                      innerRadius={70}
+                      outerRadius={85}
                       dataKey="value"
                       stroke="none"
                     >
-                      {orderStatusData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      {pieData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.fill} />
                       ))}
                     </Pie>
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                  <span className="text-3xl font-bold text-slate-900 dark:text-white">{stats.total_orders}</span>
-                  <span className="text-xs text-slate-500">Total</span>
+                  <span className="text-3xl font-extrabold text-slate-900 dark:text-white">{completedOrders + processingOrders}</span>
+                  <span className="text-sm font-semibold text-slate-500">Total</span>
                 </div>
               </div>
-              <div className="space-y-3 mt-4">
-                {orderStatusData.map(status => (
-                  <div key={status.name} className="flex items-center justify-between text-sm">
-                    <div className="flex items-center space-x-2">
-                      <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: status.color }}></div>
-                      <span className="text-slate-600 dark:text-slate-300">{status.name}</span>
-                    </div>
-                    <span className="text-slate-500 font-medium">{status.value} ({stats.total_orders > 0 ? Math.round((status.value/stats.total_orders)*100) : 0}%)</span>
+              <div className="space-y-3 mt-auto">
+                <div className="flex items-center justify-between text-sm bg-slate-50 dark:bg-slate-800 px-4 py-2.5 rounded-[8px]">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-2.5 h-2.5 rounded-full bg-blue-600"></div>
+                    <span className="text-slate-700 dark:text-slate-300 font-medium">Processing</span>
                   </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Recent Expenses */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="font-bold text-slate-900 dark:text-white">Recent Expenses</h3>
-                <Link to="/admin/expenses" className="text-sm font-medium text-blue-600 dark:text-blue-500 hover:underline">View All</Link>
-              </div>
-              <div className="space-y-4">
-                {recentExpensesData.length === 0 && (
-                  <p className="text-sm text-slate-500 text-center py-4">No recent expenses.</p>
-                )}
-                {recentExpensesData.map(exp => (
-                  <div key={exp.id} className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-lg`}>
-                        {exp.category.charAt(0)}
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900 dark:text-white">{exp.category}</p>
-                        <p className="text-xs text-slate-500">{exp.date}</p>
-                      </div>
-                    </div>
-                    <span className="text-sm font-bold text-red-500 dark:text-red-400">Rs. {exp.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                  <span className="text-slate-900 dark:text-white font-bold">{processingOrders}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm bg-slate-50 dark:bg-slate-800 px-4 py-2.5 rounded-[8px]">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-600"></div>
+                    <span className="text-slate-700 dark:text-slate-300 font-medium">Completed</span>
                   </div>
-                ))}
+                  <span className="text-slate-900 dark:text-white font-bold">{completedOrders}</span>
+                </div>
               </div>
-              <Link to="/admin/expenses" className="w-full mt-6 py-2 border border-dashed border-slate-300 dark:border-slate-700 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-400 flex items-center justify-center space-x-2 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                <Plus size={16} />
-                <span>Add Expense</span>
-              </Link>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
             {/* Today's Sales Table */}
-            <div className="xl:col-span-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
+            <div className="lg:col-span-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[8px] p-6 shadow-sm flex flex-col">
               <div className="flex justify-between items-center mb-6">
-                <h3 className="font-bold text-slate-900 dark:text-white">Today's Sales</h3>
-                <a href="#" className="text-sm font-medium text-blue-600 dark:text-blue-500 hover:underline">View All</a>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white">Today's Sales</h3>
+                <Link to="/admin/history" className="text-[13px] font-bold text-blue-600 dark:text-blue-500 hover:underline">View All</Link>
               </div>
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto flex-1 flex flex-col">
                 <table className="w-full text-left">
                   <thead>
-                    <tr className="text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
-                      <th className="pb-3">Order ID</th>
-                      <th className="pb-3">Table</th>
-                      <th className="pb-3">Customer</th>
-                      <th className="pb-3">Time</th>
-                      <th className="pb-3">Amount</th>
-                      <th className="pb-3">Status</th>
+                    <tr className="text-xs font-bold text-slate-500 uppercase tracking-wider border-b-2 border-slate-100 dark:border-slate-800">
+                      <th className="pb-3 w-[15%]">ORDER ID</th>
+                      <th className="pb-3 w-[20%] text-center">TABLE</th>
+                      <th className="pb-3 w-[25%] text-center">CUSTOMER</th>
+                      <th className="pb-3 w-[15%] text-center">TIME</th>
+                      <th className="pb-3 w-[15%] text-center">AMOUNT</th>
+                      <th className="pb-3 w-[10%] text-center">STATUS</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
                     {todaysSalesData.length === 0 && (
-                      <tr><td colSpan={6} className="py-8 text-center text-slate-500">No sales today.</td></tr>
+                      <tr>
+                        <td colSpan={6} className="py-16 text-center text-slate-400 font-semibold h-48">
+                           <div className="flex flex-col items-center justify-center">
+                             <div className="w-12 h-10 border-2 border-slate-300 rounded-[4px] border-dashed mb-2 opacity-50 flex items-center justify-center">
+                               <div className="w-6 h-6 border-2 border-slate-300 rounded-full"></div>
+                             </div>
+                             No sales recorded today.
+                           </div>
+                        </td>
+                      </tr>
                     )}
                     {todaysSalesData.map(sale => (
-                      <tr key={sale.id} className="text-sm">
-                        <td className="py-4 font-medium text-slate-900 dark:text-slate-300">{sale.id}</td>
-                        <td className="py-4 text-slate-600 dark:text-slate-400">{sale.table}</td>
-                        <td className="py-4 text-slate-600 dark:text-slate-400">{sale.customer}</td>
-                        <td className="py-4 text-slate-600 dark:text-slate-400">{sale.time}</td>
-                        <td className="py-4 font-semibold text-slate-900 dark:text-white">Rs. {sale.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                        <td className="py-4">
-                          <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${
-                            sale.status === 'Closed' ? 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-200 dark:border-green-500/20' : 
-                            'bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-500/20'
+                      <tr key={sale.id} className="text-[15px]">
+                        <td className="py-4 font-bold text-slate-900 dark:text-slate-300">{sale.id}</td>
+                        <td className="py-4 font-medium text-slate-600 dark:text-slate-400 text-center">{sale.table}</td>
+                        <td className="py-4 font-medium text-slate-600 dark:text-slate-400 text-center">{sale.customer}</td>
+                        <td className="py-4 font-medium text-slate-600 dark:text-slate-400 text-center">{sale.time}</td>
+                        <td className="py-4 font-bold text-slate-900 dark:text-white text-center">Rs. {sale.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                        <td className="py-4 text-center">
+                          <span className={`px-2.5 py-1 rounded-[8px] text-xs font-bold ${
+                            sale.status === 'Closed' ? 'text-emerald-600' : 'text-orange-600'
                           }`}>
                             {sale.status}
                           </span>
@@ -255,37 +250,60 @@ export default function Dashboard() {
             </div>
 
             {/* Top Selling Items */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
-              <h3 className="font-bold text-slate-900 dark:text-white mb-6">Top Selling Items</h3>
-              <table className="w-full text-left">
-                  <thead>
-                    <tr className="text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
-                      <th className="pb-3 w-8">#</th>
-                      <th className="pb-3">Item</th>
-                      <th className="pb-3">Sold</th>
-                      <th className="pb-3">Revenue</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
-                    {topSellingData.length === 0 && (
-                      <tr><td colSpan={4} className="py-8 text-center text-slate-500">No items sold yet.</td></tr>
-                    )}
-                    {topSellingData.map((item, idx) => (
-                      <tr key={item.id} className="text-sm">
-                        <td className="py-3 font-semibold text-slate-900 dark:text-white">{idx + 1}</td>
-                        <td className="py-3">
-                          <div className="flex items-center space-x-2">
-                            <span className="text-xl">{item.image}</span>
-                            <span className="font-medium text-slate-700 dark:text-slate-300">{item.item}</span>
-                          </div>
-                        </td>
-                        <td className="py-3 text-slate-600 dark:text-slate-400">{item.sold}</td>
-                        <td className="py-3 font-semibold text-slate-900 dark:text-white">Rs. {item.revenue.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-              </table>
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[8px] p-6 shadow-sm">
+              <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-6">Top Selling Items</h3>
+              <div className="space-y-5">
+                 {topSellingData.length === 0 ? (
+                   <p className="text-sm text-slate-500 font-medium">No top selling items yet.</p>
+                 ) : topSellingData.map((item, index) => (
+                   <div key={item.id} className="flex items-center">
+                      <span className="w-4 text-[13px] font-bold text-slate-500 mr-3">{index + 1}</span>
+                      <div className="flex-1 min-w-0">
+                         <h4 className="font-bold text-[15px] text-slate-900">{item.item}</h4>
+                         <p className="text-[13px] text-slate-500 font-medium">{item.sold} Sales</p>
+                      </div>
+                      <div className="flex flex-col items-end">
+                         <span className="font-bold text-[15px] text-slate-900 mb-1">Rs. {item.revenue.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                         <div className="w-16 h-1 rounded-full bg-slate-200">
+                           <div className="h-full rounded-full bg-emerald-600" style={{width: `${Math.min(100, (item.sold / (topSellingData[0]?.sold || 1)) * 100)}%`}}></div>
+                         </div>
+                      </div>
+                   </div>
+                 ))}
+              </div>
             </div>
+          </div>
+          
+          {/* Recent Expenses row */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[8px] p-6 shadow-sm">
+             <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white">Recent Expenses</h3>
+                <Link to="/admin/expenses" className="px-4 py-2 bg-[#0066FF] hover:bg-blue-700 text-white rounded-[8px] text-[13px] font-bold flex items-center transition-colors">
+                  <Plus size={16} className="mr-1.5 stroke-[3]" />
+                  Add Expense
+                </Link>
+             </div>
+             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+               {recentExpensesData.length === 0 ? (
+                 <p className="text-sm text-slate-500 font-medium">No recent expenses.</p>
+               ) : recentExpensesData.map(exp => (
+                 <div key={exp.id} className="border border-slate-200 rounded-[8px] p-4 flex items-center justify-between">
+                   <div className="flex items-center space-x-3">
+                     <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-600 text-sm uppercase">
+                       {exp.category.charAt(0)}
+                     </div>
+                     <div>
+                       <p className="font-bold text-[15px] text-slate-900 leading-tight">{exp.category}</p>
+                       <p className="text-[12px] text-slate-500 font-medium">{exp.date}</p>
+                     </div>
+                   </div>
+                   <div className="text-right">
+                     <p className="font-bold text-[13px] text-red-500">Rs.</p>
+                     <p className="font-bold text-[15px] text-red-500 leading-none">{exp.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
+                   </div>
+                 </div>
+               ))}
+             </div>
           </div>
           
         </div>
@@ -294,36 +312,46 @@ export default function Dashboard() {
   );
 }
 
-function SummaryCard({ title, amount, trend, trendUp, color, icon }: any) {
+function SummaryCard({ title, amount, trend, color, icon, progress = 0 }: any) {
   const colorMap: any = {
-    blue: "bg-blue-600/10 text-blue-600 dark:text-blue-500 border-blue-200 dark:border-blue-500/20",
-    green: "bg-emerald-600/10 text-emerald-600 dark:text-emerald-500 border-emerald-200 dark:border-emerald-500/20",
-    purple: "bg-purple-600/10 text-purple-600 dark:text-purple-500 border-purple-200 dark:border-purple-500/20",
-    orange: "bg-orange-600/10 text-orange-600 dark:text-orange-500 border-orange-200 dark:border-orange-500/20",
+    blue: "bg-[#E6F0FF] text-[#0066FF]",
+    red: "bg-[#FEE2E2] text-[#EF4444]",
+    amber: "bg-[#FEF3C7] text-[#D97706]",
+    emerald: "bg-[#D1FAE5] text-[#10B981]",
+  };
+  const bgColors: any = {
+    blue: "bg-[#0066FF]",
+    red: "bg-[#EF4444]",
+    amber: "bg-[#D97706]",
+    emerald: "bg-[#10B981]",
   };
   
   const iconBg = colorMap[color];
+  const barBg = bgColors[color];
+  
+  // Custom parsing for newline to match screenshot (Amount takes 2 lines for Expenses/Profit)
+  const amountLines = amount.split('\n');
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm relative overflow-hidden group">
-      <div className="flex items-start justify-between relative z-10">
-        <div className={`w-10 h-10 rounded-xl flex items-center justify-center border ${iconBg}`}>
+    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[8px] p-5 lg:p-6 shadow-sm flex flex-col justify-between h-full min-h-[140px]">
+      <div className="flex justify-between items-start">
+        <div className="flex-1">
+          <h3 className="text-[11px] font-bold text-slate-600 dark:text-slate-400 tracking-wider mb-2">{title}</h3>
+          <div className={`font-bold text-slate-900 dark:text-white leading-tight ${amountLines.length > 1 ? 'text-[24px]' : 'text-[28px]'}`}>
+            {amountLines.map((line: string, i: number) => (
+              <div key={i}>{line}</div>
+            ))}
+          </div>
+        </div>
+        <div className={`w-10 h-10 rounded-[8px] flex items-center justify-center shrink-0 ml-2 ${iconBg}`}>
           {icon}
         </div>
       </div>
-      <div className="mt-4 relative z-10">
-        <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{title}</p>
-        <h3 className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{amount}</h3>
-        <p className={`text-xs font-semibold mt-2 ${trendUp ? 'text-green-500' : 'text-slate-500'}`}>
-          {trend}
-        </p>
-      </div>
-      
-      {/* Decorative Background Element to simulate the wavy line in the mockup */}
-      <div className="absolute -bottom-4 -right-4 opacity-10 dark:opacity-20 transform scale-150 group-hover:scale-125 transition-transform duration-500">
-         <svg width="120" height="80" viewBox="0 0 120 80" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M0 40 Q 30 10 60 40 T 120 40" stroke="currentColor" className={`text-${color}-500`} strokeWidth="4" fill="none"/>
-        </svg>
+      <div className="flex items-center mt-auto pt-4">
+        <span className="text-[13px] font-bold text-emerald-600 mr-2">{trend}</span>
+        <div className="flex-1 h-1 bg-slate-100 rounded-full overflow-hidden flex">
+          <div className={`h-full ${barBg} rounded-full transition-all duration-1000 ease-out`} style={{ width: `${progress}%` }}></div>
+        </div>
       </div>
     </div>
   );

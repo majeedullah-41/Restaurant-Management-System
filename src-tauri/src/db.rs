@@ -8,6 +8,7 @@ pub struct LoginResponse {
     pub success: bool,
     pub role: Option<String>,
     pub username: Option<String>,
+    pub display_name: Option<String>,
     pub message: String,
 }
 
@@ -47,12 +48,18 @@ pub fn init_db() -> Result<()> {
 }
 
 pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
-    // 1. restaurant_settings columns
+    // 1. restaurant_settings table
     let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN last_backup_at TEXT", []);
     let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN backup_frequency TEXT DEFAULT 'Off'", []);
     let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN backup_path TEXT", []);
     let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN base_delivery_fee REAL DEFAULT 0.0", []);
     let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN free_delivery_threshold REAL DEFAULT 0.0", []);
+    let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN address TEXT", []);
+    let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN service_charge_rate REAL DEFAULT 0.0", []);
+    let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN service_charge_types TEXT DEFAULT 'Dine-in'", []);
+
+    // Add service_charge_amount to orders here as well to ensure it's globally migrated
+    let _ = conn.execute("ALTER TABLE orders ADD COLUMN service_charge_amount REAL DEFAULT 0.0", []);
 
     // 2. table_status & shifts tables
     let _ = conn.execute(
@@ -104,6 +111,16 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
         )", []
     );
     let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS advance_salaries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            date TEXT NOT NULL,
+            note TEXT,
+            is_deducted BOOLEAN DEFAULT 0
+        )", []
+    );
+    let _ = conn.execute(
         "CREATE TABLE IF NOT EXISTS customers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -117,6 +134,37 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
     // 5. License table: activated_at column
     let _ = conn.execute("ALTER TABLE license ADD COLUMN activated_at TEXT", []);
 
+    // 6. Inventory tables
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS inventory_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            unit TEXT NOT NULL DEFAULT 'pcs',
+            low_stock_threshold REAL NOT NULL DEFAULT 5.0,
+            default_supplier TEXT,
+            created_at TEXT DEFAULT (datetime('now', 'localtime'))
+        )", []
+    );
+    let _ = conn.execute("ALTER TABLE inventory_items ADD COLUMN default_supplier TEXT", []);
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS inventory_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            unit_price REAL,
+            total_cost REAL,
+            supplier TEXT,
+            note TEXT,
+            date TEXT NOT NULL DEFAULT (date('now', 'localtime')),
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY(item_id) REFERENCES inventory_items(id)
+        )", []
+    );
+
+    // Migrations — safe to run multiple times (ADD COLUMN fails silently if already exists)
+    conn.execute("ALTER TABLE users ADD COLUMN display_name TEXT", []).ok();
+
     Ok(())
 }
 
@@ -127,6 +175,7 @@ pub fn update_user_profile(
     current_password: Option<String>,
     new_password: Option<String>,
     admin_override: Option<bool>,
+    display_name: Option<String>,
 ) -> Result<(), String> {
     let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
 
@@ -145,16 +194,16 @@ pub fn update_user_profile(
             }
         }
         
-        // Update both username and password
+        // Update username, password, and display_name
         conn.execute(
-            "UPDATE users SET username = ?, password_hash = ? WHERE username = ?",
-            [&new_username, &new_pw, &old_username],
+            "UPDATE users SET username = ?, password_hash = ?, display_name = ? WHERE username = ?",
+            [&new_username, &new_pw, &display_name.unwrap_or_default(), &old_username],
         ).map_err(|e| e.to_string())?;
     } else {
-        // Just update username
+        // Just update username and display_name
         conn.execute(
-            "UPDATE users SET username = ? WHERE username = ?",
-            [&new_username, &old_username],
+            "UPDATE users SET username = ?, display_name = ? WHERE username = ?",
+            [&new_username, &display_name.unwrap_or_default(), &old_username],
         ).map_err(|e| e.to_string())?;
     }
 
@@ -197,26 +246,27 @@ pub fn get_user_role_by_username(username: String) -> Result<String, String> {
 pub fn login(email: String, password: String) -> LoginResponse {
     let conn = match Connection::open("../local.db") {
         Ok(c) => c,
-        Err(_) => return LoginResponse { success: false, role: None, username: None, message: "Database connection failed".into() },
+        Err(_) => return LoginResponse { success: false, role: None, username: None, display_name: None, message: "Database connection failed".into() },
     };
 
     // Join the users table with the roles table to get the actual "Admin" or "Cashier" string
     let mut stmt = match conn.prepare(
-        "SELECT r.name FROM users u 
+        "SELECT r.name, u.display_name FROM users u 
          JOIN roles r ON u.role_id = r.id 
          WHERE u.username = ?1 AND u.password_hash = ?2"
     ) {
         Ok(s) => s,
-        Err(_) => return LoginResponse { success: false, role: None, username: None, message: "Query preparation failed".into() },
+        Err(_) => return LoginResponse { success: false, role: None, username: None, display_name: None, message: "Query preparation failed".into() },
     };
 
     let mut rows = stmt.query([&email, &password]).unwrap();
 
     if let Ok(Some(row)) = rows.next() {
         let role: String = row.get(0).unwrap();
-        LoginResponse { success: true, role: Some(role), username: Some(email), message: "Login successful".into() }
+        let display_name: Option<String> = row.get(1).unwrap_or(None);
+        LoginResponse { success: true, role: Some(role), username: Some(email), display_name, message: "Login successful".into() }
     } else {
-        LoginResponse { success: false, role: None, username: None, message: "Invalid email or password".into() }
+        LoginResponse { success: false, role: None, username: None, display_name: None, message: "Invalid email or password".into() }
     }
 }
 
@@ -339,15 +389,18 @@ pub fn toggle_menu_item_status(id: i32, is_active: bool) -> Result<String, Strin
 #[derive(serde::Serialize)]
 pub struct RestaurantSettings {
     pub restaurant_name: String,
+    pub address: Option<String>,
     pub logo_path: Option<String>,
     pub tax_rate: f64,
     pub total_tables: i32,
+    pub service_charge_rate: f64,
+    pub service_charge_types: String,
 }
 
 #[tauri::command]
 pub fn get_settings() -> Result<RestaurantSettings, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare("SELECT restaurant_name, logo_path, tax_rate, total_tables FROM restaurant_settings WHERE id = 1").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT restaurant_name, logo_path, tax_rate, total_tables, address, COALESCE(service_charge_rate, 0.0), COALESCE(service_charge_types, 'Dine-in') FROM restaurant_settings WHERE id = 1").map_err(|e| e.to_string())?;
     
     let settings = stmt.query_row([], |row| {
         Ok(RestaurantSettings {
@@ -355,6 +408,9 @@ pub fn get_settings() -> Result<RestaurantSettings, String> {
             logo_path: row.get(1)?,
             tax_rate: row.get(2)?,
             total_tables: row.get(3)?,
+            address: row.get(4).unwrap_or(None),
+            service_charge_rate: row.get(5).unwrap_or(0.0),
+            service_charge_types: row.get(6).unwrap_or("Dine-in".to_string()),
         })
     }).map_err(|e| e.to_string())?;
 
@@ -362,7 +418,7 @@ pub fn get_settings() -> Result<RestaurantSettings, String> {
 }
 
 #[tauri::command]
-pub fn update_settings(name: String, logo_path: Option<String>, tax_rate: f64, total_tables: i32) -> Result<String, String> {
+pub fn update_settings(name: String, address: Option<String>, logo_path: Option<String>, tax_rate: f64, total_tables: i32, service_charge_rate: f64, service_charge_types: String) -> Result<String, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
     
     // Check if we are reducing tables and if any of the tables to be removed are occupied
@@ -381,8 +437,8 @@ pub fn update_settings(name: String, logo_path: Option<String>, tax_rate: f64, t
     }
 
     conn.execute(
-        "UPDATE restaurant_settings SET restaurant_name = ?1, logo_path = ?2, tax_rate = ?3, total_tables = ?4 WHERE id = 1",
-        rusqlite::params![name, logo_path, tax_rate, total_tables],
+        "UPDATE restaurant_settings SET restaurant_name = ?1, address = ?2, logo_path = ?3, tax_rate = ?4, total_tables = ?5, service_charge_rate = ?6, service_charge_types = ?7 WHERE id = 1",
+        rusqlite::params![name, address, logo_path, tax_rate, total_tables, service_charge_rate, service_charge_types],
     ).map_err(|e| e.to_string())?;
     
     Ok("Settings updated successfully".into())
@@ -611,7 +667,8 @@ pub fn checkout_order(
     amount_received: f64,
     change_due: f64,
     cashier_name: String,
-    order_note: String
+    order_note: String,
+    service_charge_amount: f64
 ) -> Result<String, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
     
@@ -626,16 +683,17 @@ pub fn checkout_order(
     conn.execute("ALTER TABLE orders ADD COLUMN customer_id INTEGER", []).ok();
     conn.execute("ALTER TABLE orders ADD COLUMN cashier_name TEXT", []).ok();
     conn.execute("ALTER TABLE orders ADD COLUMN order_note TEXT", []).ok();
+    conn.execute("ALTER TABLE orders ADD COLUMN service_charge_amount REAL DEFAULT 0.0", []).ok();
 
     // Close the order
     conn.execute(
         "UPDATE orders SET status = 'Closed', closed_at = datetime('now', 'localtime'), 
         order_type = ?2, subtotal = ?3, tax_amount = ?4, discount_amount = ?5, 
-        amount_received = ?6, change_due = ?7, customer_id = ?8, cashier_name = ?9, order_note = ?10 
+        amount_received = ?6, change_due = ?7, customer_id = ?8, cashier_name = ?9, order_note = ?10, service_charge_amount = ?11 
         WHERE id = ?1", 
         rusqlite::params![
             order_id, order_type, subtotal, tax_amount, discount_amount, 
-            amount_received, change_due, customer_id, cashier_name, order_note
+            amount_received, change_due, customer_id, cashier_name, order_note, service_charge_amount
         ]
     ).map_err(|e| e.to_string())?;
     // Free up the physical table
@@ -689,6 +747,10 @@ pub struct OrderHistory {
     pub order_type: Option<String>,
     pub created_at: Option<String>,
     pub closed_at: Option<String>,
+    pub delivery_fee: f64,
+    pub customer_phone: Option<String>,
+    pub delivery_address: Option<String>,
+    pub service_charge_amount: f64,
 }
 
 #[tauri::command]
@@ -700,9 +762,10 @@ pub fn get_order_history() -> Result<Vec<OrderHistory>, String> {
     let mut stmt = conn.prepare(
         "SELECT o.id, o.table_number, o.status, 
                 COALESCE(SUM(oi.quantity), 0) as total_items, 
-                COALESCE(SUM(oi.price * oi.quantity), 0) as total_price,
+                COALESCE(SUM(oi.price * oi.quantity), 0) + COALESCE(o.delivery_fee, 0.0) + COALESCE(o.service_charge_amount, 0.0) as total_price,
                 o.subtotal, o.tax_amount, o.discount_amount, o.amount_received, o.change_due,
-                c.name as customer_name, o.cashier_name, o.order_note, o.order_type, o.created_at, o.closed_at
+                c.name as customer_name, o.cashier_name, o.order_note, o.order_type, o.created_at, o.closed_at, o.delivery_fee,
+                o.customer_phone, o.delivery_address, o.service_charge_amount
          FROM orders o 
          LEFT JOIN order_items oi ON o.id = oi.order_id 
          LEFT JOIN customers c ON o.customer_id = c.id
@@ -728,6 +791,10 @@ pub fn get_order_history() -> Result<Vec<OrderHistory>, String> {
             order_type: row.get(13).unwrap_or(None),
             created_at: row.get(14).unwrap_or(None),
             closed_at: row.get(15).unwrap_or(None),
+            delivery_fee: row.get(16).unwrap_or(0.0),
+            customer_phone: row.get(17).unwrap_or(None),
+            delivery_address: row.get(18).unwrap_or(None),
+            service_charge_amount: row.get(19).unwrap_or(0.0),
         })
     }).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
 
@@ -885,7 +952,6 @@ pub fn get_or_create_order(table_number: i32) -> Result<ActiveOrder, String> {
         rusqlite::params![&new_id, &table_number, &initial_type]
     ).map_err(|e| e.to_string())?;
     
-    // 5. Update the physical table status to 'Occupied'
     conn.execute("UPDATE table_status SET status = 'Occupied' WHERE table_number = ?1", [&table_number]).ok();
 
     Ok(ActiveOrder {
@@ -898,6 +964,31 @@ pub fn get_or_create_order(table_number: i32) -> Result<ActiveOrder, String> {
         customer_phone: None,
         delivery_address: None,
     })
+}
+
+#[tauri::command]
+pub fn get_active_order(table_number: i32) -> Result<Option<ActiveOrder>, String> {
+    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    
+    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address FROM orders WHERE table_number = ?1 AND status = 'Open'").unwrap();
+    let existing_order = stmt.query_row([&table_number], |row| {
+        Ok(ActiveOrder {
+            id: row.get(0)?,
+            table_number: row.get(1)?,
+            status: row.get(2)?,
+            discount_amount: row.get(3)?,
+            order_type: row.get(4).unwrap_or(None),
+            customer_id: row.get(5).unwrap_or(None),
+            customer_phone: row.get(6).unwrap_or(None),
+            delivery_address: row.get(7).unwrap_or(None),
+        })
+    });
+
+    match existing_order {
+        Ok(order) => Ok(Some(order)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 #[tauri::command]
@@ -922,13 +1013,17 @@ pub fn get_order_by_id(order_id: i32) -> Result<ActiveOrder, String> {
 }
 
 #[tauri::command]
-pub fn create_walkin_order(order_type: String) -> Result<ActiveOrder, String> {
+pub fn create_walkin_order(
+    order_type: String,
+    customer_phone: Option<String>,
+    delivery_address: Option<String>
+) -> Result<ActiveOrder, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
     
     let new_id = get_next_available_order_id(&conn);
     conn.execute(
-        "INSERT INTO orders (id, table_number, status, created_at, order_type) VALUES (?1, 0, 'Open', datetime('now', 'localtime'), ?2)", 
-        rusqlite::params![&new_id, &order_type]
+        "INSERT INTO orders (id, table_number, status, created_at, order_type, customer_phone, delivery_address) VALUES (?1, 0, 'Open', datetime('now', 'localtime'), ?2, ?3, ?4)", 
+        rusqlite::params![&new_id, &order_type, &customer_phone, &delivery_address]
     ).map_err(|e| e.to_string())?;
     
     Ok(ActiveOrder {
@@ -938,8 +1033,8 @@ pub fn create_walkin_order(order_type: String) -> Result<ActiveOrder, String> {
         discount_amount: 0.0,
         order_type: Some(order_type),
         customer_id: None,
-        customer_phone: None,
-        delivery_address: None,
+        customer_phone: customer_phone.clone(),
+        delivery_address: delivery_address.clone(),
     })
 }
 
@@ -1348,6 +1443,10 @@ pub struct DashboardStats {
     pub total_expenses: f64,
     pub net_profit: f64,
     pub total_orders: i32,
+    pub today_revenue: f64,
+    pub today_expenses: f64,
+    pub today_profit: f64,
+    pub today_orders: i32,
 }
 
 #[tauri::command]
@@ -1377,46 +1476,67 @@ pub fn get_dashboard_stats() -> Result<DashboardStats, String> {
     conn.execute("ALTER TABLE orders ADD COLUMN order_note TEXT", []).ok();
 
 
-    // 1. Total Revenue (Today)
-    // For SQLite date('now', 'localtime') gives YYYY-MM-DD
-    let revenue_query = "
-        SELECT COALESCE(SUM(oi.price * oi.quantity), 0)
-        FROM orders o
-        JOIN order_items oi ON o.id = oi.order_id
-        WHERE o.status = 'Closed' 
-        AND date(o.closed_at) = date('now', 'localtime')
+    // 1. Current Month Revenue
+    let total_revenue_query = "
+        SELECT COALESCE(SUM(COALESCE(subtotal, 0.0) + COALESCE(tax_amount, 0.0) + COALESCE(delivery_fee, 0.0) - COALESCE(discount_amount, 0.0)), 0)
+        FROM orders
+        WHERE status = 'Closed' 
+        AND strftime('%Y-%m', closed_at) = strftime('%Y-%m', 'now', 'localtime')
     ";
-    let total_revenue: f64 = conn.query_row(revenue_query, [], |row| row.get(0)).unwrap_or(0.0);
+    let total_revenue: f64 = conn.query_row(total_revenue_query, [], |row| row.get(0)).unwrap_or(0.0);
 
-    // 2. Total Expenses (Today) - assuming `date` column is YYYY-MM-DD format or we can use substr
-    // Our UI sends date in varying formats maybe? Wait, expenses date is sent as string.
-    // In ExpenseEntryModal, we should ensure it's a parseable date. Assuming it's YYYY-MM-DD or we can just sum everything if needed. Let's assume expenses date might be any format for now, or we'll cast it.
-    // Let's rely on date() if it's YYYY-MM-DD. If it's a full string, we might need a LIKE query.
-    // But since the roadmap doesn't restrict, we'll try to just grab everything today, or all time for MVP.
-    // Actually, Dashboard usually says "Today's Snapshot". Let's try date(date) = date('now', 'localtime') if the frontend sends standard dates.
-    // If not, we just sum them all. Let's just use the query for today and hope the frontend sends YYYY-MM-DD.
-    let expenses_query = "
+    // 2. Current Month Expenses
+    let total_expenses_query = "
+        SELECT COALESCE(SUM(amount), 0)
+        FROM expenses
+        WHERE strftime('%Y-%m', date) = strftime('%Y-%m', 'now', 'localtime') OR date LIKE strftime('%Y-%m', 'now', 'localtime') || '%'
+    ";
+    let total_expenses: f64 = conn.query_row(total_expenses_query, [], |row| row.get(0)).unwrap_or(0.0);
+
+    // 3. Current Month Orders
+    let total_orders_query = "
+        SELECT COUNT(id)
+        FROM orders
+        WHERE status = 'Closed'
+        AND strftime('%Y-%m', closed_at) = strftime('%Y-%m', 'now', 'localtime')
+    ";
+    let total_orders: i32 = conn.query_row(total_orders_query, [], |row| row.get(0)).unwrap_or(0);
+
+    // 4. Today's Revenue
+    let today_revenue_query = "
+        SELECT COALESCE(SUM(COALESCE(subtotal, 0.0) + COALESCE(tax_amount, 0.0) + COALESCE(delivery_fee, 0.0) - COALESCE(discount_amount, 0.0)), 0)
+        FROM orders
+        WHERE status = 'Closed' 
+        AND date(closed_at) = date('now', 'localtime')
+    ";
+    let today_revenue: f64 = conn.query_row(today_revenue_query, [], |row| row.get(0)).unwrap_or(0.0);
+
+    // 5. Today's Expenses
+    let today_expenses_query = "
         SELECT COALESCE(SUM(amount), 0)
         FROM expenses
         WHERE date(date) = date('now', 'localtime') OR date LIKE date('now', 'localtime') || '%'
     ";
-    let total_expenses: f64 = conn.query_row(expenses_query, [], |row| row.get(0)).unwrap_or(0.0);
+    let today_expenses: f64 = conn.query_row(today_expenses_query, [], |row| row.get(0)).unwrap_or(0.0);
 
-    // If date format was different, we can fall back to all time or just let it be 0 for now
-    // 3. Total Orders (Today)
-    let orders_query = "
+    // 6. Today's Orders
+    let today_orders_query = "
         SELECT COUNT(id)
         FROM orders
         WHERE status = 'Closed'
         AND date(closed_at) = date('now', 'localtime')
     ";
-    let total_orders: i32 = conn.query_row(orders_query, [], |row| row.get(0)).unwrap_or(0);
+    let today_orders: i32 = conn.query_row(today_orders_query, [], |row| row.get(0)).unwrap_or(0);
 
     Ok(DashboardStats {
         total_revenue,
         total_expenses,
         net_profit: total_revenue - total_expenses,
         total_orders,
+        today_revenue,
+        today_expenses,
+        today_profit: today_revenue - today_expenses,
+        today_orders,
     })
 }
 
@@ -1767,22 +1887,26 @@ fn date_now(conn: &rusqlite::Connection) -> String {
     conn.query_row("SELECT date('now', 'localtime')", [], |row| row.get(0)).unwrap_or("".to_string())
 }
 
-#[derive(serde::Serialize, Debug)]
+#[derive(serde::Serialize)]
 pub struct PayrollSummary {
     pub staff_id: i32,
     pub name: String,
     pub category_name: Option<String>,
     pub base_salary: f64,
     pub days_present: i32,
+    pub advance_balance: f64,
+    pub paid_amount: Option<f64>,
 }
 
 #[tauri::command]
 pub fn get_payroll_summary(start_date: String, end_date: String) -> Result<Vec<PayrollSummary>, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
     
-    // We get distinct days a staff was present within the date range
+    // We get distinct days a staff was present within the date range, plus their pending advance balance
     let mut stmt = conn.prepare(
-        "SELECT s.id, s.name, c.name, s.salary, COUNT(DISTINCT a.date) as days_present
+        "SELECT s.id, s.name, c.name, s.salary, COUNT(DISTINCT a.date) as days_present,
+         COALESCE((SELECT SUM(amount) FROM advance_salaries WHERE staff_id = s.id AND is_deducted = 0), 0.0) as advance_balance,
+         (SELECT amount FROM salary_payouts WHERE staff_id = s.id AND date >= ?1 AND date <= ?2 ORDER BY date DESC LIMIT 1) as paid_amount
          FROM staff s
          LEFT JOIN staff_categories c ON s.category_id = c.id
          LEFT JOIN staff_attendance a ON s.id = a.staff_id AND a.date >= ?1 AND a.date <= ?2
@@ -1796,6 +1920,8 @@ pub fn get_payroll_summary(start_date: String, end_date: String) -> Result<Vec<P
             category_name: row.get(2).unwrap_or(None),
             base_salary: row.get(3).unwrap_or(0.0),
             days_present: row.get(4).unwrap_or(0),
+            advance_balance: row.get(5).unwrap_or(0.0),
+            paid_amount: row.get(6).unwrap_or(None),
         })
     }).map_err(|e| e.to_string())?;
     
@@ -1816,6 +1942,7 @@ pub struct SalaryPayout {
     pub amount: f64,
     pub bonus: f64,
     pub deduction: f64,
+    pub advance_deduction: f64,
     pub date: String,
 }
 
@@ -1826,6 +1953,7 @@ pub fn process_payout(staff_id: i32, amount: f64, bonus: f64, deduction: f64, da
     conn.execute("CREATE TABLE IF NOT EXISTS salary_payouts (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, amount REAL NOT NULL, date TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
     conn.execute("ALTER TABLE salary_payouts ADD COLUMN bonus REAL", []).ok();
     conn.execute("ALTER TABLE salary_payouts ADD COLUMN deduction REAL", []).ok();
+    conn.execute("ALTER TABLE salary_payouts ADD COLUMN advance_deduction REAL", []).ok();
     
     conn.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, amount REAL NOT NULL, date TEXT NOT NULL, category TEXT NOT NULL, note TEXT)", []).map_err(|e| e.to_string())?;
     
@@ -1834,7 +1962,7 @@ pub fn process_payout(staff_id: i32, amount: f64, bonus: f64, deduction: f64, da
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     
     tx.execute(
-        "INSERT INTO salary_payouts (staff_id, amount, bonus, deduction, date) VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO salary_payouts (staff_id, amount, bonus, deduction, advance_deduction, date) VALUES (?1, ?2, ?3, ?4, 0.0, ?5)",
         rusqlite::params![staff_id, net_amount, bonus, deduction, date]
     ).map_err(|e| e.to_string())?;
     
@@ -1849,28 +1977,31 @@ pub fn process_payout(staff_id: i32, amount: f64, bonus: f64, deduction: f64, da
 }
 
 #[tauri::command]
-pub fn get_payout_history() -> Result<Vec<SalaryPayout>, String> {
+pub fn get_payout_history(start_date: String, end_date: String) -> Result<Vec<SalaryPayout>, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
     
     conn.execute("CREATE TABLE IF NOT EXISTS salary_payouts (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, amount REAL NOT NULL, date TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
     conn.execute("ALTER TABLE salary_payouts ADD COLUMN bonus REAL", []).ok();
     conn.execute("ALTER TABLE salary_payouts ADD COLUMN deduction REAL", []).ok();
+    conn.execute("ALTER TABLE salary_payouts ADD COLUMN advance_deduction REAL", []).ok();
     
     let mut stmt = conn.prepare(
-        "SELECT p.id, s.name, p.amount, p.bonus, p.deduction, p.date
+        "SELECT p.id, s.name, p.amount, p.bonus, p.deduction, p.advance_deduction, p.date
          FROM salary_payouts p
          JOIN staff s ON p.staff_id = s.id
+         WHERE p.date >= ?1 AND p.date <= ?2
          ORDER BY p.date DESC"
     ).map_err(|e| e.to_string())?;
     
-    let iter = stmt.query_map([], |row| {
+    let iter = stmt.query_map([&start_date, &end_date], |row| {
         Ok(SalaryPayout {
             id: row.get(0)?,
             staff_name: row.get(1)?,
             amount: row.get(2).unwrap_or(0.0),
             bonus: row.get(3).unwrap_or(0.0),
             deduction: row.get(4).unwrap_or(0.0),
-            date: row.get(5)?,
+            advance_deduction: row.get(5).unwrap_or(0.0),
+            date: row.get(6)?,
         })
     }).map_err(|e| e.to_string())?;
     
@@ -1914,6 +2045,7 @@ pub struct BatchPayoutEntry {
     pub base_salary: f64,
     pub bonus: f64,
     pub deduction: f64,
+    pub advance_deduction: f64,
     pub staff_name: String,
 }
 
@@ -1924,6 +2056,7 @@ pub fn process_batch_payout(payouts: Vec<BatchPayoutEntry>, payout_date: String)
     conn.execute("CREATE TABLE IF NOT EXISTS salary_payouts (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, amount REAL NOT NULL, date TEXT NOT NULL)", []).map_err(|e| e.to_string())?;
     conn.execute("ALTER TABLE salary_payouts ADD COLUMN bonus REAL", []).ok();
     conn.execute("ALTER TABLE salary_payouts ADD COLUMN deduction REAL", []).ok();
+    conn.execute("ALTER TABLE salary_payouts ADD COLUMN advance_deduction REAL", []).ok();
     conn.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, amount REAL NOT NULL, date TEXT NOT NULL, category TEXT NOT NULL, note TEXT)", []).map_err(|e| e.to_string())?;
     
     let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -1932,12 +2065,20 @@ pub fn process_batch_payout(payouts: Vec<BatchPayoutEntry>, payout_date: String)
     let mut count = 0;
     
     for entry in &payouts {
-        let net_amount = entry.base_salary + entry.bonus - entry.deduction;
+        let total_deduction = entry.deduction + entry.advance_deduction;
+        let net_amount = entry.base_salary + entry.bonus - total_deduction;
         
         tx.execute(
-            "INSERT INTO salary_payouts (staff_id, amount, bonus, deduction, date) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![entry.staff_id, net_amount, entry.bonus, entry.deduction, payout_date]
+            "INSERT INTO salary_payouts (staff_id, amount, bonus, deduction, advance_deduction, date) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![entry.staff_id, net_amount, entry.bonus, total_deduction, entry.advance_deduction, payout_date]
         ).map_err(|e| e.to_string())?;
+        
+        if entry.advance_deduction > 0.0 {
+            tx.execute(
+                "UPDATE advance_salaries SET is_deducted = 1 WHERE staff_id = ?1 AND is_deducted = 0",
+                rusqlite::params![entry.staff_id]
+            ).map_err(|e| e.to_string())?;
+        }
         
         tx.execute(
             "INSERT INTO expenses (amount, date, category, note) VALUES (?1, ?2, 'Salaries', ?3)",
@@ -1951,6 +2092,39 @@ pub fn process_batch_payout(payouts: Vec<BatchPayoutEntry>, payout_date: String)
     tx.commit().map_err(|e| e.to_string())?;
     
     Ok(format!("Processed {} payouts totalling {:.2}", count, total_paid))
+}
+
+#[tauri::command]
+pub fn pay_advance_salary(staff_id: i32, amount: f64, date: String, note: String, staff_name: String) -> Result<String, String> {
+    let mut conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS advance_salaries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            date TEXT NOT NULL,
+            note TEXT,
+            is_deducted BOOLEAN DEFAULT 0
+        )", []
+    ).map_err(|e| e.to_string())?;
+    conn.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, amount REAL NOT NULL, date TEXT NOT NULL, category TEXT NOT NULL, note TEXT)", []).map_err(|e| e.to_string())?;
+    
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    
+    tx.execute(
+        "INSERT INTO advance_salaries (staff_id, amount, date, note) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![staff_id, amount, date, note]
+    ).map_err(|e| e.to_string())?;
+    
+    tx.execute(
+        "INSERT INTO expenses (amount, date, category, note) VALUES (?1, ?2, 'Salaries', ?3)",
+        rusqlite::params![amount, date, format!("Advance Salary: {} - {}", staff_name, note)]
+    ).map_err(|e| e.to_string())?;
+    
+    tx.commit().map_err(|e| e.to_string())?;
+    
+    Ok("Advance salary recorded successfully".to_string())
 }
 
 #[derive(serde::Serialize, Debug)]
@@ -2034,18 +2208,31 @@ pub fn get_analytics_report(start_date: String, end_date: String) -> Result<Anal
         .filter_map(Result::ok)
         .collect();
 
+    let mut sales_map = std::collections::HashMap::new();
+    let mut sales_stmt = conn.prepare(
+        "SELECT date(closed_at), COALESCE(SUM(COALESCE(subtotal, 0.0) + COALESCE(tax_amount, 0.0) + COALESCE(delivery_fee, 0.0) - COALESCE(discount_amount, 0.0)), 0) FROM orders WHERE status = 'Closed' AND date(closed_at) >= ?1 AND date(closed_at) <= ?2 GROUP BY date(closed_at)"
+    ).map_err(|e| e.to_string())?;
+    let _ = sales_stmt.query_map([&start_date, &end_date], |row| {
+        let date: String = row.get(0).unwrap_or_default();
+        let sum: f64 = row.get(1).unwrap_or(0.0);
+        sales_map.insert(date, sum);
+        Ok(())
+    });
+
+    let mut expenses_map = std::collections::HashMap::new();
+    let mut exp_stmt = conn.prepare(
+        "SELECT date, COALESCE(SUM(amount), 0) FROM expenses WHERE date >= ?1 AND date <= ?2 GROUP BY date"
+    ).map_err(|e| e.to_string())?;
+    let _ = exp_stmt.query_map([&start_date, &end_date], |row| {
+        let date: String = row.get(0).unwrap_or_default();
+        let sum: f64 = row.get(1).unwrap_or(0.0);
+        expenses_map.insert(date, sum);
+        Ok(())
+    });
+
     for date in dates {
-        let daily_sales: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(oi.price * oi.quantity), 0) FROM orders o JOIN order_items oi ON o.id = oi.order_id WHERE o.status = 'Closed' AND date(o.closed_at) = ?1",
-            [&date],
-            |row| row.get(0)
-        ).unwrap_or(0.0);
-        
-        let daily_expenses: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE date = ?1",
-            [&date],
-            |row| row.get(0)
-        ).unwrap_or(0.0);
+        let daily_sales = *sales_map.get(&date).unwrap_or(&0.0);
+        let daily_expenses = *expenses_map.get(&date).unwrap_or(&0.0);
 
         sales_trend.push(DailyTrend {
             date,
@@ -2389,11 +2576,11 @@ pub fn get_detailed_report(start_date: String, end_date: String) -> Result<Detai
     let mut orders = Vec::new();
     let mut stmt = conn.prepare(
         "SELECT id, table_number, COALESCE(created_at, ''), 
-         (COALESCE(subtotal, 0.0) + COALESCE(tax_amount, 0.0) - COALESCE(discount_amount, 0.0)) as total, 
+         (COALESCE(subtotal, 0.0) + COALESCE(tax_amount, 0.0) + COALESCE(delivery_fee, 0.0) - COALESCE(discount_amount, 0.0)) as total, 
          COALESCE(status, ''), COALESCE(cashier_name, '') 
          FROM orders 
          WHERE date(created_at) >= ?1 AND date(created_at) <= ?2
-         ORDER BY created_at DESC"
+         ORDER BY created_at DESC LIMIT 5"
     ).map_err(|e| e.to_string())?;
     
     let order_iter = stmt.query_map([&start_date, &end_date], |row| {
@@ -2421,7 +2608,7 @@ pub fn get_detailed_report(start_date: String, end_date: String) -> Result<Detai
         "SELECT id, date, category, amount, COALESCE(note, '') 
          FROM expenses 
          WHERE date >= ?1 AND date <= ?2
-         ORDER BY date DESC"
+         ORDER BY date DESC LIMIT 5"
     ).map_err(|e| e.to_string())?;
     
     let exp_iter = stmt2.query_map([&start_date, &end_date], |row| {
@@ -2447,7 +2634,7 @@ pub fn get_detailed_report(start_date: String, end_date: String) -> Result<Detai
          FROM salary_payouts p
          JOIN staff s ON p.staff_id = s.id
          WHERE p.date >= ?1 AND p.date <= ?2
-         ORDER BY p.date DESC"
+         ORDER BY p.date DESC LIMIT 5"
     ).map_err(|e| e.to_string())?;
     
     let pay_iter = stmt3.query_map([&start_date, &end_date], |row| {
@@ -2466,13 +2653,31 @@ pub fn get_detailed_report(start_date: String, end_date: String) -> Result<Detai
     }
 
     // Totals
-    let total_revenue: f64 = orders.iter().filter(|o| o.status != "Cancelled").map(|o| o.total).sum();
-    let total_exp_only: f64 = expenses.iter().map(|e| e.amount).sum();
-    let total_pay_only: f64 = payouts.iter().map(|p| p.amount).sum();
+    let total_revenue: f64 = conn.query_row(
+        "SELECT COALESCE(SUM(COALESCE(subtotal, 0.0) + COALESCE(tax_amount, 0.0) + COALESCE(delivery_fee, 0.0) - COALESCE(discount_amount, 0.0)), 0) 
+         FROM orders 
+         WHERE status != 'Cancelled' AND date(created_at) >= ?1 AND date(created_at) <= ?2",
+        [&start_date, &end_date], |row| row.get(0)
+    ).unwrap_or(0.0);
+
+    let total_orders: i32 = conn.query_row(
+        "SELECT COUNT(id) FROM orders WHERE status != 'Cancelled' AND date(created_at) >= ?1 AND date(created_at) <= ?2",
+        [&start_date, &end_date], |row| row.get(0)
+    ).unwrap_or(0);
+
+    let total_exp_only: f64 = conn.query_row(
+        "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE date >= ?1 AND date <= ?2",
+        [&start_date, &end_date], |row| row.get(0)
+    ).unwrap_or(0.0);
+
+    let total_pay_only: f64 = conn.query_row(
+        "SELECT COALESCE(SUM(amount), 0) FROM salary_payouts WHERE date >= ?1 AND date <= ?2",
+        [&start_date, &end_date], |row| row.get(0)
+    ).unwrap_or(0.0);
+
     let total_expenses = total_exp_only + total_pay_only;
     let net_profit = total_revenue - total_expenses;
     let profit_margin = if total_revenue > 0.0 { (net_profit / total_revenue) * 100.0 } else { 0.0 };
-    let total_orders = orders.iter().filter(|o| o.status != "Cancelled").count() as i32;
     let avg_order_value = if total_orders > 0 { total_revenue / total_orders as f64 } else { 0.0 };
 
     // Daily Trend
@@ -2490,18 +2695,43 @@ pub fn get_detailed_report(start_date: String, end_date: String) -> Result<Detai
         .filter_map(Result::ok)
         .collect();
 
+    let mut sales_map = std::collections::HashMap::new();
+    let mut sales_stmt = conn.prepare(
+        "SELECT date(created_at), COALESCE(SUM(COALESCE(subtotal, 0.0) + COALESCE(tax_amount, 0.0) + COALESCE(delivery_fee, 0.0) - COALESCE(discount_amount, 0.0)), 0) FROM orders WHERE status = 'Closed' AND date(created_at) >= ?1 AND date(created_at) <= ?2 GROUP BY date(created_at)"
+    ).map_err(|e| e.to_string())?;
+    
+    let sales_iter = sales_stmt.query_map([&start_date, &end_date], |row| {
+        let date: String = row.get(0).unwrap_or_default();
+        let sum: f64 = row.get(1).unwrap_or(0.0);
+        Ok((date, sum))
+    }).map_err(|e| e.to_string())?;
+
+    for res in sales_iter {
+        if let Ok((date, sum)) = res {
+            sales_map.insert(date, sum);
+        }
+    }
+
+    let mut expenses_map = std::collections::HashMap::new();
+    let mut exp_stmt = conn.prepare(
+        "SELECT date, COALESCE(SUM(amount), 0) FROM expenses WHERE date >= ?1 AND date <= ?2 GROUP BY date"
+    ).map_err(|e| e.to_string())?;
+    
+    let exp_iter = exp_stmt.query_map([&start_date, &end_date], |row| {
+        let date: String = row.get(0).unwrap_or_default();
+        let sum: f64 = row.get(1).unwrap_or(0.0);
+        Ok((date, sum))
+    }).map_err(|e| e.to_string())?;
+
+    for res in exp_iter {
+        if let Ok((date, sum)) = res {
+            expenses_map.insert(date, sum);
+        }
+    }
+
     for date in dates {
-        let daily_sales: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(oi.price * oi.quantity), 0) FROM orders o JOIN order_items oi ON o.id = oi.order_id WHERE o.status = 'Closed' AND date(o.created_at) = ?1",
-            [&date],
-            |row| row.get(0)
-        ).unwrap_or(0.0);
-        
-        let daily_expenses: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE date = ?1",
-            [&date],
-            |row| row.get(0)
-        ).unwrap_or(0.0);
+        let daily_sales = *sales_map.get(&date).unwrap_or(&0.0);
+        let daily_expenses = *expenses_map.get(&date).unwrap_or(&0.0);
 
         sales_trend.push(DailyTrend {
             date,
@@ -2537,10 +2767,6 @@ pub fn get_detailed_report(start_date: String, end_date: String) -> Result<Detai
             revenue: row.get(2)?,
         })
     }).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
-
-    orders.truncate(5);
-    expenses.truncate(5);
-    payouts.truncate(5);
 
     Ok(DetailedReport {
         orders,
@@ -2617,7 +2843,7 @@ pub fn get_active_deliveries() -> Result<Vec<DeliveryOrder>, String> {
          LEFT JOIN customers c ON o.customer_id = c.id
          LEFT JOIN staff s ON o.delivery_driver_id = s.id
          LEFT JOIN order_items oi ON o.id = oi.order_id
-         WHERE o.order_type = 'Delivery' AND o.status != 'Closed'
+         WHERE o.order_type = 'Delivery' AND COALESCE(o.delivery_status, 'Pending') != 'Delivered'
          GROUP BY o.id ORDER BY o.id ASC"
     ).map_err(|e| e.to_string())?;
     
@@ -2681,7 +2907,8 @@ pub fn place_delivery_order(
     tax_amount: f64,
     discount_amount: f64,
     cashier_name: String,
-    order_note: String
+    order_note: String,
+    service_charge_amount: f64
 ) -> Result<String, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
     
@@ -2740,13 +2967,320 @@ pub fn place_delivery_order(
         "UPDATE orders SET status = 'Placed', delivery_status = 'Pending', 
         order_type = 'Delivery', subtotal = ?2, tax_amount = ?3, discount_amount = ?4, 
         customer_id = ?5, cashier_name = ?6, order_note = ?7, 
-        delivery_address = ?8, delivery_fee = ?9
+        delivery_address = ?8, delivery_fee = ?9, service_charge_amount = ?10
         WHERE id = ?1", 
         rusqlite::params![
             order_id, subtotal, tax_amount, discount_amount, 
-            final_customer_id, cashier_name, order_note, delivery_address, delivery_fee
+            final_customer_id, cashier_name, order_note, delivery_address, delivery_fee, service_charge_amount
         ]
     ).map_err(|e| e.to_string())?;
     
     Ok("Delivery order placed".into())
+}
+
+// --- INVENTORY MANAGEMENT ---
+
+#[derive(serde::Serialize)]
+pub struct InventoryItem {
+    pub id: i32,
+    pub name: String,
+    pub unit: String,
+    pub low_stock_threshold: f64,
+    pub current_stock: f64,
+    pub default_supplier: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct InventoryTransaction {
+    pub id: i32,
+    pub item_id: i32,
+    pub item_name: String,
+    pub item_unit: String,
+    pub transaction_type: String,
+    pub quantity: f64,
+    pub unit_price: Option<f64>,
+    pub total_cost: Option<f64>,
+    pub supplier: Option<String>,
+    pub note: Option<String>,
+    pub date: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct InventorySummary {
+    pub total_items: i32,
+    pub low_stock_count: i32,
+    pub out_of_stock_count: i32,
+    pub period_purchase_total: f64,
+}
+
+#[tauri::command]
+pub fn get_inventory_items() -> Result<Vec<InventoryItem>, String> {
+    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+
+    let mut stmt = conn.prepare(
+        "SELECT i.id, i.name, i.unit, i.low_stock_threshold,
+            COALESCE(
+                (SELECT SUM(CASE WHEN t.type = 'purchase' THEN t.quantity ELSE -t.quantity END)
+                 FROM inventory_transactions t WHERE t.item_id = i.id), 0
+            ) as current_stock,
+            i.default_supplier
+        FROM inventory_items i
+        ORDER BY i.name ASC"
+    ).map_err(|e| e.to_string())?;
+
+    let iter = stmt.query_map([], |row| {
+        Ok(InventoryItem {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            unit: row.get(2)?,
+            low_stock_threshold: row.get(3)?,
+            current_stock: row.get(4)?,
+            default_supplier: row.get(5).unwrap_or(None),
+        })
+    }).map_err(|e| e.to_string())?;
+
+    let mut items = Vec::new();
+    for item in iter {
+        items.push(item.map_err(|e| e.to_string())?);
+    }
+    Ok(items)
+}
+
+#[tauri::command]
+pub fn add_inventory_item(name: String, unit: String, low_stock_threshold: f64, default_supplier: Option<String>) -> Result<String, String> {
+    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO inventory_items (name, unit, low_stock_threshold, default_supplier) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![name, unit, low_stock_threshold, default_supplier]
+    ).map_err(|e| {
+        if e.to_string().contains("UNIQUE") {
+            format!("An item named '{}' already exists", name)
+        } else {
+            e.to_string()
+        }
+    })?;
+    Ok("Item added".into())
+}
+
+#[tauri::command]
+pub fn update_inventory_item(id: i32, name: String, unit: String, low_stock_threshold: f64, default_supplier: Option<String>) -> Result<String, String> {
+    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE inventory_items SET name = ?1, unit = ?2, low_stock_threshold = ?3, default_supplier = ?4 WHERE id = ?5",
+        rusqlite::params![name, unit, low_stock_threshold, default_supplier, id]
+    ).map_err(|e| {
+        if e.to_string().contains("UNIQUE") {
+            format!("An item named '{}' already exists", name)
+        } else {
+            e.to_string()
+        }
+    })?;
+    Ok("Item updated".into())
+}
+
+#[tauri::command]
+pub fn delete_inventory_item(id: i32) -> Result<String, String> {
+    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM inventory_transactions WHERE item_id = ?1", [&id]).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM inventory_items WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
+    Ok("Item and all its transactions deleted".into())
+}
+
+#[tauri::command]
+pub fn record_inventory_usage(item_id: i32, quantity: f64, note: Option<String>) -> Result<String, String> {
+    if quantity <= 0.0 {
+        return Err("Quantity must be greater than 0".into());
+    }
+    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+
+    // Verify item exists
+    let _name: String = conn.query_row(
+        "SELECT name FROM inventory_items WHERE id = ?1", [&item_id],
+        |row| row.get(0)
+    ).map_err(|_| "Item not found".to_string())?;
+
+    let today = chrono_today();
+
+    // Insert usage transaction (no blocking on insufficient stock)
+    conn.execute(
+        "INSERT INTO inventory_transactions (item_id, type, quantity, date, note) VALUES (?1, 'usage', ?2, ?3, ?4)",
+        rusqlite::params![item_id, quantity, today, note]
+    ).map_err(|e| e.to_string())?;
+
+    Ok("Usage recorded".into())
+}
+
+#[tauri::command]
+pub fn record_inventory_purchase(
+    item_id: i32,
+    quantity: f64,
+    total_cost: f64,
+    supplier: Option<String>,
+    note: Option<String>,
+) -> Result<String, String> {
+    if quantity <= 0.0 {
+        return Err("Quantity must be greater than 0".into());
+    }
+    if total_cost < 0.0 {
+        return Err("Total cost cannot be negative".into());
+    }
+    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+
+    // Fetch item details
+    let (item_name, item_unit): (String, String) = conn.query_row(
+        "SELECT name, unit FROM inventory_items WHERE id = ?1", [&item_id],
+        |row| Ok((row.get(0)?, row.get(1)?))
+    ).map_err(|_| "Item not found".to_string())?;
+
+    let unit_price = if quantity > 0.0 { total_cost / quantity } else { 0.0 };
+    let today = chrono_today();
+
+    // Insert purchase transaction
+    conn.execute(
+        "INSERT INTO inventory_transactions (item_id, type, quantity, unit_price, total_cost, supplier, note, date) VALUES (?1, 'purchase', ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![item_id, quantity, unit_price, total_cost, supplier, note, today]
+    ).map_err(|e| e.to_string())?;
+
+    // Auto-create expense entry
+    let supplier_str = supplier.as_deref().map(|s| format!(" from {}", s)).unwrap_or_default();
+    let expense_note = format!("Inventory: {} {} {}{}", quantity, item_unit, item_name, supplier_str);
+    conn.execute(
+        "INSERT INTO expenses (amount, date, category, note) VALUES (?1, ?2, 'Inventory', ?3)",
+        rusqlite::params![total_cost, today, expense_note]
+    ).map_err(|e| e.to_string())?;
+
+    Ok("Purchase recorded and expense logged".into())
+}
+
+fn chrono_today() -> String {
+    let conn = rusqlite::Connection::open("../local.db").unwrap();
+    conn.query_row("SELECT date('now', 'localtime')", [], |row| row.get(0)).unwrap_or_else(|_| {
+        "2026-01-01".to_string()
+    })
+}
+
+#[tauri::command]
+pub fn get_inventory_transactions(
+    start_date: Option<String>,
+    end_date: Option<String>,
+    item_id: Option<i32>,
+    transaction_type: Option<String>,
+) -> Result<Vec<InventoryTransaction>, String> {
+    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+
+    let mut sql = String::from(
+        "SELECT t.id, t.item_id, i.name, i.unit, t.type, t.quantity, t.unit_price, t.total_cost, t.supplier, t.note, t.date
+         FROM inventory_transactions t
+         JOIN inventory_items i ON t.item_id = i.id
+         WHERE 1=1"
+    );
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+    if let Some(ref sd) = start_date {
+        sql.push_str(" AND t.date >= ?");
+        params.push(Box::new(sd.clone()));
+    }
+    if let Some(ref ed) = end_date {
+        sql.push_str(" AND t.date <= ?");
+        params.push(Box::new(ed.clone()));
+    }
+    if let Some(iid) = item_id {
+        sql.push_str(" AND t.item_id = ?");
+        params.push(Box::new(iid));
+    }
+    if let Some(ref tt) = transaction_type {
+        if tt != "all" {
+            sql.push_str(" AND t.type = ?");
+            params.push(Box::new(tt.clone()));
+        }
+    }
+    sql.push_str(" ORDER BY t.date DESC, t.id DESC");
+
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let iter = stmt.query_map(param_refs.as_slice(), |row| {
+        Ok(InventoryTransaction {
+            id: row.get(0)?,
+            item_id: row.get(1)?,
+            item_name: row.get(2)?,
+            item_unit: row.get(3)?,
+            transaction_type: row.get(4)?,
+            quantity: row.get(5)?,
+            unit_price: row.get(6).unwrap_or(None),
+            total_cost: row.get(7).unwrap_or(None),
+            supplier: row.get(8).unwrap_or(None),
+            note: row.get(9).unwrap_or(None),
+            date: row.get(10)?,
+        })
+    }).map_err(|e| e.to_string())?;
+
+    let mut transactions = Vec::new();
+    for t in iter {
+        transactions.push(t.map_err(|e| e.to_string())?);
+    }
+    Ok(transactions)
+}
+
+#[tauri::command]
+pub fn get_inventory_summary(start_date: Option<String>, end_date: Option<String>) -> Result<InventorySummary, String> {
+    let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
+
+    let total_items: i32 = conn.query_row(
+        "SELECT COUNT(*) FROM inventory_items", [],
+        |row| row.get(0)
+    ).unwrap_or(0);
+
+    let mut stmt = conn.prepare(
+        "SELECT i.low_stock_threshold,
+            COALESCE(
+                (SELECT SUM(CASE WHEN t.type = 'purchase' THEN t.quantity ELSE -t.quantity END)
+                 FROM inventory_transactions t WHERE t.item_id = i.id), 0
+            ) as current_stock
+        FROM inventory_items i"
+    ).map_err(|e| e.to_string())?;
+
+    let mut low_stock_count = 0i32;
+    let mut out_of_stock_count = 0i32;
+    let stock_iter = stmt.query_map([], |row| {
+        Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?))
+    }).map_err(|e| e.to_string())?;
+    for entry in stock_iter {
+        if let Ok((threshold, stock)) = entry {
+            if stock <= 0.0 {
+                out_of_stock_count += 1;
+            } else if stock <= threshold {
+                low_stock_count += 1;
+            }
+        }
+    }
+
+    let mut sql = String::from("SELECT COALESCE(SUM(total_cost), 0) FROM inventory_transactions WHERE type = 'purchase'");
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    
+    if let Some(ref sd) = start_date {
+        sql.push_str(" AND date >= ?");
+        params.push(Box::new(sd.clone()));
+    }
+    if let Some(ref ed) = end_date {
+        sql.push_str(" AND date <= ?");
+        params.push(Box::new(ed.clone()));
+    }
+    if start_date.is_none() && end_date.is_none() {
+        let today = chrono_today();
+        sql.push_str(" AND date = ?");
+        params.push(Box::new(today));
+    }
+    
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let period_purchase_total: f64 = conn.query_row(
+        &sql, param_refs.as_slice(),
+        |row| row.get(0)
+    ).unwrap_or(0.0);
+
+    Ok(InventorySummary {
+        total_items,
+        low_stock_count,
+        out_of_stock_count,
+        period_purchase_total,
+    })
 }

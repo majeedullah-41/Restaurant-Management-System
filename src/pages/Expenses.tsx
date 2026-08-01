@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Plus, Trash2, Landmark, X, ChevronLeft, ChevronRight, Calendar } from "lucide-react";
+import { Plus, Trash2, Landmark, X } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { ConfirmModal } from "../components/ConfirmModal";
+import DateFilterToolbar from "../components/DateFilterToolbar";
 
 interface Expense {
   id: number;
@@ -24,30 +25,7 @@ export default function Expenses() {
   const [category, setCategory] = useState("Groceries");
   const [note, setNote] = useState("");
 
-  // Month Navigation State
-  const currentDate = new Date();
-  const [selectedMonth, setSelectedMonth] = useState(currentDate.getMonth());
-  const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear());
-
-  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-
-  const goToPrevMonth = () => {
-    if (selectedMonth === 0) {
-      setSelectedMonth(11);
-      setSelectedYear(selectedYear - 1);
-    } else {
-      setSelectedMonth(selectedMonth - 1);
-    }
-  };
-
-  const goToNextMonth = () => {
-    if (selectedMonth === 11) {
-      setSelectedMonth(0);
-      setSelectedYear(selectedYear + 1);
-    } else {
-      setSelectedMonth(selectedMonth + 1);
-    }
-  };
+  const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
 
   const loadExpenses = async () => {
     try {
@@ -104,7 +82,19 @@ export default function Expenses() {
 
   const filteredExpenses = expenses.filter(e => {
     const expenseDate = new Date(e.date);
-    return expenseDate.getMonth() === selectedMonth && expenseDate.getFullYear() === selectedYear;
+    const start = dateRange.startDate ? new Date(dateRange.startDate) : null;
+    const end = dateRange.endDate ? new Date(dateRange.endDate) : null;
+    
+    if (start && end) {
+      const d = new Date(expenseDate.getFullYear(), expenseDate.getMonth(), expenseDate.getDate());
+      const s = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+      const e_dt = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+      if (d < s || d > e_dt) {
+         return false;
+      }
+      return true;
+    }
+    return false; // don't show until range is set
   });
 
   const totalExpenses = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
@@ -188,27 +178,10 @@ export default function Expenses() {
             </div>
 
             <div className="flex items-center space-x-4 shrink-0">
-              {/* Month Navigator */}
-              <div className="flex items-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden h-10">
-                <button
-                  onClick={goToPrevMonth}
-                  className="px-3 h-full text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-r border-slate-200 dark:border-slate-800 flex items-center justify-center"
-                >
-                  <ChevronLeft size={16} />
-                </button>
-                <div className="px-5 h-full flex items-center space-x-2.5 min-w-[160px] justify-center">
-                  <Calendar size={15} className="text-blue-500 shrink-0" />
-                  <span className="text-sm font-bold text-slate-900 dark:text-white">
-                    {monthNames[selectedMonth]} {selectedYear}
-                  </span>
-                </div>
-                <button
-                  onClick={goToNextMonth}
-                  className="px-3 h-full text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-l border-slate-200 dark:border-slate-800 flex items-center justify-center"
-                >
-                  <ChevronRight size={16} />
-                </button>
-              </div>
+              <DateFilterToolbar 
+                onDateRangeChange={(startDate, endDate) => setDateRange({ startDate, endDate })}
+                defaultMode="month"
+              />
 
               <button 
                 onClick={() => setIsExpenseModalOpen(true)}

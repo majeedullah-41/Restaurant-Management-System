@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
-import { User, Lock, Mail, Shield, CheckCircle2, AlertCircle } from 'lucide-react';
+import { User, Lock, Mail, Shield, CheckCircle2, AlertCircle, BadgeCheck } from 'lucide-react';
 
 export default function UserProfile() {
   const [currentUsername, setCurrentUsername] = useState("");
@@ -14,6 +14,7 @@ export default function UserProfile() {
   
   const [message, setMessage] = useState({ text: "", type: "" });
   const [loading, setLoading] = useState(false);
+  const [displayName, setDisplayName] = useState("");
 
   const [targetRole, setTargetRole] = useState("");
   const userRole = localStorage.getItem("userRole") || "Unknown";
@@ -23,6 +24,7 @@ export default function UserProfile() {
     setCurrentUsername(user);
     setNewUsername(user);
     setTargetRole(localStorage.getItem("userRole") || "Unknown");
+    setDisplayName(localStorage.getItem("displayName") || "");
   }, []);
 
   useEffect(() => {
@@ -69,6 +71,7 @@ export default function UserProfile() {
         currentPassword: currentPassword ? currentPassword : null,
         newPassword: newPassword ? newPassword : null,
         adminOverride: isTargetingOther,
+        displayName: displayName || null,
       });
       
       setMessage({ text: "Profile updated successfully!", type: "success" });
@@ -78,6 +81,7 @@ export default function UserProfile() {
         localStorage.setItem("userName", newUsername);
         setCurrentUsername(newUsername);
       }
+      localStorage.setItem("displayName", displayName);
       
       // Clear password fields
       setCurrentPassword("");
@@ -158,6 +162,23 @@ export default function UserProfile() {
                       />
                     </div>
                     <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">Your role determines your permissions within the system. Roles cannot be changed here.</p>
+                  </div>
+
+                  <div className="max-w-md">
+                    <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Display Name</label>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">This name will appear on printed receipts & salary slips as the Cashier/Admin name.</p>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <BadgeCheck size={16} className="text-slate-400" />
+                      </div>
+                      <input 
+                        type="text" 
+                        value={displayName}
+                        onChange={(e) => setDisplayName(e.target.value)}
+                        placeholder="e.g. Ali Khan"
+                        className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg pl-10 pr-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
