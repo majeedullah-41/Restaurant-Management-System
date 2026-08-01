@@ -165,6 +165,8 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
 
     // Migrations — safe to run multiple times (ADD COLUMN fails silently if already exists)
     conn.execute("ALTER TABLE users ADD COLUMN display_name TEXT", []).ok();
+    conn.execute("ALTER TABLE users ADD COLUMN security_question TEXT", []).ok();
+    conn.execute("ALTER TABLE users ADD COLUMN security_answer TEXT", []).ok();
 
     Ok(())
 }
@@ -177,6 +179,7 @@ pub fn update_user_profile(
     new_password: Option<String>,
     admin_override: Option<bool>,
     display_name: Option<String>,
+    new_role: Option<String>,
 ) -> Result<(), String> {
     let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
 
@@ -208,7 +211,56 @@ pub fn update_user_profile(
         ).map_err(|e| e.to_string())?;
     }
 
+    if let Some(role) = new_role {
+        if let Ok(role_id) = conn.query_row("SELECT id FROM roles WHERE name = ?", [&role], |row| row.get::<_, i32>(0)) {
+            conn.execute("UPDATE users SET role_id = ? WHERE username = ?", rusqlite::params![role_id, &new_username]).ok();
+        }
+    }
+
     Ok(())
+}
+
+#[tauri::command]
+pub fn update_security_question(username: String, question: String, answer: String) -> Result<(), String> {
+    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE users SET security_question = ?, security_answer = ? WHERE username = ?",
+        [&question, &answer, &username],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_security_question(username: String) -> Result<String, String> {
+    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT security_question FROM users WHERE username = ?").map_err(|e| e.to_string())?;
+    let question: Option<String> = stmt.query_row([&username], |row| row.get(0)).map_err(|_| "User not found".to_string())?;
+    match question {
+        Some(q) => Ok(q),
+        None => Err("No security question set for this user".to_string()),
+    }
+}
+
+#[tauri::command]
+pub fn reset_password_with_security_answer(username: String, answer: String, new_password: String) -> Result<(), String> {
+    let conn = Connection::open("../local.db").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT security_answer FROM users WHERE username = ?").map_err(|e| e.to_string())?;
+    let db_answer: Option<String> = stmt.query_row([&username], |row| row.get(0)).map_err(|_| "User not found".to_string())?;
+    
+    match db_answer {
+        Some(a) => {
+            if a.to_lowercase() == answer.to_lowercase() {
+                conn.execute(
+                    "UPDATE users SET password_hash = ? WHERE username = ?",
+                    [&new_password, &username],
+                ).map_err(|e| e.to_string())?;
+                Ok(())
+            } else {
+                Err("Incorrect security answer".to_string())
+            }
+        },
+        None => Err("No security question set for this user".to_string()),
+    }
 }
 
 // This tells Tauri that React is allowed to call this function

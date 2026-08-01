@@ -4,12 +4,14 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import ForgotPasswordModal from "../components/ForgotPasswordModal";
 import { ShieldCheck, Server, Settings2 } from "lucide-react";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
   const [restaurantName, setRestaurantName] = useState("Restaurant");
   const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -136,7 +138,13 @@ export default function Login() {
                   <input type="checkbox" id="remember" className="w-4 h-4 rounded border-slate-300 dark:border-slate-700 text-blue-600 focus:ring-blue-600" />
                   <label htmlFor="remember" className="text-sm font-medium text-slate-600 dark:text-slate-400 cursor-pointer">Remember Me</label>
                 </div>
-                <a href="#" className="text-sm font-semibold text-blue-600 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors">Forgot Password?</a>
+                <button 
+                  type="button" 
+                  onClick={() => setIsForgotPasswordOpen(true)}
+                  className="text-sm font-semibold text-blue-600 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+                >
+                  Forgot Password?
+                </button>
               </div>
 
               {error && <p className="text-red-500 text-sm font-medium bg-red-50 dark:bg-red-500/10 p-3 rounded-lg border border-red-100 dark:border-red-500/20">{error}</p>}
@@ -164,6 +172,10 @@ export default function Login() {
           </div>
         </div>
       </div>
+      <ForgotPasswordModal 
+        isOpen={isForgotPasswordOpen} 
+        onClose={() => setIsForgotPasswordOpen(false)} 
+      />
     </div>
   );
 }
