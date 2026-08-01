@@ -50,7 +50,7 @@ export default function POS() {
   const [view, setView] = useState<'payment' | 'menu'>('payment');
   const [restaurantName, setRestaurantName] = useState("RMS");
   const [restaurantAddress, setRestaurantAddress] = useState("");
-  const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
+  const [restaurantContact, setRestaurantContact] = useState("");
 
   // Delivery State
   const [deliverySettings, setDeliverySettings] = useState({ base_delivery_fee: 0, free_delivery_threshold: 0 });
@@ -173,7 +173,7 @@ export default function POS() {
         setServiceChargeTypes(settings.service_charge_types ? settings.service_charge_types.split(",") : ["Dine-in"]);
         setRestaurantName(settings.restaurant_name);
         setRestaurantAddress(settings.address || "");
-        setRestaurantLogo(settings.logo_path || null);
+        setRestaurantContact(settings.contact_number || "");
 
         const delSettings: any = await invoke("get_delivery_settings");
         setDeliverySettings(delSettings);
@@ -358,6 +358,7 @@ export default function POS() {
 
     let text = "";
     text += center(restaurantName || "Restaurant Name") + "\n";
+    if (restaurantContact) text += center(restaurantContact) + "\n";
     text += center(restaurantAddress || "Generated via RMS POS") + "\n";
     text += "-".repeat(32) + "\n";
     

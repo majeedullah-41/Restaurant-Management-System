@@ -57,6 +57,7 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
     let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN address TEXT", []);
     let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN service_charge_rate REAL DEFAULT 0.0", []);
     let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN service_charge_types TEXT DEFAULT 'Dine-in'", []);
+    let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN contact_number TEXT", []);
 
     // Add service_charge_amount to orders here as well to ensure it's globally migrated
     let _ = conn.execute("ALTER TABLE orders ADD COLUMN service_charge_amount REAL DEFAULT 0.0", []);
@@ -395,12 +396,13 @@ pub struct RestaurantSettings {
     pub total_tables: i32,
     pub service_charge_rate: f64,
     pub service_charge_types: String,
+    pub contact_number: Option<String>,
 }
 
 #[tauri::command]
 pub fn get_settings() -> Result<RestaurantSettings, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare("SELECT restaurant_name, logo_path, tax_rate, total_tables, address, COALESCE(service_charge_rate, 0.0), COALESCE(service_charge_types, 'Dine-in') FROM restaurant_settings WHERE id = 1").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT restaurant_name, logo_path, tax_rate, total_tables, address, COALESCE(service_charge_rate, 0.0), COALESCE(service_charge_types, 'Dine-in'), contact_number FROM restaurant_settings WHERE id = 1").map_err(|e| e.to_string())?;
     
     let settings = stmt.query_row([], |row| {
         Ok(RestaurantSettings {
@@ -411,6 +413,7 @@ pub fn get_settings() -> Result<RestaurantSettings, String> {
             address: row.get(4).unwrap_or(None),
             service_charge_rate: row.get(5).unwrap_or(0.0),
             service_charge_types: row.get(6).unwrap_or("Dine-in".to_string()),
+            contact_number: row.get(7).unwrap_or(None),
         })
     }).map_err(|e| e.to_string())?;
 
@@ -418,7 +421,7 @@ pub fn get_settings() -> Result<RestaurantSettings, String> {
 }
 
 #[tauri::command]
-pub fn update_settings(name: String, address: Option<String>, logo_path: Option<String>, tax_rate: f64, total_tables: i32, service_charge_rate: f64, service_charge_types: String) -> Result<String, String> {
+pub fn update_settings(name: String, address: Option<String>, logo_path: Option<String>, tax_rate: f64, total_tables: i32, service_charge_rate: f64, service_charge_types: String, contact_number: Option<String>) -> Result<String, String> {
     let conn = rusqlite::Connection::open("../local.db").map_err(|e| e.to_string())?;
     
     // Check if we are reducing tables and if any of the tables to be removed are occupied
@@ -437,8 +440,8 @@ pub fn update_settings(name: String, address: Option<String>, logo_path: Option<
     }
 
     conn.execute(
-        "UPDATE restaurant_settings SET restaurant_name = ?1, address = ?2, logo_path = ?3, tax_rate = ?4, total_tables = ?5, service_charge_rate = ?6, service_charge_types = ?7 WHERE id = 1",
-        rusqlite::params![name, address, logo_path, tax_rate, total_tables, service_charge_rate, service_charge_types],
+        "UPDATE restaurant_settings SET restaurant_name = ?1, address = ?2, logo_path = ?3, tax_rate = ?4, total_tables = ?5, service_charge_rate = ?6, service_charge_types = ?7, contact_number = ?8 WHERE id = 1",
+        rusqlite::params![name, address, logo_path, tax_rate, total_tables, service_charge_rate, service_charge_types, contact_number],
     ).map_err(|e| e.to_string())?;
     
     Ok("Settings updated successfully".into())

@@ -28,8 +28,8 @@ export default function DeliveryManagement() {
   const [deliveries, setDeliveries] = useState<DeliveryOrder[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [selectedDriver, setSelectedDriver] = useState<Record<number, number>>({});
-  const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
   const [restaurantName, setRestaurantName] = useState<string>("");
+  const [restaurantContact, setRestaurantContact] = useState<string>("");
   
   const [alertModal, setAlertModal] = useState<{isOpen: boolean; title: string; message: string; type: 'danger' | 'warning' | 'info' | 'success'}>({
     isOpen: false, title: '', message: '', type: 'danger'
@@ -63,7 +63,7 @@ export default function DeliveryManagement() {
     try {
       const settings: any = await invoke("get_settings");
       if (settings.restaurant_name) setRestaurantName(settings.restaurant_name);
-      if (settings.restaurant_logo) setRestaurantLogo(settings.restaurant_logo);
+      if (settings.contact_number) setRestaurantContact(settings.contact_number);
     } catch (err) {
       console.error("Failed to load settings:", err);
     }
@@ -128,6 +128,7 @@ export default function DeliveryManagement() {
 
     let text = "";
     text += center(restaurantName || "Restaurant Name") + "\n";
+    if (restaurantContact) text += center(restaurantContact) + "\n";
     text += center("*** DELIVERY TICKET ***") + "\n";
     text += "-".repeat(32) + "\n";
     

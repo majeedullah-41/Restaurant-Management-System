@@ -8,7 +8,8 @@ import DataMigrationSection from "../components/DataMigrationSection";
 import DeliverySettingsSection from "../components/DeliverySettingsSection";
 
 export default function SettingsPage() {
-  const [name, setName] = useState("");
+  const [name, setName] = useState("Restaurant Management System");
+  const [contact, setContact] = useState("");
   const [address, setAddress] = useState("");
   const [taxRate, setTaxRate] = useState("");
   const [tables, setTables] = useState("");
@@ -47,6 +48,7 @@ export default function SettingsPage() {
       try {
         const data: any = await invoke("get_settings");
         setName(data.restaurant_name);
+        setContact(data.contact_number || "");
         setAddress(data.address || "");
         setLogo(data.logo_path || null);
         setTaxRate(data.tax_rate.toString());
@@ -96,7 +98,8 @@ export default function SettingsPage() {
         taxRate: parseFloat(taxRate) || 0,
         totalTables: parseInt(tables) || 0,
         serviceChargeRate: parseFloat(serviceChargeRate) || 0,
-        serviceChargeTypes: serviceChargeTypes.join(",")
+        serviceChargeTypes: serviceChargeTypes.join(","),
+        contactNumber: contact.trim() || null
       });
       setMessage("Settings saved successfully!");
       window.dispatchEvent(new Event("settingsUpdated"));
@@ -125,6 +128,13 @@ export default function SettingsPage() {
                   <input 
                     type="text" value={name} onChange={(e) => setName(e.target.value)}
                     className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Contact Number</label>
+                  <input 
+                    type="text" value={contact} onChange={(e) => setContact(e.target.value)}
+                    className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="e.g. 0346-4451505"
                   />
                 </div>
                 <div>
