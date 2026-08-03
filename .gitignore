@@ -28,3 +28,9 @@ backups/
 
 # License keys (private key - NEVER commit)
 scripts/.keys/
+
+# Local databases and SQLite WAL/SHM files
+*.db
+*.db-wal
+*.db-shm
+src-tauri/*.db*
