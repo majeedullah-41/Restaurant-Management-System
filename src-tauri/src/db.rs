@@ -87,6 +87,49 @@ pub fn init_db() -> Result<()> {
 }
 
 pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
+    // 0. Ensure core tables exist before ALTER TABLE migrations run
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            table_number INTEGER, 
+            status TEXT,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            closed_at TEXT
+        )",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS order_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            order_id INTEGER, 
+            item_id INTEGER, 
+            name TEXT, 
+            price REAL, 
+            quantity INTEGER
+        )",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS staff_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE
+        )",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS staff_attendance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            clock_in TEXT,
+            clock_out TEXT,
+            status TEXT DEFAULT 'Present',
+            note TEXT,
+            FOREIGN KEY(staff_id) REFERENCES staff(id)
+        )",
+        [],
+    );
+
     // 1. restaurant_settings table
     let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN last_backup_at TEXT", []);
     let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN backup_frequency TEXT DEFAULT 'Off'", []);
