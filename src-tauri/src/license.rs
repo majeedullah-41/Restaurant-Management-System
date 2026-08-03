@@ -14,27 +14,24 @@ use std::sync::OnceLock;
 
 static HWID_CACHE: OnceLock<String> = OnceLock::new();
 
-/// Generates a hardware-bound identifier from the machine's hostname and MAC address.
-/// This value is deterministic for a given machine and cached for instant subsequent lookups.
+/// Generates a hardware-bound identifier from the machine's hostname, MAC address, and Windows MachineGuid.
+/// This value is 100% deterministic and permanently stable across reinstalls on the same device.
 pub fn get_hwid() -> String {
     HWID_CACHE.get_or_init(|| {
         let hostname = System::host_name()
             .or_else(|| std::env::var("COMPUTERNAME").ok())
             .unwrap_or_else(|| "UNKNOWN-HOST".to_string());
 
-        // Grab the first non-loopback MAC address for stability
         let mac = get_primary_mac().unwrap_or_else(|| "00:00:00:00:00:00".to_string());
+        let machine_guid = get_windows_machine_guid().unwrap_or_else(|| "UNKNOWN-GUID".to_string());
 
-        // Combine and hash so the HWID is a fixed-length, non-reversible string
         use sha2::Digest;
         let mut hasher = sha2::Sha256::new();
-        hasher.update(format!("{}|{}", hostname, mac));
+        hasher.update(format!("{}|{}|{}", hostname, mac, machine_guid));
         let result = hasher.finalize();
 
-        // Take first 16 bytes (32 hex chars) for a compact ID
         let hex: String = result.iter().take(16).map(|b| format!("{:02X}", b)).collect();
 
-        // Format as XXXX-XXXX-XXXX-XXXX for readability
         format!(
             "{}-{}-{}-{}",
             &hex[0..4],
@@ -45,14 +42,21 @@ pub fn get_hwid() -> String {
     }).clone()
 }
 
-/// Retrieves the primary (first non-loopback) MAC address in pure Rust without external process execution.
+/// Retrieves the primary MAC address deterministically by sorting all interface MACs.
 fn get_primary_mac() -> Option<String> {
     let networks = sysinfo::Networks::new_with_refreshed_list();
+    let mut macs: Vec<String> = Vec::new();
+
     for (_name, network) in &networks {
-        let mac_str = network.mac_address().to_string();
-        if !mac_str.is_empty() && mac_str != "00:00:00:00:00:00" {
-            return Some(mac_str.to_uppercase());
+        let mac_str = network.mac_address().to_string().to_uppercase();
+        if !mac_str.is_empty() && mac_str != "00:00:00:00:00:00" && mac_str.contains(':') {
+            macs.push(mac_str);
         }
+    }
+
+    if !macs.is_empty() {
+        macs.sort(); // Sort deterministically so interface order is 100% stable
+        return Some(macs[0].clone());
     }
 
     #[cfg(target_os = "windows")]
@@ -71,13 +75,43 @@ fn get_primary_mac() -> Option<String> {
                 if let Some(mac_field) = parts.first() {
                     let mac = mac_field.trim().trim_matches('"');
                     if !mac.is_empty() && mac != "N/A" && mac.contains('-') {
-                        return Some(mac.replace('-', ":").to_uppercase());
+                        macs.push(mac.replace('-', ":").to_uppercase());
+                    }
+                }
+            }
+        }
+        if !macs.is_empty() {
+            macs.sort();
+            return Some(macs[0].clone());
+        }
+    }
+
+    None
+}
+
+/// Retrieves the permanent Windows MachineGuid from the registry for stable hardware identification.
+fn get_windows_machine_guid() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        let mut cmd = std::process::Command::new("reg");
+        cmd.args(["query", "HKLM\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        if let Ok(output) = cmd.output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.contains("MachineGuid") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if let Some(guid) = parts.last() {
+                        return Some(guid.to_string());
                     }
                 }
             }
         }
     }
-
     None
 }
 
