@@ -10,86 +10,75 @@ use serde::Serialize;
 use sha2::Sha256;
 use sysinfo::System;
 
-// ─── HWID Generation ────────────────────────────────────────────────────────
+use std::sync::OnceLock;
+
+static HWID_CACHE: OnceLock<String> = OnceLock::new();
 
 /// Generates a hardware-bound identifier from the machine's hostname and MAC address.
-/// This value is deterministic for a given machine.
+/// This value is deterministic for a given machine and cached for instant subsequent lookups.
 pub fn get_hwid() -> String {
-    let sys = System::new_all();
+    HWID_CACHE.get_or_init(|| {
+        let hostname = System::host_name()
+            .or_else(|| std::env::var("COMPUTERNAME").ok())
+            .unwrap_or_else(|| "UNKNOWN-HOST".to_string());
 
-    let hostname = System::host_name().unwrap_or_else(|| "UNKNOWN-HOST".to_string());
+        // Grab the first non-loopback MAC address for stability
+        let mac = get_primary_mac().unwrap_or_else(|| "00:00:00:00:00:00".to_string());
 
-    // Grab the first non-loopback MAC address for stability
-    let mac = get_primary_mac().unwrap_or_else(|| "00:00:00:00:00:00".to_string());
+        // Combine and hash so the HWID is a fixed-length, non-reversible string
+        use sha2::Digest;
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(format!("{}|{}", hostname, mac));
+        let result = hasher.finalize();
 
-    // Combine and hash so the HWID is a fixed-length, non-reversible string
-    use sha2::Digest;
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(format!("{}|{}", hostname, mac));
-    let result = hasher.finalize();
+        // Take first 16 bytes (32 hex chars) for a compact ID
+        let hex: String = result.iter().take(16).map(|b| format!("{:02X}", b)).collect();
 
-    // Take first 16 bytes (32 hex chars) for a compact ID
-    let hex: String = result.iter().take(16).map(|b| format!("{:02X}", b)).collect();
-
-    // Format as XXXX-XXXX-XXXX-XXXX for readability
-    format!(
-        "{}-{}-{}-{}",
-        &hex[0..4],
-        &hex[4..8],
-        &hex[8..12],
-        &hex[12..16]
-    )
+        // Format as XXXX-XXXX-XXXX-XXXX for readability
+        format!(
+            "{}-{}-{}-{}",
+            &hex[0..4],
+            &hex[4..8],
+            &hex[8..12],
+            &hex[12..16]
+        )
+    }).clone()
 }
 
-/// Retrieves the primary (first non-loopback) MAC address.
+/// Retrieves the primary (first non-loopback) MAC address in pure Rust without external process execution.
 fn get_primary_mac() -> Option<String> {
+    let networks = sysinfo::Networks::new_with_refreshed_list();
+    for (_name, network) in &networks {
+        let mac_str = network.mac_address().to_string();
+        if !mac_str.is_empty() && mac_str != "00:00:00:00:00:00" {
+            return Some(mac_str.to_uppercase());
+        }
+    }
+
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         
-        // On Windows, use ipconfig /all to parse MAC address
         let mut cmd = std::process::Command::new("getmac");
         cmd.args(["/FO", "CSV", "/NH"]);
         cmd.creation_flags(CREATE_NO_WINDOW);
         
-        let output = cmd.output().ok()?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            // getmac CSV: "AA-BB-CC-DD-EE-FF","..."
-            let parts: Vec<&str> = line.split(',').collect();
-            if let Some(mac_field) = parts.first() {
-                let mac = mac_field.trim().trim_matches('"');
-                if !mac.is_empty()
-                    && mac != "N/A"
-                    && mac.contains('-')
-                {
-                    return Some(mac.replace('-', ":"));
+        if let Ok(output) = cmd.output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split(',').collect();
+                if let Some(mac_field) = parts.first() {
+                    let mac = mac_field.trim().trim_matches('"');
+                    if !mac.is_empty() && mac != "N/A" && mac.contains('-') {
+                        return Some(mac.replace('-', ":").to_uppercase());
+                    }
                 }
             }
         }
-        None
     }
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        // Fallback for Linux/macOS
-        let output = std::process::Command::new("ip")
-            .args(["link", "show"])
-            .output()
-            .ok()?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("link/ether") {
-                let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    return Some(parts[1].to_uppercase());
-                }
-            }
-        }
-        None
-    }
+    None
 }
 
 // ─── Embedded Public Key ────────────────────────────────────────────────────

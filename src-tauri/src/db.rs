@@ -6,9 +6,35 @@ use std::sync::{Mutex, OnceLock};
 
 static DB_CONN: OnceLock<Mutex<Connection>> = OnceLock::new();
 
+pub fn get_default_db_path() -> String {
+    if let Ok(p) = std::env::var("DB_PATH") {
+        if !p.trim().is_empty() {
+            return p;
+        }
+    }
+
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let app_dir = std::path::Path::new(&local_app_data).join("RMS");
+        if std::fs::create_dir_all(&app_dir).is_ok() {
+            return app_dir.join("local.db").to_string_lossy().to_string();
+        }
+    }
+
+    "local.db".to_string()
+}
+
 pub fn init_shared_connection() {
-    let db_path = std::env::var("DB_PATH").unwrap_or_else(|_| "../local.db".to_string());
+    let db_path = get_default_db_path();
     let conn = Connection::open(&db_path).expect("Failed to open global database connection");
+    
+    // Enable WAL mode & performance PRAGMAs to eliminate SQLite locks and lag
+    let _ = conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA foreign_keys = ON;
+         PRAGMA busy_timeout = 5000;"
+    );
+
     DB_CONN.set(Mutex::new(conn)).unwrap_or_else(|_| panic!("DB_CONN already initialized"));
 }
 
@@ -2499,7 +2525,8 @@ pub fn perform_backup(destination: Option<String>) -> Result<String, String> {
         std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create folder: {}", e))?;
     }
 
-    std::fs::copy("../local.db", &final_dest)
+    let current_db_path = get_default_db_path();
+    std::fs::copy(&current_db_path, &final_dest)
         .map_err(|e| format!("Failed to copy database file: {}", e))?;
 
     let dest_str = final_dest.to_string_lossy().to_string();
@@ -2615,11 +2642,11 @@ pub fn validate_backup_file(file_path: String) -> Result<String, String> {
 pub fn import_backup_file(file_path: String) -> Result<String, String> {
     validate_backup_file(file_path.clone())?;
 
-    let db_path_str = std::env::var("DB_PATH").unwrap_or_else(|_| "../local.db".to_string());
+    let db_path_str = get_default_db_path();
     let db_path = std::path::Path::new(&db_path_str);
     
-    let backups_dir = std::path::Path::new("../backups");
-    if let Err(e) = std::fs::create_dir_all(backups_dir) {
+    let backups_dir = db_path.parent().unwrap_or_else(|| std::path::Path::new(".")).join("backups");
+    if let Err(e) = std::fs::create_dir_all(&backups_dir) {
         return Err(format!("Failed to create safety backups directory: {}", e));
     }
 
