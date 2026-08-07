@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/api";
 import { Save, Truck, Loader2 } from "lucide-react";
 
 export default function DeliverySettingsSection() {

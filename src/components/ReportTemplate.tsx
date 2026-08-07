@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatCurrency } from '../lib/utils';
 
 interface DetailedOrder {
     id: number;
@@ -97,16 +98,16 @@ export const ReportTemplate = React.forwardRef<HTMLDivElement, ReportTemplatePro
           <div className="grid grid-cols-3 gap-4 mb-4">
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
               <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-1">Total Revenue</p>
-              <p className="text-2xl font-bold text-slate-900">Rs. {report.total_revenue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
+              <p className="text-2xl font-bold text-slate-900">{formatCurrency(report.total_revenue)}</p>
             </div>
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
               <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-1">Total Expenses</p>
-              <p className="text-2xl font-bold text-slate-900">Rs. {report.total_expenses.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
+              <p className="text-2xl font-bold text-slate-900">{formatCurrency(report.total_expenses)}</p>
             </div>
             <div className={`p-4 rounded-xl border ${report.net_profit >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
               <p className={`text-xs uppercase tracking-wider font-semibold mb-1 ${report.net_profit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>Net Profit</p>
               <p className={`text-2xl font-bold ${report.net_profit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                {report.net_profit < 0 ? '-' : ''}Rs. {Math.abs(report.net_profit).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                {formatCurrency(report.net_profit)}
               </p>
             </div>
           </div>
@@ -117,7 +118,7 @@ export const ReportTemplate = React.forwardRef<HTMLDivElement, ReportTemplatePro
             </div>
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
               <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-1">Avg Order Value</p>
-              <p className="text-xl font-bold text-slate-900">Rs. {report.avg_order_value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
+              <p className="text-xl font-bold text-slate-900">{formatCurrency(report.avg_order_value)}</p>
             </div>
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
               <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-1">Profit Margin</p>
@@ -143,7 +144,7 @@ export const ReportTemplate = React.forwardRef<HTMLDivElement, ReportTemplatePro
                   <tr key={idx} className="text-slate-800">
                     <td className="p-3 font-medium">{item.name}</td>
                     <td className="p-3 text-right">{item.quantity}</td>
-                    <td className="p-3 text-right font-medium">Rs. {item.revenue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                    <td className="p-3 text-right font-medium">{formatCurrency(item.revenue)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -168,7 +169,7 @@ export const ReportTemplate = React.forwardRef<HTMLDivElement, ReportTemplatePro
                 {report.expenses_by_category.map((cat, idx) => (
                   <tr key={idx} className="text-slate-800">
                     <td className="p-3 font-medium">{cat.name}</td>
-                    <td className="p-3 text-right font-medium">Rs. {cat.value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                    <td className="p-3 text-right font-medium">{formatCurrency(cat.value)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -197,10 +198,10 @@ export const ReportTemplate = React.forwardRef<HTMLDivElement, ReportTemplatePro
                   return (
                     <tr key={idx} className="text-slate-800">
                       <td className="p-3 font-medium">{trend.date}</td>
-                      <td className="p-3 text-right">Rs. {trend.sales.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                      <td className="p-3 text-right">Rs. {trend.expenses.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                      <td className="p-3 text-right">{formatCurrency(trend.sales)}</td>
+                      <td className="p-3 text-right">{formatCurrency(trend.expenses)}</td>
                       <td className={`p-3 text-right font-bold ${dailyNet >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                        Rs. {dailyNet.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                        {formatCurrency(dailyNet)}
                       </td>
                     </tr>
                   );
@@ -235,7 +236,7 @@ export const ReportTemplate = React.forwardRef<HTMLDivElement, ReportTemplatePro
                     <td className="p-3 text-slate-600">{order.table_number}</td>
                     <td className="p-3 text-slate-600">{order.cashier || '-'}</td>
                     <td className="p-3 text-slate-600">{order.status}</td>
-                    <td className="p-3 text-right font-medium">Rs. {order.total.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                    <td className="p-3 text-right font-medium">{formatCurrency(order.total)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -266,7 +267,7 @@ export const ReportTemplate = React.forwardRef<HTMLDivElement, ReportTemplatePro
                     <td className="p-3 text-slate-600">{expense.date}</td>
                     <td className="p-3 text-slate-600">{expense.category}</td>
                     <td className="p-3 text-slate-600">{expense.note || '-'}</td>
-                    <td className="p-3 text-right font-medium">Rs. {expense.amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                    <td className="p-3 text-right font-medium">{formatCurrency(expense.amount)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -295,7 +296,7 @@ export const ReportTemplate = React.forwardRef<HTMLDivElement, ReportTemplatePro
                     <td className="p-3 font-medium">#{payout.id}</td>
                     <td className="p-3 text-slate-600">{payout.date}</td>
                     <td className="p-3 text-slate-600">{payout.staff_name}</td>
-                    <td className="p-3 text-right font-medium">Rs. {payout.amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                    <td className="p-3 text-right font-medium">{formatCurrency(payout.amount)}</td>
                   </tr>
                 ))}
               </tbody>

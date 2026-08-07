@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import SecuritySettingsSection from '../components/SecuritySettingsSection';
 import { User, Lock, Mail, Shield, CheckCircle2, AlertCircle, BadgeCheck } from 'lucide-react';
 
 export default function UserProfile() {
+  const { user, refresh } = useAuth();
+  const userRole = user?.role || "Unknown";
   const [currentUsername, setCurrentUsername] = useState("");
   
   const [newUsername, setNewUsername] = useState("");
@@ -18,15 +21,14 @@ export default function UserProfile() {
   const [displayName, setDisplayName] = useState("");
 
   const [targetRole, setTargetRole] = useState("");
-  const userRole = localStorage.getItem("userRole") || "Unknown";
 
   useEffect(() => {
-    const user = localStorage.getItem("userName") || localStorage.getItem("username") || "";
-    setCurrentUsername(user);
-    setNewUsername(user);
-    setTargetRole(localStorage.getItem("userRole") || "Unknown");
-    setDisplayName(localStorage.getItem("displayName") || "");
-  }, []);
+    if (!user) return;
+    setCurrentUsername(user.username);
+    setNewUsername(user.username);
+    setTargetRole(user.role);
+    setDisplayName(user.display_name || "");
+  }, [user]);
 
   useEffect(() => {
     if (userRole === "Admin" && newUsername && newUsername !== currentUsername) {
@@ -84,7 +86,7 @@ export default function UserProfile() {
         localStorage.setItem("username", newUsername); // set both for compatibility
         setCurrentUsername(newUsername);
       }
-      localStorage.setItem("displayName", displayName);
+      await refresh();
       
       // Clear password fields
       setCurrentPassword("");
@@ -99,12 +101,12 @@ export default function UserProfile() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
+    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
       <Sidebar activePage="profile" />
-      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors">
+      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors min-w-0">
         <Header title="User Profile" subtitle="Manage your account settings and security preferences." />
         
-        <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
+        <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto custom-scrollbar">
           <div className="max-w-4xl mx-auto">
             
             {message.text && (

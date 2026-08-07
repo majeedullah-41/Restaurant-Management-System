@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/api";
+import { formatCurrency } from "../lib/utils";
 import {
   Package, Plus, Minus, ShoppingCart, Trash2, Pencil, X, AlertTriangle,
   TrendingDown, Archive, ClipboardList, ChevronDown, Download
@@ -277,7 +278,7 @@ export default function Inventory() {
         note: purchaseNote.trim() || null,
       });
       const selectedItem = items.find(i => i.id === purchaseItemId);
-      setPurchaseSuccess(`Recorded: ${purchaseQty} ${selectedItem?.unit || ''} of ${selectedItem?.name || 'item'} purchased — Rs. ${parseFloat(purchaseCost).toFixed(2)} auto-logged to Expenses`);
+      setPurchaseSuccess(`Recorded: ${purchaseQty} ${selectedItem?.unit || ''} of ${selectedItem?.name || 'item'} purchased — ${formatCurrency(parseFloat(purchaseCost))} auto-logged to Expenses`);
       setPurchaseQty("");
       setPurchaseCost("");
       setPurchaseSupplier("");
@@ -315,7 +316,7 @@ export default function Inventory() {
   const labelClass = "block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2";
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden relative transition-colors">
+    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden relative transition-colors">
 
       {/* Error Toast */}
       {error && (
@@ -401,17 +402,17 @@ export default function Inventory() {
 
       <Sidebar activePage="inventory" />
 
-      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors">
+      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors min-w-0">
         <Header title="Inventory" subtitle="Track ingredients and supplies used & purchased." />
 
-        <div className="flex-1 p-8 overflow-y-auto">
+        <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto">
 
           {/* Summary Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             <SummaryCard icon={<Package size={28} />} label="Total Items" value={summary.total_items.toString()} color="blue" />
             <SummaryCard icon={<AlertTriangle size={28} />} label="Low Stock" value={summary.low_stock_count.toString()} color="amber" />
             <SummaryCard icon={<Archive size={28} />} label="Out of Stock" value={summary.out_of_stock_count.toString()} color="red" />
-            <SummaryCard icon={<ShoppingCart size={28} />} label="Purchases (Selected)" value={`Rs. ${summary.period_purchase_total.toFixed(0)}`} color="emerald" />
+            <SummaryCard icon={<ShoppingCart size={28} />} label="Purchases (Selected)" value={`${formatCurrency(summary.period_purchase_total)}`} color="emerald" />
           </div>
 
           {/* Tabs and Global Date Filter */}
@@ -619,7 +620,7 @@ export default function Inventory() {
                   </div>
                   {purchaseQty && purchaseCost && parseFloat(purchaseQty) > 0 && (
                     <div className="text-xs text-slate-500 dark:text-slate-400 -mt-2 px-1">
-                      Unit price: Rs. {(parseFloat(purchaseCost) / parseFloat(purchaseQty)).toFixed(2)} per unit
+                      Unit price: {formatCurrency((parseFloat(purchaseCost) / parseFloat(purchaseQty)))} per unit
                     </div>
                   )}
                   <div>
@@ -716,7 +717,7 @@ export default function Inventory() {
                             {t.quantity % 1 === 0 ? t.quantity : t.quantity.toFixed(2)} {t.item_unit}
                           </td>
                           <td className="py-4 px-6 text-sm font-bold text-slate-900 dark:text-white">
-                            {t.total_cost != null ? `Rs. ${t.total_cost.toFixed(2)}` : '—'}
+                            {t.total_cost != null ? `${formatCurrency(t.total_cost)}` : '—'}
                           </td>
                           <td className="py-4 px-6 text-sm text-slate-600 dark:text-slate-400">{t.supplier || '—'}</td>
                           <td className="py-4 px-6 text-sm text-slate-600 dark:text-slate-400">{t.note || '—'}</td>
@@ -826,7 +827,7 @@ function TodaysLog({ type, title, icon, color, dateRange }: { items: InventoryIt
                 <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
                   <td className="py-3 px-6 text-sm font-semibold text-slate-900 dark:text-white">{t.item_name}</td>
                   <td className="py-3 px-6 text-sm text-slate-700 dark:text-slate-300">{t.quantity % 1 === 0 ? t.quantity : t.quantity.toFixed(2)} {t.item_unit}</td>
-                  {type === 'purchase' && <td className="py-3 px-6 text-sm font-bold text-slate-900 dark:text-white">Rs. {t.total_cost?.toFixed(2)}</td>}
+                  {type === 'purchase' && <td className="py-3 px-6 text-sm font-bold text-slate-900 dark:text-white">{formatCurrency(t.total_cost ?? 0)}</td>}
                   {type === 'purchase' && <td className="py-3 px-6 text-sm text-slate-600 dark:text-slate-400">{t.supplier || '—'}</td>}
                   <td className="py-3 px-6 text-sm text-slate-500 dark:text-slate-400">{t.note || '—'}</td>
                 </tr>

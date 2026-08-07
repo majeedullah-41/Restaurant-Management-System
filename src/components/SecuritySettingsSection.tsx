@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { ShieldAlert, Save } from "lucide-react";
 
 export default function SecuritySettingsSection() {
+  const { user } = useAuth();
   const [question, setQuestion] = useState("What is your pet's name?");
   const [customQuestion, setCustomQuestion] = useState("");
   const [answer, setAnswer] = useState("");
@@ -17,11 +19,9 @@ export default function SecuritySettingsSection() {
   ];
 
   useEffect(() => {
-    // We get the username from localstorage to fetch current settings
-    const username = localStorage.getItem("userName") || localStorage.getItem("username");
-    if (!username) return;
+    if (!user?.username) return;
 
-    invoke("get_security_question", { username })
+    invoke("get_security_question", { username: user.username })
       .then((q: any) => {
         if (q) {
           if (commonQuestions.includes(q)) {
@@ -33,13 +33,13 @@ export default function SecuritySettingsSection() {
         }
       })
       .catch((e) => console.log("No security question set yet", e));
-  }, []);
+  }, [user?.username]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setMessage("");
 
-    const username = localStorage.getItem("userName") || localStorage.getItem("username");
+    const username = user?.username;
     if (!username) {
       setMessage("User not found in session. Please log out and log back in.");
       return;

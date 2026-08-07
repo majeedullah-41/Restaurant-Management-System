@@ -34,3 +34,8 @@ scripts/.keys/
 *.db-wal
 *.db-shm
 src-tauri/*.db*
+
+# Local dev/build artifacts
+msedgedriver.exe
+temp_srs.txt
+reports/

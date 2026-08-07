@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/api";
 import { Plus, Trash2, User, Phone, X, Award } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
+import { ConfirmModal } from "../components/ConfirmModal";
+import { AlertModal } from "../components/AlertModal";
 
 interface Customer {
   id: number;
@@ -16,6 +18,9 @@ export default function Customers() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+
+  const [addError, setAddError] = useState<string | null>(null);
+  const [deleteCustomerId, setDeleteCustomerId] = useState<number | null>(null);
 
   const loadCustomers = async () => {
     try {
@@ -41,22 +46,27 @@ export default function Customers() {
       loadCustomers();
     } catch (err) {
       console.error(err);
-      alert("Failed to add customer. Make sure the phone number is unique.");
+      setAddError("Failed to add customer. Make sure the phone number is unique.");
     }
   };
 
   const handleDeleteCustomer = async (id: number) => {
-    if (!window.confirm("Remove this customer from the database?")) return;
+    setDeleteCustomerId(id);
+  };
+
+  const confirmDeleteCustomer = async () => {
+    if (deleteCustomerId === null) return;
     try {
-      await invoke("delete_customer", { id });
+      await invoke("delete_customer", { id: deleteCustomerId });
       loadCustomers();
     } catch (err) {
       console.error(err);
     }
+    setDeleteCustomerId(null);
   };
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden relative transition-colors">
+    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden relative transition-colors">
       
       {isModalOpen && (
         <div className="absolute inset-0 bg-black/60 z-50 flex items-center justify-center backdrop-blur-sm">
@@ -91,10 +101,10 @@ export default function Customers() {
 
       <Sidebar activePage="customers" />
 
-      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors">
+      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors min-w-0">
         <Header title="Customer Database" subtitle="Track your regular diners and VIPs." />
 
-        <div className="flex-1 p-8 overflow-y-auto flex flex-col">
+        <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto flex flex-col">
           <div className="mb-6 flex justify-end shrink-0">
             <button 
               onClick={() => setIsModalOpen(true)}
@@ -146,6 +156,24 @@ export default function Customers() {
           </div>
         </div>
       </main>
+
+      <ConfirmModal
+        isOpen={deleteCustomerId !== null}
+        title="Delete Customer"
+        message="Remove this customer from the database?"
+        type="danger"
+        confirmText="Delete"
+        onConfirm={confirmDeleteCustomer}
+        onCancel={() => setDeleteCustomerId(null)}
+      />
+
+      <AlertModal
+        isOpen={addError !== null}
+        title="Error"
+        message={addError || ""}
+        type="danger"
+        onClose={() => setAddError(null)}
+      />
     </div>
   );
 }

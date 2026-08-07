@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatCurrency } from '../lib/utils';
 
 interface InventoryItem {
   id: number;
@@ -87,7 +88,7 @@ export const InventoryReportTemplate = React.forwardRef<HTMLDivElement, Inventor
             </div>
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
               <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-1">Purchases (Period)</p>
-              <p className="text-2xl font-bold text-emerald-700">Rs. {summary.period_purchase_total.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
+              <p className="text-2xl font-bold text-emerald-700">{formatCurrency(summary.period_purchase_total)}</p>
             </div>
           </div>
         </div>
@@ -167,7 +168,7 @@ export const InventoryReportTemplate = React.forwardRef<HTMLDivElement, Inventor
                     <td className="p-3 text-right">{tx.quantity} {tx.item_unit}</td>
                     <td className="p-3 text-right">
                       {tx.transaction_type === 'purchase' && tx.total_cost != null ? (
-                        <span className="text-emerald-700 font-medium">Rs. {tx.total_cost.toFixed(2)}</span>
+                        <span className="text-emerald-700 font-medium">{formatCurrency(tx.total_cost)}</span>
                       ) : (
                         <span className="text-slate-400">-</span>
                       )}

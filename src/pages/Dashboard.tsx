@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/api';
+import { formatCurrency } from '../lib/utils';
+import { useAuth } from '../lib/auth';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { DollarSign, TrendingDown, BarChart2, ShoppingBag, Plus } from "lucide-react";
 import Sidebar from "../components/Sidebar";
@@ -49,6 +51,7 @@ interface TodaySale {
 }
 
 export default function Dashboard() {
+  const { user } = useAuth();
   const [stats, setStats] = useState<DashboardStats>({
     total_revenue: 0,
     total_expenses: 0,
@@ -64,31 +67,40 @@ export default function Dashboard() {
   const [topSellingData, setTopSellingData] = useState<TopSellingItem[]>([]);
   const [recentExpensesData, setRecentExpensesData] = useState<Expense[]>([]);
   const [todaysSalesData, setTodaysSalesData] = useState<TodaySale[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const loadDashboardData = async () => {
       try {
-        const _stats = await invoke<DashboardStats>("get_dashboard_stats");
-        setStats(_stats);
-
-        const _revenue = await invoke<RevenueOverview[]>("get_revenue_overview");
-        setRevenueData(_revenue);
-        console.log("Revenue overview:", _revenue);
-
-        const _topItems = await invoke<TopSellingItem[]>("get_top_selling_items");
-        setTopSellingData(_topItems);
-        console.log("Top items:", _topItems);
-
-        const _recentExpenses = await invoke<Expense[]>("get_recent_expenses");
-        setRecentExpensesData(_recentExpenses);
-        console.log("Recent expenses:", _recentExpenses);
+        setLoading(true);
+        setError(null);
 
         const clientDate = new Date().toISOString().split('T')[0];
-        const _sales = await invoke<TodaySale[]>("get_todays_sales", { clientDate });
+        const [
+          _stats,
+          _revenue,
+          _topItems,
+          _recentExpenses,
+          _sales,
+        ] = await Promise.all([
+          invoke<DashboardStats>("get_dashboard_stats"),
+          invoke<RevenueOverview[]>("get_revenue_overview"),
+          invoke<TopSellingItem[]>("get_top_selling_items"),
+          invoke<Expense[]>("get_recent_expenses"),
+          invoke<TodaySale[]>("get_todays_sales", { clientDate }),
+        ]);
+
+        setStats(_stats);
+        setRevenueData(_revenue);
+        setTopSellingData(_topItems);
+        setRecentExpensesData(_recentExpenses);
         setTodaysSalesData(_sales);
-        console.log("Todays sales:", _sales);
       } catch (err) {
         console.error("Failed to load dashboard data:", err);
+        setError("Failed to load dashboard data. Please try again.");
+      } finally {
+        setLoading(false);
       }
     };
 
@@ -105,25 +117,38 @@ export default function Dashboard() {
   const currentMonthName = new Date().toLocaleString('default', { month: 'long' }).toUpperCase();
 
   return (
-    <div className="flex h-screen w-full bg-[#F8F9FF] dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
+    <div className="flex h-[100dvh] w-full bg-[#F8F9FF] dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
       <Sidebar activePage="dashboard" />
 
-      <main className="flex-1 flex flex-col z-10 overflow-hidden transition-colors">
-        <Header title="Dashboard" subtitle="Welcome back, Admin!" />
+      <main className="flex-1 flex flex-col z-10 overflow-hidden transition-colors min-w-0">
+        <Header title="Dashboard" subtitle={`Welcome back, ${user?.display_name || 'Admin'}!`} />
 
-        <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
+        <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto custom-scrollbar">
+          {error && (
+            <div className="mb-6 p-4 rounded-[8px] bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm font-semibold">
+              {error}
+            </div>
+          )}
+
+          {loading ? (
+            <div className="flex h-full min-h-[400px] flex-col items-center justify-center gap-4">
+              <div className="w-10 h-10 border-4 border-blue-200 dark:border-blue-800 border-t-blue-600 dark:border-t-blue-500 rounded-full animate-spin" />
+              <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">Loading dashboard data...</p>
+            </div>
+          ) : (
+          <>
           {/* Summary Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-            <SummaryCard title="TODAY'S SALES" amount={`Rs.\n${stats.today_revenue.toLocaleString(undefined, {minimumFractionDigits: 2})}`} progress={Math.min(100, (stats.today_revenue / 10000) * 100)} trend="Today" color="blue" icon={<DollarSign size={20} strokeWidth={2.5} />} />
-            <SummaryCard title="TODAY'S EXPENSES" amount={`Rs.\n${stats.today_expenses.toLocaleString(undefined, {minimumFractionDigits: 2})}`} progress={Math.min(100, (stats.today_expenses / 5000) * 100)} trend="Today" color="red" icon={<TrendingDown size={20} strokeWidth={2.5} />} />
-            <SummaryCard title="TODAY'S PROFIT" amount={`Rs.\n${stats.today_profit.toLocaleString(undefined, {minimumFractionDigits: 2})}`} progress={Math.min(100, (Math.max(0, stats.today_profit) / 5000) * 100)} trend="Today" color="amber" icon={<BarChart2 size={20} strokeWidth={2.5} />} />
+            <SummaryCard title="TODAY'S SALES" amount={formatCurrency(stats.today_revenue, { newline: true })} progress={Math.min(100, (stats.today_revenue / 10000) * 100)} trend="Today" color="blue" icon={<DollarSign size={20} strokeWidth={2.5} />} />
+            <SummaryCard title="TODAY'S EXPENSES" amount={formatCurrency(stats.today_expenses, { newline: true })} progress={Math.min(100, (stats.today_expenses / 5000) * 100)} trend="Today" color="red" icon={<TrendingDown size={20} strokeWidth={2.5} />} />
+            <SummaryCard title="TODAY'S PROFIT" amount={formatCurrency(stats.today_profit, { newline: true })} progress={Math.min(100, (Math.max(0, stats.today_profit) / 5000) * 100)} trend="Today" color="amber" icon={<BarChart2 size={20} strokeWidth={2.5} />} />
             <SummaryCard title="TODAY'S ORDERS" amount={stats.today_orders.toString()} progress={Math.min(100, (stats.today_orders / 20) * 100)} trend="Today" color="emerald" icon={<ShoppingBag size={20} strokeWidth={2.5} />} />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-            <SummaryCard title={`${currentMonthName} REVENUE`} amount={`Rs.\n${stats.total_revenue.toLocaleString(undefined, {minimumFractionDigits: 2})}`} progress={Math.min(100, (stats.total_revenue / 50000) * 100)} trend="This Month" color="blue" icon={<DollarSign size={20} strokeWidth={2.5} />} />
-            <SummaryCard title={`${currentMonthName} EXPENSES`} amount={`Rs.\n${stats.total_expenses.toLocaleString(undefined, {minimumFractionDigits: 2})}`} progress={Math.min(100, (stats.total_expenses / 20000) * 100)} trend="This Month" color="red" icon={<TrendingDown size={20} strokeWidth={2.5} />} />
-            <SummaryCard title={`${currentMonthName} PROFIT`} amount={`Rs.\n${stats.net_profit.toLocaleString(undefined, {minimumFractionDigits: 2})}`} progress={Math.min(100, (Math.max(0, stats.net_profit) / 30000) * 100)} trend="This Month" color="amber" icon={<BarChart2 size={20} strokeWidth={2.5} />} />
+            <SummaryCard title={`${currentMonthName} REVENUE`} amount={formatCurrency(stats.total_revenue, { newline: true })} progress={Math.min(100, (stats.total_revenue / 50000) * 100)} trend="This Month" color="blue" icon={<DollarSign size={20} strokeWidth={2.5} />} />
+            <SummaryCard title={`${currentMonthName} EXPENSES`} amount={formatCurrency(stats.total_expenses, { newline: true })} progress={Math.min(100, (stats.total_expenses / 20000) * 100)} trend="This Month" color="red" icon={<TrendingDown size={20} strokeWidth={2.5} />} />
+            <SummaryCard title={`${currentMonthName} PROFIT`} amount={formatCurrency(stats.net_profit, { newline: true })} progress={Math.min(100, (Math.max(0, stats.net_profit) / 30000) * 100)} trend="This Month" color="amber" icon={<BarChart2 size={20} strokeWidth={2.5} />} />
             <SummaryCard title={`${currentMonthName} ORDERS`} amount={stats.total_orders.toString()} progress={Math.min(100, (stats.total_orders / 50) * 100)} trend="This Month" color="emerald" icon={<ShoppingBag size={20} strokeWidth={2.5} />} />
           </div>
 
@@ -234,7 +259,7 @@ export default function Dashboard() {
                         <td className="py-4 font-medium text-slate-600 dark:text-slate-400 text-center">{sale.table}</td>
                         <td className="py-4 font-medium text-slate-600 dark:text-slate-400 text-center">{sale.customer}</td>
                         <td className="py-4 font-medium text-slate-600 dark:text-slate-400 text-center">{sale.time}</td>
-                        <td className="py-4 font-bold text-slate-900 dark:text-white text-center">Rs. {sale.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                        <td className="py-4 font-bold text-slate-900 dark:text-white text-center">{formatCurrency(sale.amount)}</td>
                         <td className="py-4 text-center">
                           <span className={`px-2.5 py-1 rounded-[8px] text-xs font-bold ${
                             sale.status === 'Closed' ? 'text-emerald-600' : 'text-orange-600'
@@ -263,7 +288,7 @@ export default function Dashboard() {
                          <p className="text-[13px] text-slate-500 font-medium">{item.sold} Sales</p>
                       </div>
                       <div className="flex flex-col items-end">
-                         <span className="font-bold text-[15px] text-slate-900 mb-1">Rs. {item.revenue.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                         <span className="font-bold text-[15px] text-slate-900 mb-1">{formatCurrency(item.revenue)}</span>
                          <div className="w-16 h-1 rounded-full bg-slate-200">
                            <div className="h-full rounded-full bg-emerald-600" style={{width: `${Math.min(100, (item.sold / (topSellingData[0]?.sold || 1)) * 100)}%`}}></div>
                          </div>
@@ -297,15 +322,15 @@ export default function Dashboard() {
                        <p className="text-[12px] text-slate-500 font-medium">{exp.date}</p>
                      </div>
                    </div>
-                   <div className="text-right">
-                     <p className="font-bold text-[13px] text-red-500">Rs.</p>
-                     <p className="font-bold text-[15px] text-red-500 leading-none">{exp.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
-                   </div>
+                    <div className="text-right">
+                      <p className="font-bold text-[13px] text-red-500 leading-none">{formatCurrency(exp.amount)}</p>
+                    </div>
                  </div>
-               ))}
-             </div>
-          </div>
-          
+                ))}
+              </div>
+            </div>
+          </>
+          )}
         </div>
       </main>
     </div>

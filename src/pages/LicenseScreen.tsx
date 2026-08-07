@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/api";
 import { ShieldCheck, Key, Copy, CheckCircle, XCircle, AlertTriangle, Loader2 } from "lucide-react";
 
 interface LicenseStatus {
@@ -68,7 +68,7 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
   const isExpired = status && !status.valid && status.days_remaining !== null && status.days_remaining < 0;
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 dark:bg-slate-950 transition-colors p-4 md:p-8 lg:p-12">
+    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 transition-colors p-4 md:p-8 lg:p-12">
       <div className="flex flex-col md:flex-row w-full h-full bg-white dark:bg-[#0B1120] rounded-3xl overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 transition-colors">
         
         {/* LEFT SIDE: Shield Branding */}

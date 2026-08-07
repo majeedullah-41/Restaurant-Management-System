@@ -1,5 +1,7 @@
-import { useState, useEffect, useMemo } from "react";
-import { invoke } from "@tauri-apps/api/core";
+﻿import { useState, useEffect, useMemo } from "react";
+import { invoke } from "../lib/api";
+import { formatCurrency } from "../lib/utils";
+import { useAuth } from "../lib/auth";
 
 
 import Sidebar from "../components/Sidebar";
@@ -24,8 +26,9 @@ interface DetailedTableStatus { id: number; table_number: number; status: string
 export default function POS() {
   const { tableId, orderId: routeOrderId } = useParams();
   const navigate = useNavigate();
-  const role = localStorage.getItem("userRole") || "Admin";
-  const displayName = localStorage.getItem("displayName") || role;
+  const { user } = useAuth();
+  const role = user?.role || "Admin";
+  const displayName = user?.display_name || role;
   const basePath = role === "Cashier" ? "/cashier" : "/admin";
   const returnUrl = role === "Cashier" ? "/cashier/dashboard" : "/admin/dashboard";
 
@@ -37,6 +40,7 @@ export default function POS() {
   const [serviceChargeRate, setServiceChargeRate] = useState<number>(0);
   const [serviceChargeTypes, setServiceChargeTypes] = useState<string[]>(["Dine-in"]);
   const [tables, setTables] = useState<DetailedTableStatus[]>([]);
+  const [posLoading, setPosLoading] = useState(true);
 
   // State
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
@@ -72,6 +76,12 @@ export default function POS() {
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+
+  // Order Taker State
+  const [orderTakers, setOrderTakers] = useState<any[]>([]);
+  const [orderTakerId, setOrderTakerId] = useState<number | null>(null);
+  const [orderTakerName, setOrderTakerName] = useState<string | null>(null);
+
 
   // Modal State
   const [confirmModal, setConfirmModal] = useState<{isOpen: boolean; title: string; message: string; onConfirm: () => void}>({
@@ -168,7 +178,11 @@ export default function POS() {
   // Load everything on mount
   useEffect(() => {
     async function initializePOS() {
-      if (!tableId) return;
+      if (!tableId) {
+        setPosLoading(false);
+        return;
+      }
+      setPosLoading(true);
       try {
         const cats: any = await invoke("get_categories");
         const items: any = await invoke("get_menu_items");
@@ -190,6 +204,9 @@ export default function POS() {
         const delSettings: any = await invoke("get_delivery_settings");
         setDeliverySettings(delSettings);
 
+        const takers: any = await invoke("get_order_takers");
+        setOrderTakers(takers);
+
         const history: any = await invoke("get_order_history");
         setPendingOrders(history.filter((o: any) => o.status === 'Open' || o.status === 'Placed'));
 
@@ -203,9 +220,11 @@ export default function POS() {
           setDeliveryPhone(order.customer_phone || "");
           setDeliveryAddress(order.delivery_address || "");
           setSelectedCustomerId(order.customer_id || null);
+          setOrderTakerId(order.order_taker_id || null);
+          setOrderTakerName(order.order_taker_name || null);
           refreshCart(order.id);
         } else if (tableId !== "0") {
-          // Physical table lookup — get active order (do not create one automatically)
+          // Physical table lookup â€” get active order (do not create one automatically)
           const order: any = await invoke("get_active_order", { tableNumber: parseInt(tableId!) });
           if (order) {
             setOrderId(order.id);
@@ -214,6 +233,8 @@ export default function POS() {
             setDeliveryPhone(order.customer_phone || "");
             setDeliveryAddress(order.delivery_address || "");
             setSelectedCustomerId(order.customer_id || null);
+            setOrderTakerId(order.order_taker_id || null);
+            setOrderTakerName(order.order_taker_name || null);
             refreshCart(order.id);
           } else {
             // No active order exists for this table
@@ -224,6 +245,8 @@ export default function POS() {
             setDeliveryPhone("");
             setDeliveryAddress("");
             setSelectedCustomerId(null);
+            setOrderTakerId(null);
+            setOrderTakerName(null);
             setAmountReceived("");
           }
         } else if (tableId === "0" && (!routeOrderId || routeOrderId === 'new')) {
@@ -235,12 +258,16 @@ export default function POS() {
           setDeliveryPhone("");
           setDeliveryAddress("");
           setSelectedCustomerId(null);
+          setOrderTakerId(null);
+          setOrderTakerName(null);
           setAmountReceived("");
         }
       } catch (err) {
         console.error("Failed to initialize POS", err);
         showAlert("Initialization Error", String(err));
         navigate(returnUrl);
+      } finally {
+        setPosLoading(false);
       }
     }
     initializePOS();
@@ -313,6 +340,13 @@ export default function POS() {
     }
 
     const activeOrderId = currentOrderId as number;
+    if (orderTakerId && orderTakerName) {
+      try {
+        await invoke("update_order_taker", { orderId: activeOrderId, staffId: orderTakerId, staffName: orderTakerName });
+      } catch (err) {
+        console.error("Failed to set order taker", err);
+      }
+    }
     try {
       await invoke("add_item_to_order", {
         orderId: activeOrderId,
@@ -350,6 +384,25 @@ export default function POS() {
     }
   };
 
+  const handleOrderTakerChange = async (staffId: string) => {
+    const taker = orderTakers.find((t: any) => t.id === Number(staffId));
+    setOrderTakerId(taker ? taker.id : null);
+    setOrderTakerName(taker ? taker.name : null);
+    if (orderId) {
+      try {
+        await invoke("update_order_taker", {
+          orderId,
+          staffId: taker ? taker.id : null,
+          staffName: taker ? taker.name : null
+        });
+      } catch (err) {
+        console.error("Failed to update order taker", err);
+      }
+    }
+  };
+
+
+
   const padBoth = (left: string, right: string, width = 32) => {
     const spaces = width - left.length - right.length;
     return left + " ".repeat(Math.max(1, spaces)) + right;
@@ -383,6 +436,7 @@ export default function POS() {
       text += `Address: ${deliveryAddress || 'N/A'}\n`;
     }
     text += `Cashier: ${displayName}\n`;
+    if (orderTakerName) text += `Order Taker: ${orderTakerName}\n`;
     text += "-".repeat(32) + "\n";
     
     text += padBoth("Item", "Qty   Total") + "\n";
@@ -391,21 +445,21 @@ export default function POS() {
     cartItems.forEach(item => {
       const name = item.name.length > 15 ? item.name.substring(0, 15) : item.name.padEnd(15, ' ');
       const qty = item.quantity.toString().padStart(3, ' ');
-      const total = (item.price * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2 });
+      const total = formatCurrency(item.price * item.quantity);
       text += padBoth(`${name}  ${qty}`, total) + "\n";
     });
     
     text += "-".repeat(32) + "\n";
-    text += padBoth("Subtotal", `Rs. ${subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
-    if (effectiveDiscount > 0) text += padBoth("Discount", `- Rs. ${effectiveDiscount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
-    text += padBoth(`Tax (${taxRate}%)`, `Rs. ${taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
-    if (serviceChargeAmount > 0) text += padBoth(`Service Charge (${serviceChargeRate}%)`, `Rs. ${serviceChargeAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
-    if (deliveryFee > 0) text += padBoth("Delivery Fee", `Rs. ${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+    text += padBoth("Subtotal", `${formatCurrency(subtotal)}`) + "\n";
+    if (effectiveDiscount > 0) text += padBoth("Discount", `- ${formatCurrency(effectiveDiscount)}`) + "\n";
+    text += padBoth(`Tax (${taxRate}%)`, `${formatCurrency(taxAmount)}`) + "\n";
+    if (serviceChargeAmount > 0) text += padBoth(`Service Charge (${serviceChargeRate}%)`, `${formatCurrency(serviceChargeAmount)}`) + "\n";
+    if (deliveryFee > 0) text += padBoth("Delivery Fee", `${formatCurrency(deliveryFee)}`) + "\n";
     text += "=".repeat(32) + "\n";
-    text += padBoth("GRAND TOTAL", `Rs. ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+    text += padBoth("GRAND TOTAL", `${formatCurrency(totalAmount)}`) + "\n";
     text += "-".repeat(32) + "\n";
-    text += padBoth("Cash Received", `Rs. ${amtReceived.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
-    text += padBoth("Change Due", `Rs. ${changeAmt.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n\n";
+    text += padBoth("Cash Received", `${formatCurrency(amtReceived)}`) + "\n";
+    text += padBoth("Change Due", `${formatCurrency(changeAmt)}`) + "\n\n";
     
     text += center("Thank you for your visit!") + "\n";
     text += center("Software by EagleNest Creations") + "\n";
@@ -503,6 +557,7 @@ export default function POS() {
     text += `Type: ${orderType}\n`;
     if (orderType === "Dine-in") text += `Table: ${tableStr}\n`;
     text += `Cashier: ${displayName}\n`;
+    if (orderTakerName) text += `Order Taker: ${orderTakerName}\n`;
     text += "-".repeat(32) + "\n";
     
     text += padBoth("Item", "Qty") + "\n";
@@ -583,7 +638,7 @@ export default function POS() {
                     <span className="text-xs text-slate-500">{po.order_type === 'Delivery' ? 'Delivery Pending' : po.status}</span>
                   </div>
                   <div className="text-right">
-                    <p className="text-sm font-bold text-slate-900 dark:text-white">Rs. {po.total_price.toFixed(0)}</p>
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">{formatCurrency(po.total_price)}</p>
                     <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">{po.status}</p>
                   </div>
                 </button>
@@ -597,7 +652,7 @@ export default function POS() {
 
   // Render the Menu Overlay
   const renderMenuGrid = () => (
-    <div className="flex-1 flex flex-col p-6 animate-in fade-in zoom-in-95 duration-200">
+    <div className="flex-1 flex flex-col min-w-0 overflow-hidden p-4 md:p-6 animate-in fade-in zoom-in-95 duration-200">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center space-x-6">
           <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Select Items</h2>
@@ -644,8 +699,8 @@ export default function POS() {
       </div>
 
       {/* Items Grid */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
-        <div className="grid grid-cols-3 xl:grid-cols-4 gap-4">
+      <div className="flex-1 min-h-0 min-w-0 overflow-y-auto custom-scrollbar pr-2 pb-10">
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-4">
           {menuItems
             .filter(item => selectedCategoryId === null || item.category_id === selectedCategoryId)
             .map(item => (
@@ -668,7 +723,7 @@ export default function POS() {
                 </div>
                 <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200 mb-1 leading-tight">{item.name}</h3>
                 {item.is_active ? (
-                  <span className="text-blue-600 dark:text-blue-400 font-bold text-sm">Rs. {item.price}</span>
+                  <span className="text-blue-600 dark:text-blue-400 font-bold text-sm">{formatCurrency(item.price)}</span>
                 ) : (
                   <span className="text-red-500 font-bold text-[10px] uppercase tracking-wider mt-1 border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded-full">Out of Stock</span>
                 )}
@@ -682,7 +737,7 @@ export default function POS() {
 
   // Render Payment View (The main image reference)
   const renderPaymentView = () => (
-    <div className="flex-1 flex flex-col p-6 animate-in fade-in zoom-in-95 duration-200 overflow-y-auto custom-scrollbar">
+    <div className="flex-1 flex flex-col min-w-0 p-4 md:p-6 animate-in fade-in zoom-in-95 duration-200 overflow-y-auto custom-scrollbar">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center space-x-6">
           <div>
@@ -702,14 +757,14 @@ export default function POS() {
       </div>
 
       {/* Top 4 Cards */}
-      <div className="grid grid-cols-2 gap-4 mb-6 shrink-0">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6 shrink-0">
         <div className="bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex items-center justify-between shadow-sm">
           <div className="w-12 h-12 rounded-lg bg-[#E6F0FF] dark:bg-blue-900/20 flex items-center justify-center text-[#0066FF] dark:text-blue-400 shrink-0">
             <FileText size={20} strokeWidth={2.5} />
           </div>
           <div className="text-right">
             <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1 uppercase tracking-wider">Total Amount</p>
-            <p className="text-2xl font-black text-slate-900 dark:text-white leading-none">Rs. {subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+            <p className="text-2xl font-black text-slate-900 dark:text-white leading-none">{formatCurrency(subtotal)}</p>
           </div>
         </div>
         <div className="bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex items-center justify-between shadow-sm">
@@ -733,7 +788,7 @@ export default function POS() {
           </div>
           <div className="text-right">
             <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1 uppercase tracking-wider">Tax ({taxRate}%)</p>
-            <p className="text-2xl font-black text-[#D97706]">Rs. {taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+            <p className="text-2xl font-black text-[#D97706]">{formatCurrency(taxAmount)}</p>
           </div>
         </div>
         <div className="bg-[#0066FF] border border-[#0052CC] rounded-xl p-5 flex items-center justify-between shadow-md">
@@ -742,7 +797,7 @@ export default function POS() {
           </div>
           <div className="text-right">
             <p className="text-[11px] font-bold text-blue-100 mb-1 uppercase tracking-wider">Payable Amount</p>
-            <p className="text-2xl font-black text-white leading-none">Rs. {totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+            <p className="text-2xl font-black text-white leading-none">{formatCurrency(totalAmount)}</p>
           </div>
         </div>
       </div>
@@ -752,7 +807,7 @@ export default function POS() {
           Receive Cash
         </h3>
 
-        <div className="grid grid-cols-3 gap-6 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-6">
           <div>
             <div className="bg-[#EEF2FF] dark:bg-blue-900/10 rounded-lg p-4 border border-[#C7D2FE] dark:border-blue-900/30 focus-within:border-[#0066FF] transition-colors relative mb-2">
               <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Payable Amount</p>
@@ -804,7 +859,7 @@ export default function POS() {
           </div>
           <div className="bg-[#D1FAE5] dark:bg-emerald-900/10 rounded-lg p-4 border border-[#A7F3D0] dark:border-emerald-900/30 h-[78px]">
             <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Change Amount</p>
-            <div className="text-xl font-bold text-[#059669]">Rs. {changeAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            <div className="text-xl font-bold text-[#059669]">{formatCurrency(changeAmount)}</div>
           </div>
         </div>
       </div>
@@ -817,7 +872,7 @@ export default function POS() {
         <button
           id="complete-payment-btn"
           onClick={handleCheckout}
-          disabled={!orderId || cartItems.length === 0}
+          disabled={posLoading || !orderId || cartItems.length === 0}
           className="flex-1 bg-[#0066FF] hover:bg-[#0052CC] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl py-4 flex items-center justify-center font-bold transition-colors relative shadow-md"
         >
           <span className="absolute right-4 text-xs bg-[#0047B3] px-2 py-1 rounded">F9</span>
@@ -828,10 +883,10 @@ export default function POS() {
   );
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 dark:bg-[#0F172A] text-slate-700 dark:text-slate-300 font-sans overflow-hidden">
+    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-[#0F172A] text-slate-700 dark:text-slate-300 font-sans overflow-hidden">
       <Sidebar activePage="pos" />
 
-      <div className="flex-1 flex flex-col overflow-hidden relative">
+      <div className="flex-1 flex flex-col overflow-hidden relative min-w-0">
         {/* Top Header */}
         <Header 
           title="Point of Sale" 
@@ -840,7 +895,14 @@ export default function POS() {
 
         {/* Main Workspace */}
         <div className="flex-1 flex overflow-hidden">
-          {view === 'payment' ? renderPaymentView() : renderMenuGrid()}
+          {posLoading ? (
+            <div className="flex-1 flex flex-col items-center justify-center gap-4 min-h-[400px]">
+              <div className="w-10 h-10 border-4 border-blue-200 dark:border-blue-800 border-t-blue-600 dark:border-t-blue-500 rounded-full animate-spin" />
+              <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">Loading menu and order data...</p>
+            </div>
+          ) : (
+            view === 'payment' ? renderPaymentView() : renderMenuGrid()
+          )}
 
           {/* Right Sidebar - Order Summary */}
           <aside className="w-[360px] bg-white dark:bg-[#0B1120] border-l border-slate-200 dark:border-slate-800 flex flex-col z-10 shrink-0">
@@ -907,6 +969,29 @@ export default function POS() {
                         <p className="text-sm font-bold text-slate-900 dark:text-white">Dine-in Customer</p>
                       )}
                       <p className="text-[10px] text-slate-500">Order #{orderId || '...'} • Type: {orderType}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center space-x-2 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-slate-500 dark:text-slate-400 shrink-0">
+                        <Users size={14} />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Order Taker</p>
+                        <select
+                          value={orderTakerId ? String(orderTakerId) : ""}
+                          onChange={(e) => handleOrderTakerChange(e.target.value)}
+                          className="w-full bg-transparent text-xs font-bold text-slate-900 dark:text-white focus:outline-none cursor-pointer appearance-none pr-5"
+                        >
+                          <option value="">None</option>
+                          {orderTakers.map((t: any) => (
+                            <option key={t.id} value={t.id} className="text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-800">
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   </div>
 
@@ -1042,8 +1127,8 @@ export default function POS() {
                       <span className="text-slate-900 dark:text-white truncate">{item.name}</span>
                     </div>
                     <div className="col-span-2 text-center text-slate-900 dark:text-white font-medium">{item.quantity}</div>
-                    <div className="col-span-2 text-right text-slate-500 dark:text-slate-400">{(item.price).toLocaleString()}</div>
-                    <div className="col-span-2 text-right text-slate-900 dark:text-white font-bold">{(item.price * item.quantity).toLocaleString()}</div>
+                    <div className="col-span-2 text-right text-slate-500 dark:text-slate-400">{formatCurrency(item.price)}</div>
+                    <div className="col-span-2 text-right text-slate-900 dark:text-white font-bold">{formatCurrency(item.price * item.quantity)}</div>
 
                     <div className="col-span-1 flex justify-center">
                       <button
@@ -1069,26 +1154,26 @@ export default function POS() {
               <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800">
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-slate-500 dark:text-slate-400">Subtotal</span>
-                  <span className="text-slate-900 dark:text-white">Rs. {subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span className="text-slate-900 dark:text-white">{formatCurrency(subtotal)}</span>
                 </div>
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-slate-500 dark:text-slate-400">Discount</span>
-                  <span className="text-emerald-500">- Rs. {effectiveDiscount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span className="text-emerald-500">- {formatCurrency(effectiveDiscount)}</span>
                 </div>
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-slate-500 dark:text-slate-400">Tax ({taxRate}%)</span>
-                  <span className="text-slate-900 dark:text-white">Rs. {taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span className="text-slate-900 dark:text-white">{formatCurrency(taxAmount)}</span>
                 </div>
                 {serviceChargeAmount > 0 && (
                   <div className="flex justify-between items-center text-sm">
                     <span className="text-slate-500 dark:text-slate-400">Service Charge ({serviceChargeRate}%)</span>
-                    <span className="text-slate-900 dark:text-white">Rs. {serviceChargeAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    <span className="text-slate-900 dark:text-white">{formatCurrency(serviceChargeAmount)}</span>
                   </div>
                 )}
                 {deliveryFee > 0 && (
                   <div className="flex justify-between items-center text-sm">
                     <span className="text-slate-500 dark:text-slate-400">Delivery Fee</span>
-                    <span className="text-slate-900 dark:text-white">Rs. {deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    <span className="text-slate-900 dark:text-white">{formatCurrency(deliveryFee)}</span>
                   </div>
                 )}
               </div>
@@ -1105,7 +1190,7 @@ export default function POS() {
 
               <div className="flex justify-between items-end mb-5">
                 <span className="text-sm font-bold text-slate-700 dark:text-slate-300">Total Amount</span>
-                <span className="text-2xl font-bold text-slate-900 dark:text-white">Rs. {totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                <span className="text-2xl font-bold text-slate-900 dark:text-white">{formatCurrency(totalAmount)}</span>
               </div>
 
               <div className="grid grid-cols-3 gap-2 mt-4">
@@ -1166,5 +1251,6 @@ export default function POS() {
     </div>
   );
 }
+
 
 

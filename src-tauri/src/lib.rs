@@ -1,14 +1,58 @@
 #![allow(dead_code, unused_variables, non_snake_case)]
 
+pub mod auth;
 pub mod db;
 pub mod license;
+
+/// Authorizes an IPC invoke before it is dispatched to the registered command.
+///
+/// Public commands pass through untouched. Every other command requires a valid
+/// server-side session token (injected automatically by the frontend invoke
+/// wrapper). Admin-only commands additionally require the session role to be
+/// `Admin`. This centralizes authentication so individual commands never trust
+/// client-supplied roles or localStorage values.
+fn authorize(command: &str, payload: &tauri::ipc::InvokeBody) -> Result<(), String> {
+    if auth::PUBLIC_COMMANDS.contains(&command) {
+        return Ok(());
+    }
+
+    let token = auth::token_from_payload(payload)
+        .ok_or_else(|| "Not authenticated. Please log in.".to_string())?;
+
+    let session = auth::validate(&token)?;
+
+    if auth::ADMIN_COMMANDS.contains(&command) && session.role != "Admin" {
+        return Err("Admin access required for this action.".to_string());
+    }
+
+    Ok(())
+}
+
+/// Wraps the generated invoke handler with a central authentication gate.
+fn wrap_handler<R: tauri::Runtime, H>(inner: H) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static
+where
+    H: Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
+{
+    move |invoke| {
+        let command = invoke.message.command().to_string();
+        let payload = invoke.message.payload().clone();
+
+        match authorize(&command, &payload) {
+            Ok(()) => inner(invoke),
+            Err(message) => {
+                invoke.resolver.reject(message);
+                true
+            }
+        }
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(wrap_handler(tauri::generate_handler![
     db::pay_advance_salary,
     db::get_user_role_by_username,
     db::get_restaurant_name,
@@ -39,6 +83,7 @@ pub fn run() {
     db::get_order_items,
     db::add_item_to_order,
     db::remove_item_from_order,
+    db::delete_item_from_order,
     db::checkout_order,
     db::get_order_history,
     db::update_order_discount,
@@ -47,7 +92,10 @@ pub fn run() {
     db::reassign_order_table,
     db::update_order_type,
     db::update_order_delivery_draft,
+    db::get_order_takers,
+    db::update_order_taker,
     db::get_staff,
+    db::get_staff_dropdown,
     db::add_staff,
     db::delete_staff,
     db::update_staff,
@@ -112,8 +160,11 @@ pub fn run() {
     license::get_machine_hwid,
     license::check_license_status,
     license::activate_license,
-    license::get_license_info
-])
+    license::get_license_info,
+
+    db::get_current_session,
+    db::logout
+]))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

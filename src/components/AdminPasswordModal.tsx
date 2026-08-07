@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/api";
 import { Lock, AlertCircle, X, Check } from "lucide-react";
 
 interface AdminPasswordModalProps {
@@ -29,7 +29,10 @@ export default function AdminPasswordModal({
     setLoading(true);
 
     try {
-      await invoke("verify_admin_password", { password });
+      const verified = await invoke<boolean>("verify_admin_password", { password });
+      if (!verified) {
+        throw new Error("Incorrect Admin Password");
+      }
       setPassword("");
       setError(null);
       setLoading(false);

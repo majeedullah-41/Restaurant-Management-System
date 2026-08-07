@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/api";
+import { formatCurrency } from "../lib/utils";
 import { 
   Search, Plus, X, Pencil, Trash2, Filter, 
   Pizza, Coffee, Sandwich, Beef, Croissant, Utensils
 } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
+import { ConfirmModal } from "../components/ConfirmModal";
 
 // Mock Icons for Categories (since DB just has names)
 const getCategoryIcon = (name: string) => {
@@ -38,6 +40,9 @@ export default function MenuManagement() {
   const [priceSort, setPriceSort] = useState<'none' | 'asc' | 'desc'>('none');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
 
+  const [deleteCatId, setDeleteCatId] = useState<number | null>(null);
+  const [deleteItemId, setDeleteItemId] = useState<number | null>(null);
+
   async function loadData() {
     try {
       const fetchedCategories: any = await invoke("get_categories");
@@ -64,12 +69,17 @@ export default function MenuManagement() {
   };
 
   const handleDeleteCategory = async (id: number) => {
-    if (!window.confirm("Delete category?")) return;
+    setDeleteCatId(id);
+  };
+
+  const confirmDeleteCategory = async () => {
+    if (deleteCatId === null) return;
     try {
-      await invoke("delete_category", { id });
-      if (selectedCategoryId === id) setSelectedCategoryId(null);
+      await invoke("delete_category", { id: deleteCatId });
+      if (selectedCategoryId === deleteCatId) setSelectedCategoryId(null);
       loadData();
     } catch (err) { console.error(err); }
+    setDeleteCatId(null);
   };
 
   // --- MENU ITEM HANDLERS ---
@@ -85,11 +95,16 @@ export default function MenuManagement() {
   };
 
   const handleDeleteItem = async (id: number) => {
-    if (!window.confirm("Delete item?")) return;
+    setDeleteItemId(id);
+  };
+
+  const confirmDeleteItem = async () => {
+    if (deleteItemId === null) return;
     try {
-      await invoke("delete_menu_item", { id });
+      await invoke("delete_menu_item", { id: deleteItemId });
       loadData();
     } catch (err) { console.error(err); }
+    setDeleteItemId(null);
   };
 
   const handleToggleStatus = async (id: number, currentStatus: boolean) => {
@@ -122,7 +137,7 @@ export default function MenuManagement() {
   });
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
+    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
       
       {/* MODALS */}
       {isCatModalOpen && (
@@ -193,10 +208,10 @@ export default function MenuManagement() {
       <Sidebar activePage="menu" />
 
       {/* MAIN CONTENT */}
-      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 transition-colors">
+      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 transition-colors min-w-0">
         <Header title="Menu Management" subtitle="Manage your restaurant's food, drinks, and categories." />
 
-        <div className="flex-1 p-8 overflow-hidden flex gap-8">
+        <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-hidden flex gap-8">
           
           {/* LEFT COLUMN: Categories */}
           <div className="w-80 flex flex-col">
@@ -401,7 +416,7 @@ export default function MenuManagement() {
                             </span>
                           </td>
                           <td className="px-6 py-4">
-                            <span className="font-bold text-slate-900 dark:text-white">Rs. {item.price.toFixed(2)}</span>
+                            <span className="font-bold text-slate-900 dark:text-white">{formatCurrency(item.price)}</span>
                           </td>
                           <td className="px-6 py-4 text-center">
                             <div 
@@ -432,6 +447,26 @@ export default function MenuManagement() {
           
         </div>
       </main>
+
+      <ConfirmModal
+        isOpen={deleteCatId !== null}
+        title="Delete Category"
+        message="Delete category?"
+        type="danger"
+        confirmText="Delete"
+        onConfirm={confirmDeleteCategory}
+        onCancel={() => setDeleteCatId(null)}
+      />
+
+      <ConfirmModal
+        isOpen={deleteItemId !== null}
+        title="Delete Item"
+        message="Delete item?"
+        type="danger"
+        confirmText="Delete"
+        onConfirm={confirmDeleteItem}
+        onCancel={() => setDeleteItemId(null)}
+      />
     </div>
   );
 }

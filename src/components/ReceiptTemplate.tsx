@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatCurrency } from '../lib/utils';
 
 interface ReceiptItem {
   id: number;
@@ -81,7 +82,7 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
             <div key={i} className="flex justify-between">
               <span className="w-1/2 break-words pr-2">{item.name}</span>
               <span className="w-1/6 text-center">{item.quantity}</span>
-              <span className="w-1/3 text-right">{(item.price * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+              <span className="w-1/3 text-right">{formatCurrency(item.price * item.quantity)}</span>
             </div>
           ))}
         </div>
@@ -92,22 +93,22 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
         <div className="space-y-1 mb-4">
           <div className="flex justify-between">
             <span>Subtotal</span>
-            <span>Rs. {props.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <span>{formatCurrency(props.subtotal)}</span>
           </div>
           {props.discount > 0 && (
             <div className="flex justify-between text-gray-700">
               <span>Discount</span>
-              <span>- Rs. {props.discount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+              <span>- {formatCurrency(props.discount)}</span>
             </div>
           )}
           <div className="flex justify-between text-gray-700">
             <span>Tax ({props.taxRate}%)</span>
-            <span>Rs. {props.taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <span>{formatCurrency(props.taxAmount)}</span>
           </div>
           <div className="border-b border-gray-300 my-2"></div>
           <div className="flex justify-between font-bold text-sm">
             <span>Grand Total</span>
-            <span>Rs. {props.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <span>{formatCurrency(props.totalAmount)}</span>
           </div>
         </div>
 
@@ -117,11 +118,11 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
         <div className="space-y-1 mb-6">
           <div className="flex justify-between">
             <span>Cash Received</span>
-            <span>Rs. {props.amountReceived.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <span>{formatCurrency(props.amountReceived)}</span>
           </div>
           <div className="flex justify-between">
             <span>Change Due</span>
-            <span>Rs. {props.changeAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <span>{formatCurrency(props.changeAmount)}</span>
           </div>
         </div>
 

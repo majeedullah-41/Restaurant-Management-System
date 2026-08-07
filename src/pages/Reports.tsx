@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/api';
+import { formatCurrency } from '../lib/utils';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import { 
@@ -102,12 +103,12 @@ export default function Reports() {
   });
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
+    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
       <Sidebar activePage="reports" />
-      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors">
+      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors min-w-0">
         <Header title="Reports & Analytics" subtitle="Detailed breakdown of all restaurant activities." />
 
-        <div className="flex-1 px-6 pt-4 pb-5 overflow-y-auto custom-scrollbar">
+        <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto custom-scrollbar">
           {/* Toolbar */}
           <div className="flex items-center justify-between mb-6 shrink-0">
             <DateFilterToolbar 
@@ -137,7 +138,7 @@ export default function Reports() {
                   <div className="flex justify-between items-start mb-4">
                     <div>
                       <p className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Total Revenue</p>
-                      <h3 className="text-3xl font-bold text-slate-900 dark:text-white">Rs. {report.total_revenue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</h3>
+                      <h3 className="text-3xl font-bold text-slate-900 dark:text-white">{formatCurrency(report.total_revenue)}</h3>
                     </div>
                     <div className="p-3 bg-blue-500/10 rounded-xl text-blue-500 dark:text-blue-400">
                       <DollarSign size={24} />
@@ -149,7 +150,7 @@ export default function Reports() {
                   <div className="flex justify-between items-start mb-4">
                     <div>
                       <p className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Total Expenses</p>
-                      <h3 className="text-3xl font-bold text-slate-900 dark:text-white">Rs. {report.total_expenses.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</h3>
+                      <h3 className="text-3xl font-bold text-slate-900 dark:text-white">{formatCurrency(report.total_expenses)}</h3>
                     </div>
                     <div className="p-3 bg-red-500/10 rounded-xl text-red-500 dark:text-red-400">
                       <Receipt size={24} />
@@ -162,7 +163,7 @@ export default function Reports() {
                     <div>
                       <p className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Net Profit</p>
                       <h3 className={`text-3xl font-bold ${report.net_profit >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-red-500 dark:text-red-400'}`}>
-                        {report.net_profit < 0 ? '-' : ''}Rs. {Math.abs(report.net_profit).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                        {formatCurrency(report.net_profit)}
                       </h3>
                     </div>
                     <div className={`p-3 rounded-xl ${report.net_profit >= 0 ? 'bg-emerald-500/10 text-emerald-500 dark:text-emerald-400' : 'bg-red-500/10 text-red-500 dark:text-red-400'}`}>
@@ -183,7 +184,7 @@ export default function Reports() {
                   <div className="flex justify-between items-start mb-4">
                      <div>
                       <p className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Avg Order Value</p>
-                      <h3 className="text-3xl font-bold text-slate-900 dark:text-white">Rs. {report.avg_order_value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</h3>
+                      <h3 className="text-3xl font-bold text-slate-900 dark:text-white">{formatCurrency(report.avg_order_value)}</h3>
                     </div>
                   </div>
                 </div>
@@ -220,7 +221,7 @@ export default function Reports() {
                           <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                             <td className="px-6 py-4 text-slate-900 dark:text-white font-medium">{item.name}</td>
                             <td className="px-6 py-4 text-right text-slate-500 dark:text-slate-400">{item.quantity}</td>
-                            <td className="px-6 py-4 text-right font-medium text-emerald-500 dark:text-emerald-400">Rs. {item.revenue.toFixed(2)}</td>
+                            <td className="px-6 py-4 text-right font-medium text-emerald-500 dark:text-emerald-400">{formatCurrency(item.revenue)}</td>
                           </tr>
                         )) : (
                           <tr><td colSpan={3} className="px-6 py-8 text-center text-slate-500">No items sold in this period.</td></tr>
@@ -247,7 +248,7 @@ export default function Reports() {
                         {report.expenses_by_category.length > 0 ? report.expenses_by_category.map((cat, idx) => (
                           <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                             <td className="px-6 py-4 text-slate-900 dark:text-white font-medium">{cat.name}</td>
-                            <td className="px-6 py-4 text-right font-medium text-red-500 dark:text-red-400">Rs. {cat.value.toFixed(2)}</td>
+                            <td className="px-6 py-4 text-right font-medium text-red-500 dark:text-red-400">{formatCurrency(cat.value)}</td>
                           </tr>
                         )) : (
                           <tr><td colSpan={2} className="px-6 py-8 text-center text-slate-500">No expenses in this period.</td></tr>
@@ -278,10 +279,10 @@ export default function Reports() {
                           return (
                             <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                               <td className="px-6 py-4 text-slate-900 dark:text-white font-medium">{trend.date}</td>
-                              <td className="px-6 py-4 text-right font-medium text-emerald-500 dark:text-emerald-400">Rs. {trend.sales.toFixed(2)}</td>
-                              <td className="px-6 py-4 text-right font-medium text-red-500 dark:text-red-400">Rs. {trend.expenses.toFixed(2)}</td>
+                              <td className="px-6 py-4 text-right font-medium text-emerald-500 dark:text-emerald-400">{formatCurrency(trend.sales)}</td>
+                              <td className="px-6 py-4 text-right font-medium text-red-500 dark:text-red-400">{formatCurrency(trend.expenses)}</td>
                               <td className={`px-6 py-4 text-right font-bold ${dailyNet >= 0 ? 'text-emerald-600 dark:text-emerald-500' : 'text-red-600 dark:text-red-500'}`}>
-                                Rs. {dailyNet.toFixed(2)}
+                                {formatCurrency(dailyNet)}
                               </td>
                             </tr>
                           );
@@ -326,7 +327,7 @@ export default function Reports() {
                                 {order.status}
                               </span>
                             </td>
-                            <td className="px-6 py-4 text-right font-medium text-slate-900 dark:text-white">Rs. {order.total.toFixed(2)}</td>
+                            <td className="px-6 py-4 text-right font-medium text-slate-900 dark:text-white">{formatCurrency(order.total)}</td>
                           </tr>
                         )) : (
                           <tr><td colSpan={6} className="px-6 py-8 text-center text-slate-500">No orders found for this period.</td></tr>
@@ -359,7 +360,7 @@ export default function Reports() {
                             <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{expense.date}</td>
                             <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{expense.category}</td>
                             <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{expense.note || '-'}</td>
-                            <td className="px-6 py-4 text-right font-medium text-red-500 dark:text-red-400">Rs. {expense.amount.toFixed(2)}</td>
+                            <td className="px-6 py-4 text-right font-medium text-red-500 dark:text-red-400">{formatCurrency(expense.amount)}</td>
                           </tr>
                         )) : (
                           <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-500">No expenses found for this period.</td></tr>
@@ -390,7 +391,7 @@ export default function Reports() {
                             <td className="px-6 py-4 text-slate-900 dark:text-white">#{payout.id}</td>
                             <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{payout.date}</td>
                             <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{payout.staff_name}</td>
-                            <td className="px-6 py-4 text-right font-medium text-red-500 dark:text-red-400">Rs. {payout.amount.toFixed(2)}</td>
+                            <td className="px-6 py-4 text-right font-medium text-red-500 dark:text-red-400">{formatCurrency(payout.amount)}</td>
                           </tr>
                         )) : (
                           <tr><td colSpan={4} className="px-6 py-8 text-center text-slate-500">No payouts found for this period.</td></tr>

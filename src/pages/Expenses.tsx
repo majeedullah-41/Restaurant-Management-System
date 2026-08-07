@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/api";
+import { formatCurrency } from "../lib/utils";
 import { Plus, Trash2, Landmark, X } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
@@ -100,7 +101,7 @@ export default function Expenses() {
   const totalExpenses = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden relative transition-colors">
+    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden relative transition-colors">
       
       {/* Add Expense Modal */}
       {isExpenseModalOpen && (
@@ -161,10 +162,10 @@ export default function Expenses() {
 
       <Sidebar activePage="expenses" />
 
-      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors">
+      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors min-w-0">
         <Header title="Expenses" subtitle="Track money leaving the restaurant." />
 
-        <div className="flex-1 p-8 overflow-y-auto">
+        <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-6 mb-8">
             {/* Summary Card */}
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 flex items-center space-x-6 w-fit min-w-[300px] shadow-sm shrink-0">
@@ -173,7 +174,7 @@ export default function Expenses() {
                </div>
                <div>
                  <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Total Outflow</p>
-                 <h2 className="text-3xl font-bold text-slate-900 dark:text-white mt-1">Rs. {totalExpenses.toFixed(2)}</h2>
+                 <h2 className="text-3xl font-bold text-slate-900 dark:text-white mt-1">{formatCurrency(totalExpenses)}</h2>
                </div>
             </div>
 
@@ -226,7 +227,7 @@ export default function Expenses() {
                         </span>
                       </td>
                       <td className="py-4 px-6 text-sm text-slate-600 dark:text-slate-400">{expense.note || "-"}</td>
-                      <td className="py-4 px-6 text-sm font-bold text-slate-900 dark:text-white">Rs. {expense.amount.toFixed(2)}</td>
+                      <td className="py-4 px-6 text-sm font-bold text-slate-900 dark:text-white">{formatCurrency(expense.amount)}</td>
                       <td className="py-4 px-6 text-right">
                         <button 
                           onClick={() => handleDeleteExpense(expense.id)}

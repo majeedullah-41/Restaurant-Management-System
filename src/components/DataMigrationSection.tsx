@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/api";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ShieldAlert, FileSpreadsheet, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
 import AdminPasswordModal from "./AdminPasswordModal";
@@ -101,7 +101,7 @@ export default function DataMigrationSection() {
           </div>
           <p className="text-sm font-medium">{successMsg}</p>
           <div className="p-3 bg-white dark:bg-slate-900 rounded-lg text-xs font-bold text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
-            ⚠️ IMPORTANT: Please close and reopen the app now to reload all application state with your imported data.
+            ⚠️ Your imported data is now active. If any open page still shows the old data, restart the app to refresh all views.
           </div>
         </div>
       ) : (

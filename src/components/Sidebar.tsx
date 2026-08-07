@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { 
   LayoutDashboard, MenuSquare, ClipboardList, Table2, Users, 
   UserSquare2, CalendarClock, Receipt, BarChart3, 
@@ -9,10 +10,12 @@ import {
 
 export default function Sidebar({ activePage }: { activePage: string }) {
   const navigate = useNavigate();
-  const role = localStorage.getItem("userRole") || "Admin";
+  const { user, logout } = useAuth();
+  const role = user?.role || "Admin";
 
   const [restaurantName, setRestaurantName] = useState("RESTAURANT");
   const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
   const navRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -34,7 +37,13 @@ export default function Sidebar({ activePage }: { activePage: string }) {
       navRef.current.scrollTop = parseInt(savedScroll, 10);
     }
     
-    return () => window.removeEventListener("settingsUpdated", handleSettingsUpdated);
+    const handleToggleSidebar = () => setIsOpen(prev => !prev);
+    window.addEventListener('toggleMobileSidebar', handleToggleSidebar);
+    
+    return () => {
+      window.removeEventListener("settingsUpdated", handleSettingsUpdated);
+      window.removeEventListener('toggleMobileSidebar', handleToggleSidebar);
+    };
   }, []);
 
   const handleScroll = (e: React.UIEvent<HTMLElement>) => {
@@ -42,7 +51,16 @@ export default function Sidebar({ activePage }: { activePage: string }) {
   };
 
   return (
-    <aside className="w-[260px] bg-white dark:bg-[#0B1120] border-r border-slate-200 dark:border-slate-800 flex flex-col z-10 shrink-0 transition-colors">
+    <>
+      {/* Mobile Backdrop */}
+      {isOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/50 dark:bg-slate-900/80 z-40 lg:hidden backdrop-blur-sm"
+          onClick={() => setIsOpen(false)}
+        />
+      )}
+      
+      <aside className={`fixed inset-y-0 left-0 z-50 w-[260px] bg-white dark:bg-[#0B1120] border-r border-slate-200 dark:border-slate-800 flex flex-col transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
       <div className="min-h-[5rem] py-4 flex items-center px-6 border-b border-slate-200 dark:border-slate-800">
         {restaurantLogo && (
           <div className="h-10 w-10 shrink-0 bg-white rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden mr-3">
@@ -103,12 +121,13 @@ export default function Sidebar({ activePage }: { activePage: string }) {
       </nav>
 
       <div className="p-4 border-t border-slate-200 dark:border-slate-800 space-y-2">
-        <button onClick={() => navigate('/')} className="flex items-center space-x-3 text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 w-full px-3 py-2 rounded-lg transition-colors">
+        <button onClick={async () => { await logout(); navigate('/', { replace: true }); }} className="flex items-center space-x-3 text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 w-full px-3 py-2 rounded-lg transition-colors">
           <LogOut size={20} />
           <span>Logout</span>
         </button>
       </div>
     </aside>
+    </>
   );
 }
 

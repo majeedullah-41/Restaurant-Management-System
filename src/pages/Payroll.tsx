@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/api';
+import { formatCurrency } from '../lib/utils';
+import { useAuth } from '../lib/auth';
 import { CreditCard, Calendar, CheckCircle, Clock, History, Users, Check, AlertCircle, ArrowUpRight, ArrowDownRight, Banknote, Printer } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import DateFilterToolbar from '../components/DateFilterToolbar';
+import { AlertModal } from '../components/AlertModal';
 
 interface PayrollSummary {
   staff_id: number;
@@ -33,6 +36,7 @@ interface InlinePayrollRow extends PayrollSummary {
 }
 
 export default function Payroll() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'process' | 'history'>('process');
   
   const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
@@ -44,6 +48,7 @@ export default function Payroll() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
 
   const [showAdvanceModal, setShowAdvanceModal] = useState(false);
   const [advanceStaffId, setAdvanceStaffId] = useState<number | ''>('');
@@ -174,7 +179,8 @@ export default function Payroll() {
         staff_name: r.name,
       }));
       
-      const msg = await invoke<string>('process_batch_payout', { payouts, payoutDate: dateRange.endDate });
+      const payoutDate = dateRange.endDate || new Date().toISOString().split('T')[0];
+      const msg = await invoke<string>('process_batch_payout', { payouts, payoutDate });
       setSuccessMsg(msg);
       
       // Refresh data — pass dates explicitly to avoid stale closure
@@ -233,7 +239,7 @@ export default function Payroll() {
   const handlePrintSlip = async (payout: SalaryPayout) => {
     try {
       const restName = await invoke<string>('get_restaurant_name').catch(() => 'Restaurant');
-      const adminName = localStorage.getItem('displayName') || localStorage.getItem('userRole') || 'Admin';
+      const adminName = user?.display_name || user?.role || 'Admin';
       const baseAmount = payout.amount - payout.bonus + payout.deduction + payout.advance_deduction;
 
       const padBoth = (left: string, right: string, width = 32) => {
@@ -257,20 +263,20 @@ export default function Payroll() {
       text += `Admin: ${adminName}\n`;
       text += "-".repeat(32) + "\n";
       
-      text += padBoth("Base Salary", `Rs. ${baseAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+      text += padBoth("Base Salary", `${formatCurrency(baseAmount)}`) + "\n";
       
       if (payout.bonus > 0) {
-        text += padBoth("Bonus/Allowances", `+ Rs. ${payout.bonus.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+        text += padBoth("Bonus/Allowances", `+ ${formatCurrency(payout.bonus)}`) + "\n";
       }
       if (payout.deduction > 0) {
-        text += padBoth("Deductions", `- Rs. ${payout.deduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+        text += padBoth("Deductions", `- ${formatCurrency(payout.deduction)}`) + "\n";
       }
       if (payout.advance_deduction > 0) {
-        text += padBoth("Advance Ded.", `- Rs. ${payout.advance_deduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+        text += padBoth("Advance Ded.", `- ${formatCurrency(payout.advance_deduction)}`) + "\n";
       }
       
       text += "=".repeat(32) + "\n";
-      text += padBoth("NET PAY", `Rs. ${payout.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+      text += padBoth("NET PAY", `${formatCurrency(payout.amount)}`) + "\n";
       text += "-".repeat(32) + "\n\n";
       
       text += "Employer Sig: _________________\n\n";
@@ -279,7 +285,7 @@ export default function Payroll() {
       await invoke("print_receipt_text", { text });
     } catch (e) {
       console.error('Failed to print slip:', e);
-      alert('Failed to print slip: ' + e);
+      setPrintError('Failed to print slip: ' + e);
     }
   };
 
@@ -302,13 +308,13 @@ export default function Payroll() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
+    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
       <Sidebar activePage="payroll" />
       
-      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors">
+      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors min-w-0">
         <Header title="Payroll Management" subtitle="Review staff attendance and process monthly salary payouts." />
 
-        <div className="flex-1 px-6 pt-4 pb-5 overflow-y-auto flex flex-col">
+        <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto flex flex-col">
 
           {/* Large Stats Grid */}
           {activeTab === 'process' && !loading && (
@@ -319,15 +325,15 @@ export default function Payroll() {
               </div>
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 flex flex-col justify-center shadow-sm">
                 <p className="text-slate-500 dark:text-slate-400 font-semibold text-sm mb-1 truncate">Total Payroll</p>
-                <p className="text-3xl font-bold text-slate-900 dark:text-white whitespace-nowrap">Rs. {totalPayrollAmount.toLocaleString()}</p>
+                <p className="text-3xl font-bold text-slate-900 dark:text-white whitespace-nowrap">{formatCurrency(totalPayrollAmount)}</p>
               </div>
               <div className="bg-emerald-50 dark:bg-emerald-600/10 border border-emerald-200 dark:border-emerald-500/20 rounded-2xl p-6 flex flex-col justify-center shadow-sm">
                 <p className="text-emerald-600 dark:text-emerald-400 font-semibold text-sm mb-1 truncate">Paid Out</p>
-                <p className="text-3xl font-black text-emerald-700 dark:text-emerald-500 whitespace-nowrap">Rs. {totalPaidAmount.toLocaleString()}</p>
+                <p className="text-3xl font-black text-emerald-700 dark:text-emerald-500 whitespace-nowrap">{formatCurrency(totalPaidAmount)}</p>
               </div>
               <div className="bg-amber-50 dark:bg-amber-600/10 border border-amber-200 dark:border-amber-500/20 rounded-2xl p-6 flex flex-col justify-center shadow-sm">
                 <p className="text-amber-600 dark:text-amber-400 font-semibold text-sm mb-1 truncate">Pending</p>
-                <p className="text-3xl font-black text-amber-700 dark:text-amber-500 whitespace-nowrap">Rs. {totalPendingAmount.toLocaleString()}</p>
+                <p className="text-3xl font-black text-amber-700 dark:text-amber-500 whitespace-nowrap">{formatCurrency(totalPendingAmount)}</p>
               </div>
             </div>
           )}
@@ -497,7 +503,7 @@ export default function Payroll() {
                             </td>
                             <td className="py-3 px-2 text-right">
                               <span className={`font-mono font-bold text-sm whitespace-nowrap ${row.isPaid ? 'text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
-                                Rs. {row.base_salary.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                {formatCurrency(row.base_salary)}
                               </span>
                             </td>
                             <td className="py-3 px-2 text-center" onClick={(e) => e.stopPropagation()}>
@@ -529,7 +535,7 @@ export default function Payroll() {
                             <td className="py-3 px-2 text-center">
                               {row.advance_balance > 0 ? (
                                 <span className="font-mono text-sm font-semibold text-orange-600 dark:text-orange-400 whitespace-nowrap">
-                                  - Rs. {row.advance_balance}
+                                  {formatCurrency(-row.advance_balance)}
                                 </span>
                               ) : (
                                 <span className="text-slate-300 dark:text-slate-600 font-mono text-sm">—</span>
@@ -541,7 +547,7 @@ export default function Payroll() {
                                   ? 'text-slate-400 dark:text-slate-500' 
                                   : 'text-slate-900 dark:text-white'
                               }`}>
-                                Rs. {netPay.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                {formatCurrency(netPay)}
                               </span>
                             </td>
                             <td className="py-3 px-3 text-center">
@@ -616,14 +622,14 @@ export default function Payroll() {
                             {/* Base */}
                             <div>
                               <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider leading-tight">Base</p>
-                              <p className="text-sm font-mono font-bold text-slate-700 dark:text-slate-300">Rs. {totalBase.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                              <p className="text-sm font-mono font-bold text-slate-700 dark:text-slate-300">{formatCurrency(totalBase)}</p>
                             </div>
 
                             {/* Bonus */}
                             {totalBonus > 0 && (
                               <div>
                                 <p className="text-[10px] text-emerald-500 font-semibold uppercase tracking-wider leading-tight">+ Bonus</p>
-                                <p className="text-sm font-mono font-bold text-emerald-600 dark:text-emerald-400">Rs. {totalBonus.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                                <p className="text-sm font-mono font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(totalBonus)}</p>
                               </div>
                             )}
 
@@ -631,7 +637,7 @@ export default function Payroll() {
                             {totalDeduction > 0 && (
                               <div>
                                 <p className="text-[10px] text-red-500 font-semibold uppercase tracking-wider leading-tight">− Deduction</p>
-                                <p className="text-sm font-mono font-bold text-red-600 dark:text-red-400">Rs. {totalDeduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                                <p className="text-sm font-mono font-bold text-red-600 dark:text-red-400">{formatCurrency(totalDeduction)}</p>
                               </div>
                             )}
 
@@ -639,7 +645,7 @@ export default function Payroll() {
                             {totalAdvanceDeduction > 0 && (
                               <div>
                                 <p className="text-[10px] text-orange-500 font-semibold uppercase tracking-wider leading-tight">− Advance</p>
-                                <p className="text-sm font-mono font-bold text-orange-600 dark:text-orange-400">Rs. {totalAdvanceDeduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                                <p className="text-sm font-mono font-bold text-orange-600 dark:text-orange-400">{formatCurrency(totalAdvanceDeduction)}</p>
                               </div>
                             )}
 
@@ -648,7 +654,7 @@ export default function Payroll() {
                             {/* Net */}
                             <div className="bg-emerald-50 dark:bg-emerald-500/10 px-4 py-2 rounded-xl border border-emerald-200 dark:border-emerald-500/20">
                               <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold uppercase tracking-wider leading-tight">Net Payout</p>
-                              <p className="text-base font-mono font-extrabold text-emerald-700 dark:text-emerald-400">Rs. {totalNet.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                              <p className="text-base font-mono font-extrabold text-emerald-700 dark:text-emerald-400">{formatCurrency(totalNet)}</p>
                             </div>
                           </>
                         )}
@@ -706,14 +712,14 @@ export default function Payroll() {
                           </td>
                           <td className="py-3 px-4 text-right">
                             <span className="font-mono font-medium text-sm text-slate-600 dark:text-400 whitespace-nowrap">
-                              Rs. {baseAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              {formatCurrency(baseAmount)}
                             </span>
                           </td>
                           <td className="py-3 px-4 text-right">
                             {record.bonus > 0 ? (
                               <span className="inline-flex items-center space-x-1 font-mono font-semibold text-sm text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                                 <ArrowUpRight size={12} />
-                                <span>Rs. {record.bonus.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                <span>{formatCurrency(record.bonus)}</span>
                               </span>
                             ) : (
                               <span className="text-slate-300 dark:text-slate-600 font-mono text-sm">—</span>
@@ -723,7 +729,7 @@ export default function Payroll() {
                             {record.deduction > 0 ? (
                               <span className="inline-flex items-center space-x-1 font-mono font-semibold text-sm text-red-500 dark:text-red-400 whitespace-nowrap">
                                 <ArrowDownRight size={12} />
-                                <span>Rs. {record.deduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                <span>{formatCurrency(record.deduction)}</span>
                               </span>
                             ) : (
                               <span className="text-slate-300 dark:text-slate-600 font-mono text-sm">—</span>
@@ -732,7 +738,7 @@ export default function Payroll() {
                           <td className="py-3 px-4 text-right">
                             {record.advance_deduction > 0 ? (
                               <span className="inline-flex items-center space-x-1 font-mono font-semibold text-sm text-orange-500 dark:text-orange-400 whitespace-nowrap">
-                                <span>Rs. {record.advance_deduction.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                <span>{formatCurrency(record.advance_deduction)}</span>
                               </span>
                             ) : (
                               <span className="text-slate-300 dark:text-slate-600 font-mono text-sm">—</span>
@@ -740,7 +746,7 @@ export default function Payroll() {
                           </td>
                           <td className="py-3 px-4 text-right">
                             <span className="font-mono font-extrabold text-base text-slate-900 dark:text-white whitespace-nowrap">
-                              Rs. {record.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              {formatCurrency(record.amount)}
                             </span>
                           </td>
                           <td className="py-3 px-4 text-center">
@@ -807,7 +813,7 @@ export default function Payroll() {
                 <div className="h-px bg-slate-200 dark:bg-slate-700/50 w-full" />
                 <div className="flex justify-between items-center">
                   <span className="text-slate-500 dark:text-slate-400 text-sm font-medium">Total payout</span>
-                  <span className="font-bold text-emerald-600 dark:text-emerald-400 text-lg">Rs. {totalNet.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400 text-lg">{formatCurrency(totalNet)}</span>
                 </div>
               </div>
 
@@ -915,6 +921,14 @@ export default function Payroll() {
           </div>
         </div>
       )}
+
+      <AlertModal
+        isOpen={printError !== null}
+        title="Print Failed"
+        message={printError || ""}
+        type="danger"
+        onClose={() => setPrintError(null)}
+      />
     </div>
   );
 }

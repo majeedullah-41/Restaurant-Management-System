@@ -2,9 +2,10 @@
 
 use rusqlite::{Connection, Result};
 use serde::Serialize;
-use std::sync::{Mutex, OnceLock};
+use std::ops::{Deref, DerefMut};
+use std::sync::{Mutex, MutexGuard};
 
-static DB_CONN: OnceLock<Mutex<Connection>> = OnceLock::new();
+static DB_CONN: Mutex<Option<Connection>> = Mutex::new(None);
 
 pub fn get_default_db_path() -> String {
     if let Ok(p) = std::env::var("DB_PATH") {
@@ -35,13 +36,83 @@ pub fn init_shared_connection() {
          PRAGMA busy_timeout = 5000;"
     );
 
-    DB_CONN.set(Mutex::new(conn)).unwrap_or_else(|_| panic!("DB_CONN already initialized"));
+    let mut slot = DB_CONN.lock().unwrap_or_else(|e| panic!("DB_CONN poisoned: {}", e));
+    *slot = Some(conn);
 }
 
-pub fn get_conn() -> std::result::Result<std::sync::MutexGuard<'static, Connection>, String> {
-    DB_CONN.get()
-        .ok_or_else(|| "Database connection not initialized".to_string())
-        .and_then(|mutex| mutex.lock().map_err(|e| format!("Failed to lock DB connection: {}", e)))
+/// A locked handle to the shared database connection.
+///
+/// Derefs to `rusqlite::Connection`, so call sites that used
+/// `MutexGuard<'static, Connection>` keep working unchanged. The connection
+/// itself lives inside `DB_CONN` and can be swapped out by
+/// [`reopen_connection`], which a backup import relies on.
+pub struct ConnGuard(MutexGuard<'static, Option<Connection>>);
+
+impl ConnGuard {
+    fn connection(&self) -> &Connection {
+        self.0.as_ref().expect("Database connection not initialized")
+    }
+
+    fn connection_mut(&mut self) -> &mut Connection {
+        self.0.as_mut().expect("Database connection not initialized")
+    }
+}
+
+impl Deref for ConnGuard {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        self.connection()
+    }
+}
+
+impl DerefMut for ConnGuard {
+    fn deref_mut(&mut self) -> &mut Connection {
+        self.connection_mut()
+    }
+}
+
+pub fn get_conn() -> std::result::Result<ConnGuard, String> {
+    let guard = DB_CONN
+        .lock()
+        .map_err(|e| format!("Failed to lock DB connection: {}", e))?;
+    if guard.is_none() {
+        return Err("Database connection not initialized".to_string());
+    }
+    Ok(ConnGuard(guard))
+}
+
+/// Closes the current connection, removes any stale WAL/SHM sidecar files from
+/// the previous database, and reopens the database at the default path.
+///
+/// This is required after a backup import swaps the underlying database file:
+/// the old connection would keep serving the pre-import data, and an orphaned
+/// `-wal`/`-shm` from the old database would otherwise be replayed on top of
+/// the imported file, silently restoring the old data.
+pub fn reopen_connection() -> std::result::Result<(), String> {
+    let mut slot = DB_CONN
+        .lock()
+        .map_err(|e| format!("Failed to lock DB connection: {}", e))?;
+
+    // Close the old connection and release its file handles before touching
+    // the -wal/-shm sidecars (required on Windows to delete them).
+    drop(slot.take());
+
+    let db_path = get_default_db_path();
+    let _ = std::fs::remove_file(format!("{}-wal", db_path));
+    let _ = std::fs::remove_file(format!("{}-shm", db_path));
+
+    let conn = Connection::open(&db_path)
+        .map_err(|e| format!("Failed to reopen database connection: {}", e))?;
+    let _ = conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA foreign_keys = ON;
+         PRAGMA busy_timeout = 5000;"
+    );
+
+    *slot = Some(conn);
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -50,6 +121,8 @@ pub struct LoginResponse {
     pub role: Option<String>,
     pub username: Option<String>,
     pub display_name: Option<String>,
+    pub session_token: Option<String>,
+    pub must_change_password: bool,
     pub message: String,
 }
 
@@ -63,13 +136,17 @@ pub fn init_db() -> Result<()> {
         CREATE TABLE IF NOT EXISTS license (id INTEGER PRIMARY KEY, current_key TEXT, expiry_date TEXT);
         CREATE TABLE IF NOT EXISTS restaurant_settings (id INTEGER PRIMARY KEY, restaurant_name TEXT NOT NULL, logo_path TEXT, tax_rate REAL NOT NULL, total_tables INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE);
-        CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role_id INTEGER NOT NULL, FOREIGN KEY(role_id) REFERENCES roles(id));
+        CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role_id INTEGER NOT NULL, must_change_password INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(role_id) REFERENCES roles(id));
         CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE);
         CREATE TABLE IF NOT EXISTS menu_items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, category_id INTEGER NOT NULL, price REAL NOT NULL, image_path TEXT, is_active INTEGER NOT NULL DEFAULT 1, FOREIGN KEY(category_id) REFERENCES categories(id));
         CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, amount REAL NOT NULL, date TEXT NOT NULL, category TEXT NOT NULL, note TEXT);
         CREATE TABLE IF NOT EXISTS salary_payouts (id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, amount REAL NOT NULL, date TEXT NOT NULL);
         COMMIT;"
     )?;
+
+    // Migrate pre-existing tables (e.g. add must_change_password) BEFORE seeding,
+    // otherwise INSERTs referencing the new column fail on old databases.
+    run_migrations(&conn).map_err(|e| rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e)))?;
 
     // Seed the default data
     conn.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'Admin'), (2, 'Cashier')", [])?;
@@ -78,11 +155,10 @@ pub fn init_db() -> Result<()> {
 
     // NEW: Seed a default Admin user with hashed password
     let hash = bcrypt::hash("password", bcrypt::DEFAULT_COST).map_err(|e| rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e.to_string())))?;
-    conn.execute("INSERT OR IGNORE INTO users (username, password_hash, role_id) VALUES ('admin@restaurant.com', ?1, 1)", [&hash])?;
-    conn.execute("INSERT OR IGNORE INTO users (username, password_hash, role_id) VALUES ('cashier@restaurant.com', ?1, 2)", [&hash])?;
+    conn.execute("INSERT OR IGNORE INTO users (username, password_hash, role_id, must_change_password) VALUES ('admin@restaurant.com', ?1, 1, 1)", [&hash])?;
+    conn.execute("INSERT OR IGNORE INTO users (username, password_hash, role_id, must_change_password) VALUES ('cashier@restaurant.com', ?1, 2, 1)", [&hash])?;
 
     println!("Database created and seeded successfully!");
-    run_migrations(&conn).map_err(|e| rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e)))?;
     Ok(())
 }
 
@@ -116,6 +192,7 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
         )",
         [],
     );
+    let _ = conn.execute("INSERT OR IGNORE INTO staff_categories (name) VALUES ('Order Taker')", []);
     let _ = conn.execute(
         "CREATE TABLE IF NOT EXISTS staff_attendance (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,6 +258,8 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
     let _ = conn.execute("ALTER TABLE orders ADD COLUMN delivery_driver_id INTEGER", []);
     let _ = conn.execute("ALTER TABLE orders ADD COLUMN delivery_fee REAL DEFAULT 0.0", []);
     let _ = conn.execute("ALTER TABLE orders ADD COLUMN customer_phone TEXT", []);
+    let _ = conn.execute("ALTER TABLE orders ADD COLUMN order_taker_id INTEGER", []);
+    let _ = conn.execute("ALTER TABLE orders ADD COLUMN order_taker_name TEXT", []);
     
     // salary_payouts schema updates
     let _ = conn.execute("ALTER TABLE salary_payouts ADD COLUMN bonus REAL", []);
@@ -254,6 +333,7 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
     conn.execute("ALTER TABLE users ADD COLUMN display_name TEXT", []).ok();
     conn.execute("ALTER TABLE users ADD COLUMN security_question TEXT", []).ok();
     conn.execute("ALTER TABLE users ADD COLUMN security_answer TEXT", []).ok();
+    conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0", []).ok();
 
     // 7. Password hashing migration
     if let Ok(mut stmt) = conn.prepare("SELECT id, password_hash FROM users") {
@@ -281,6 +361,7 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
 
 #[tauri::command]
 pub fn update_user_profile(
+    session_token: String,
     old_username: String,
     new_username: String,
     current_password: Option<String>,
@@ -289,6 +370,27 @@ pub fn update_user_profile(
     display_name: Option<String>,
     new_role: Option<String>,
 ) -> Result<(), String> {
+    // Server-side authorization: never trust a client-supplied override flag.
+    let caller = crate::auth::validate(&session_token)?;
+    let is_admin = caller.role == "Admin";
+    let is_self = caller.username == old_username;
+
+    // A non-admin may only modify their own profile. Admin is required to touch
+    // another user's record, regardless of how the request is framed.
+    if !is_self && !is_admin {
+        return Err("Only an Administrator can modify another user's profile.".to_string());
+    }
+
+    if admin_override.unwrap_or(false) && !is_admin {
+        return Err("Only an Administrator can override another user's profile.".to_string());
+    }
+    if new_role.is_some() && !is_admin {
+        return Err("Only an Administrator can change roles.".to_string());
+    }
+    if new_password.is_some() && !is_self && !is_admin {
+        return Err("Only an Administrator can change another user's password.".to_string());
+    }
+
     let conn = get_conn()?;
 
     // First check if user exists
@@ -314,7 +416,7 @@ pub fn update_user_profile(
 
         // Update username, password, and display_name
         conn.execute(
-            "UPDATE users SET username = ?, password_hash = ?, display_name = ? WHERE username = ?",
+            "UPDATE users SET username = ?, password_hash = ?, display_name = ?, must_change_password = 0 WHERE username = ?",
             [&new_username, &new_pw_hash, &display_name.unwrap_or_default(), &old_username],
         ).map_err(|e| e.to_string())?;
     } else {
@@ -335,7 +437,20 @@ pub fn update_user_profile(
 }
 
 #[tauri::command]
-pub fn update_security_question(username: String, question: String, answer: String) -> Result<(), String> {
+pub fn update_security_question(
+    session_token: String,
+    username: String,
+    question: String,
+    answer: String,
+) -> Result<(), String> {
+    // Only the account owner (or an Admin) may set the recovery question.
+    // Otherwise a low-privilege user could plant a question/answer on an admin
+    // account and then reset that account's password via the forgot flow.
+    let caller = crate::auth::validate(&session_token)?;
+    if caller.username != username && caller.role != "Admin" {
+        return Err("Only the account owner or an Administrator can update the security question.".to_string());
+    }
+
     let conn = get_conn()?;
     conn.execute(
         "UPDATE users SET security_question = ?, security_answer = ? WHERE username = ?",
@@ -366,7 +481,7 @@ pub fn reset_password_with_security_answer(username: String, answer: String, new
             if a.to_lowercase() == answer.to_lowercase() {
                 let new_pw_hash = bcrypt::hash(&new_password, bcrypt::DEFAULT_COST).map_err(|e| e.to_string())?;
                 conn.execute(
-                    "UPDATE users SET password_hash = ? WHERE username = ?",
+                    "UPDATE users SET password_hash = ?, must_change_password = 0 WHERE username = ?",
                     [&new_pw_hash, &username],
                 ).map_err(|e| e.to_string())?;
                 Ok(())
@@ -412,41 +527,92 @@ pub fn get_user_role_by_username(username: String) -> Result<String, String> {
 // NEW: The authentication command
 #[tauri::command]
 pub fn login(email: String, password: String) -> LoginResponse {
+    let fail = |message: &str| LoginResponse {
+        success: false,
+        role: None,
+        username: None,
+        display_name: None,
+        session_token: None,
+        must_change_password: false,
+        message: message.into(),
+    };
+
     let conn = match get_conn() {
         Ok(c) => c,
-        Err(_) => return LoginResponse { success: false, role: None, username: None, display_name: None, message: "Database connection failed".into() },
+        Err(_) => return fail("Database connection failed"),
     };
 
     let mut stmt = match conn.prepare(
-        "SELECT r.name, u.display_name, u.password_hash FROM users u 
+        "SELECT r.name, u.display_name, u.password_hash, COALESCE(u.must_change_password, 0) FROM users u 
          JOIN roles r ON u.role_id = r.id 
          WHERE u.username = ?1"
     ) {
         Ok(s) => s,
-        Err(_) => return LoginResponse { success: false, role: None, username: None, display_name: None, message: "Query preparation failed".into() },
+        Err(_) => return fail("Query preparation failed"),
     };
 
     let mut rows = match stmt.query([&email]) {
         Ok(r) => r,
-        Err(_) => return LoginResponse { success: false, role: None, username: None, display_name: None, message: "Query execution failed".into() },
+        Err(_) => return fail("Query execution failed"),
     };
 
     if let Ok(Some(row)) = rows.next() {
         let role: String = row.get(0).unwrap_or_default();
         let display_name: Option<String> = row.get(1).unwrap_or(None);
         let password_hash: String = row.get(2).unwrap_or_default();
+        let must_change_password: bool = row.get::<_, i32>(3).unwrap_or(0) == 1;
         
         match bcrypt::verify(&password, &password_hash) {
             Ok(true) => {
-                LoginResponse { success: true, role: Some(role), username: Some(email), display_name, message: "Login successful".into() }
+                let token = crate::auth::create_session(email.clone(), role.clone());
+                LoginResponse {
+                    success: true,
+                    role: Some(role),
+                    username: Some(email),
+                    display_name,
+                    session_token: Some(token),
+                    must_change_password,
+                    message: "Login successful".into(),
+                }
             },
-            _ => {
-                LoginResponse { success: false, role: None, username: None, display_name: None, message: "Invalid email or password".into() }
-            }
+            _ => fail("Invalid email or password"),
         }
     } else {
-        LoginResponse { success: false, role: None, username: None, display_name: None, message: "Invalid email or password".into() }
+        fail("Invalid email or password")
     }
+}
+
+/// Returns the currently authenticated user for the given session token,
+/// or `None` if the token is missing/expired/invalid.
+#[tauri::command]
+pub fn get_current_session(session_token: String) -> Result<Option<crate::auth::CurrentUser>, String> {
+    let session = match crate::auth::validate(&session_token) {
+        Ok(s) => s,
+        Err(_) => return Ok(None),
+    };
+
+    let conn = get_conn()?;
+    let (display_name, must_change): (Option<String>, bool) = conn
+        .query_row(
+            "SELECT display_name, COALESCE(must_change_password, 0) FROM users WHERE username = ?1",
+            [&session.username],
+            |row| Ok((row.get(0).unwrap_or(None), row.get::<_, i32>(1).unwrap_or(0) == 1)),
+        )
+        .unwrap_or((None, false));
+
+    Ok(Some(crate::auth::CurrentUser {
+        username: session.username,
+        role: session.role,
+        display_name,
+        must_change_password: must_change,
+    }))
+}
+
+/// Invalidates the given session token.
+#[tauri::command]
+pub fn logout(session_token: String) -> Result<(), String> {
+    crate::auth::logout(&session_token);
+    Ok(())
 }
 
 // Add this command to fetch categories
@@ -741,6 +907,8 @@ pub struct ActiveOrder {
     pub customer_id: Option<i32>,
     pub customer_phone: Option<String>,
     pub delivery_address: Option<String>,
+    pub order_taker_id: Option<i32>,
+    pub order_taker_name: Option<String>,
 }
 
 
@@ -812,6 +980,13 @@ pub fn remove_item_from_order(order_id: i32, item_id: i32) -> Result<String, Str
         }
     }
     Ok("Item removed".into())
+}
+
+#[tauri::command]
+pub fn delete_item_from_order(order_id: i32, item_id: i32) -> Result<String, String> {
+    let conn = get_conn()?;
+    conn.execute("DELETE FROM order_items WHERE order_id = ?1 AND item_id = ?2", rusqlite::params![order_id, item_id]).map_err(|e| e.to_string())?;
+    Ok("Item completely removed".into())
 }
 
 #[tauri::command]
@@ -960,6 +1135,8 @@ pub struct OrderHistory {
     pub customer_phone: Option<String>,
     pub delivery_address: Option<String>,
     pub service_charge_amount: f64,
+    pub order_taker_id: Option<i32>,
+    pub order_taker_name: Option<String>,
 }
 
 #[tauri::command]
@@ -974,7 +1151,7 @@ pub fn get_order_history() -> Result<Vec<OrderHistory>, String> {
                 COALESCE(SUM(oi.price * oi.quantity), 0) + COALESCE(o.delivery_fee, 0.0) + COALESCE(o.service_charge_amount, 0.0) as total_price,
                 o.subtotal, o.tax_amount, o.discount_amount, o.amount_received, o.change_due,
                 c.name as customer_name, o.cashier_name, o.order_note, o.order_type, o.created_at, o.closed_at, o.delivery_fee,
-                o.customer_phone, o.delivery_address, o.service_charge_amount
+                o.customer_phone, o.delivery_address, o.service_charge_amount, o.order_taker_id, o.order_taker_name
          FROM orders o 
          LEFT JOIN order_items oi ON o.id = oi.order_id 
          LEFT JOIN customers c ON o.customer_id = c.id
@@ -1004,6 +1181,8 @@ pub fn get_order_history() -> Result<Vec<OrderHistory>, String> {
             customer_phone: row.get(17).unwrap_or(None),
             delivery_address: row.get(18).unwrap_or(None),
             service_charge_amount: row.get(19).unwrap_or(0.0),
+            order_taker_id: row.get(20).unwrap_or(None),
+            order_taker_name: row.get(21).unwrap_or(None),
         })
     }).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
 
@@ -1120,7 +1299,7 @@ pub fn get_or_create_order(table_number: i32) -> Result<ActiveOrder, String> {
     }
 
     // 3. Check if this table already has an 'Open' order
-    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address FROM orders WHERE table_number = ?1 AND status = 'Open'").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address, order_taker_id, order_taker_name FROM orders WHERE table_number = ?1 AND status = 'Open'").map_err(|e| e.to_string())?;
     let existing_order = stmt.query_row([&table_number], |row| {
         Ok(ActiveOrder {
             id: row.get(0)?,
@@ -1131,6 +1310,8 @@ pub fn get_or_create_order(table_number: i32) -> Result<ActiveOrder, String> {
             customer_id: row.get(5).unwrap_or(None),
             customer_phone: row.get(6).unwrap_or(None),
             delivery_address: row.get(7).unwrap_or(None),
+            order_taker_id: row.get(8).unwrap_or(None),
+            order_taker_name: row.get(9).unwrap_or(None),
         })
     });
 
@@ -1157,6 +1338,8 @@ pub fn get_or_create_order(table_number: i32) -> Result<ActiveOrder, String> {
         customer_id: None,
         customer_phone: None,
         delivery_address: None,
+        order_taker_id: None,
+        order_taker_name: None,
     })
 }
 
@@ -1164,7 +1347,7 @@ pub fn get_or_create_order(table_number: i32) -> Result<ActiveOrder, String> {
 pub fn get_active_order(table_number: i32) -> Result<Option<ActiveOrder>, String> {
     let conn = get_conn()?;
     
-    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address FROM orders WHERE table_number = ?1 AND status = 'Open'").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address, order_taker_id, order_taker_name FROM orders WHERE table_number = ?1 AND status = 'Open'").map_err(|e| e.to_string())?;
     let existing_order = stmt.query_row([&table_number], |row| {
         Ok(ActiveOrder {
             id: row.get(0)?,
@@ -1175,6 +1358,8 @@ pub fn get_active_order(table_number: i32) -> Result<Option<ActiveOrder>, String
             customer_id: row.get(5).unwrap_or(None),
             customer_phone: row.get(6).unwrap_or(None),
             delivery_address: row.get(7).unwrap_or(None),
+            order_taker_id: row.get(8).unwrap_or(None),
+            order_taker_name: row.get(9).unwrap_or(None),
         })
     });
 
@@ -1189,7 +1374,7 @@ pub fn get_active_order(table_number: i32) -> Result<Option<ActiveOrder>, String
 pub fn get_order_by_id(order_id: i32) -> Result<ActiveOrder, String> {
     let conn = get_conn()?;
     
-    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address FROM orders WHERE id = ?1").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address, order_taker_id, order_taker_name FROM orders WHERE id = ?1").map_err(|e| e.to_string())?;
     let order = stmt.query_row([&order_id], |row| {
         Ok(ActiveOrder {
             id: row.get(0)?,
@@ -1200,6 +1385,8 @@ pub fn get_order_by_id(order_id: i32) -> Result<ActiveOrder, String> {
             customer_id: row.get(5).unwrap_or(None),
             customer_phone: row.get(6).unwrap_or(None),
             delivery_address: row.get(7).unwrap_or(None),
+            order_taker_id: row.get(8).unwrap_or(None),
+            order_taker_name: row.get(9).unwrap_or(None),
         })
     }).map_err(|e| e.to_string())?;
     
@@ -1210,14 +1397,16 @@ pub fn get_order_by_id(order_id: i32) -> Result<ActiveOrder, String> {
 pub fn create_walkin_order(
     order_type: String,
     customer_phone: Option<String>,
-    delivery_address: Option<String>
+    delivery_address: Option<String>,
+    order_taker_id: Option<i32>,
+    order_taker_name: Option<String>
 ) -> Result<ActiveOrder, String> {
     let conn = get_conn()?;
     
     let new_id = get_next_available_order_id(&conn);
     conn.execute(
-        "INSERT INTO orders (id, table_number, status, created_at, order_type, customer_phone, delivery_address) VALUES (?1, 0, 'Open', datetime('now', 'localtime'), ?2, ?3, ?4)", 
-        rusqlite::params![&new_id, &order_type, &customer_phone, &delivery_address]
+        "INSERT INTO orders (id, table_number, status, created_at, order_type, customer_phone, delivery_address, order_taker_id, order_taker_name) VALUES (?1, 0, 'Open', datetime('now', 'localtime'), ?2, ?3, ?4, ?5, ?6)", 
+        rusqlite::params![&new_id, &order_type, &customer_phone, &delivery_address, &order_taker_id, &order_taker_name]
     ).map_err(|e| e.to_string())?;
     
     Ok(ActiveOrder {
@@ -1229,6 +1418,8 @@ pub fn create_walkin_order(
         customer_id: None,
         customer_phone: customer_phone.clone(),
         delivery_address: delivery_address.clone(),
+        order_taker_id: order_taker_id.clone(),
+        order_taker_name: order_taker_name.clone(),
     })
 }
 
@@ -1355,6 +1546,122 @@ pub fn get_staff() -> Result<Vec<StaffMember>, String> {
         staff.push(person.map_err(|e| e.to_string())?);
     }
     Ok(staff)
+}
+
+/// Lean staff listing (id, name, role, category) for clock-in and delivery
+/// assignment dropdowns. Omits salary and pin_code, which are admin-only data.
+#[derive(serde::Serialize)]
+pub struct StaffDropdown {
+    pub id: i32,
+    pub name: String,
+    pub role: Option<String>,
+    pub category_id: Option<i32>,
+    pub category_name: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_staff_dropdown() -> Result<Vec<StaffDropdown>, String> {
+    let conn = get_conn()?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS staff (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            role TEXT,
+            phone TEXT
+        )", []
+    ).map_err(|e| e.to_string())?;
+
+    conn.execute("ALTER TABLE staff ADD COLUMN category_id INTEGER", []).ok();
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS staff_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE
+        )", []
+    ).map_err(|e| e.to_string())?;
+
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.name, s.role, s.category_id, c.name as category_name
+         FROM staff s
+         LEFT JOIN staff_categories c ON s.category_id = c.id
+         ORDER BY s.name"
+    ).map_err(|e| e.to_string())?;
+
+    let dropdown_iter = stmt.query_map([], |row| {
+        Ok(StaffDropdown {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            role: row.get(2).unwrap_or(None),
+            category_id: row.get(3).unwrap_or(None),
+            category_name: row.get(4).unwrap_or(None),
+        })
+    }).map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for item in dropdown_iter {
+        result.push(item.map_err(|e| e.to_string())?);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn get_order_takers() -> Result<Vec<StaffDropdown>, String> {
+    let conn = get_conn()?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS staff (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            role TEXT,
+            phone TEXT
+        )", []
+    ).map_err(|e| e.to_string())?;
+
+    conn.execute("ALTER TABLE staff ADD COLUMN category_id INTEGER", []).ok();
+    conn.execute("ALTER TABLE staff ADD COLUMN status TEXT DEFAULT 'Active'", []).ok();
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS staff_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE
+        )", []
+    ).map_err(|e| e.to_string())?;
+
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.name, s.role, s.category_id, c.name as category_name
+         FROM staff s
+         LEFT JOIN staff_categories c ON s.category_id = c.id
+         WHERE COALESCE(s.status, 'Active') = 'Active' AND c.name LIKE 'Order Taker%'
+         ORDER BY s.name"
+    ).map_err(|e| e.to_string())?;
+
+    let dropdown_iter = stmt.query_map([], |row| {
+        Ok(StaffDropdown {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            role: row.get(2).unwrap_or(None),
+            category_id: row.get(3).unwrap_or(None),
+            category_name: row.get(4).unwrap_or(None),
+        })
+    }).map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for item in dropdown_iter {
+        result.push(item.map_err(|e| e.to_string())?);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn update_order_taker(order_id: i32, staff_id: Option<i32>, staff_name: Option<String>) -> Result<String, String> {
+    let conn = get_conn()?;
+
+    conn.execute(
+        "UPDATE orders SET order_taker_id = ?1, order_taker_name = ?2 WHERE id = ?3",
+        rusqlite::params![&staff_id, &staff_name, &order_id]
+    ).map_err(|e| e.to_string())?;
+    Ok("Order taker updated".into())
 }
 
 #[tauri::command]
@@ -2569,6 +2876,9 @@ pub fn perform_backup(destination: Option<String>) -> Result<String, String> {
     }
 
     let current_db_path = get_default_db_path();
+    // Flush pending WAL frames into the main file so the copied backup is a
+    // complete snapshot (the app writes in WAL mode while running).
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
     std::fs::copy(&current_db_path, &final_dest)
         .map_err(|e| format!("Failed to copy database file: {}", e))?;
 
@@ -2702,9 +3012,15 @@ pub fn import_backup_file(file_path: String) -> Result<String, String> {
     // Save existing license before overwriting
     let mut current_license: Option<(String, String)> = None;
     if db_path.exists() {
+        // Flush any un-checkpointed WAL frames so the safety copy is complete
+        // and matches what the running connection sees.
+        if let Ok(live) = get_conn() {
+            let _ = live.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        }
+
         std::fs::copy(db_path, &safety_file)
             .map_err(|e| format!("Failed to create safety backup of current database: {}", e))?;
-            
+
         if let Ok(old_conn) = Connection::open(db_path) {
             if let Ok(mut stmt) = old_conn.prepare("SELECT current_key, expiry_date FROM license LIMIT 1") {
                 if let Ok(mut rows) = stmt.query([]) {
@@ -2721,8 +3037,13 @@ pub fn import_backup_file(file_path: String) -> Result<String, String> {
     std::fs::copy(&file_path, db_path)
         .map_err(|e| format!("Failed to import database file: {}", e))?;
 
-    let conn = Connection::open(&db_path_str)
-        .map_err(|e| format!("Database overwritten, but failed to reopen connection: {}", e))?;
+    // Reopen the global connection against the imported file. This also drops
+    // the stale -wal/-shm from the previous database; leaving them in place
+    // would let the OLD data be replayed over the imported file, which is why
+    // an import previously appeared to "succeed" without the data appearing.
+    reopen_connection()?;
+
+    let conn = get_conn()?;
 
     // Restore the license to the newly imported database
     if let Some((key, expiry)) = current_license {

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/api";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +16,7 @@ export default function Login() {
   const [restaurantName, setRestaurantName] = useState("Restaurant");
   const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
   const navigate = useNavigate();
+  const { login } = useAuth();
 
   useEffect(() => {
     async function fetchSettings() {
@@ -34,19 +36,19 @@ export default function Login() {
     setError(""); 
 
     try {
-      const res: any = await invoke("login", { email, password });
+      const res = await login(email, password);
       if (res.success) {
-        localStorage.setItem("userRole", res.role);
-        localStorage.setItem("userName", res.username);
-        localStorage.setItem("displayName", res.display_name || "");
-        
+        if (res.must_change_password) {
+          navigate("/change-password");
+          return;
+        }
         if (res.role === "Admin") {
           navigate("/admin/dashboard");
-        } else if (res.role === "Cashier") {
+        } else {
           navigate("/cashier/dashboard");
         }
       } else {
-        setError(res.message);
+        setError(res.message || "Invalid email or password");
       }
     } catch (err) {
       setError("An unexpected error occurred connecting to the database.");
@@ -54,7 +56,7 @@ export default function Login() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 dark:bg-slate-950 transition-colors p-4 md:p-8 lg:p-12">
+    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 transition-colors p-4 md:p-8 lg:p-12">
       <div className="flex flex-col md:flex-row w-full h-full bg-white dark:bg-[#0B1120] rounded-3xl overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 transition-colors">
         
         {/* LEFT SIDE: The Restaurant Image Area */}

@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/api";
+import { formatCurrency } from "../lib/utils";
+import { useAuth } from "../lib/auth";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Search, CheckCircle2, ChevronDown, ChevronRight, PackageOpen, User, Clock, Banknote, FileText, Tag, AlertCircle, ExternalLink, Percent, Phone, MapPin } from "lucide-react";
 import Sidebar from "../components/Sidebar";
@@ -77,7 +79,7 @@ const EditablePayable = ({ order, onDiscountUpdated }: { order: OrderHistory, on
       </div>
       {order.discount_amount > 0 && (
         <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-          Discount of Rs. {order.discount_amount.toFixed(2)} applied
+          Discount of {formatCurrency(order.discount_amount)} applied
         </p>
       )}
     </div>
@@ -88,7 +90,8 @@ export default function Orders() {
   const location = useLocation();
   const navigate = useNavigate();
   const isHistoryPage = location.pathname.includes('history');
-  const role = localStorage.getItem("userRole") || "Admin";
+  const { user } = useAuth();
+  const role = user?.role || "Admin";
   const basePath = role === "Cashier" ? "/cashier" : "/admin";
 
   const [allOrders, setAllOrders] = useState<OrderHistory[]>([]);
@@ -171,17 +174,17 @@ export default function Orders() {
   const totalRevenue = orders.reduce((sum, order) => sum + order.total_price, 0);
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
+    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
       
       <Sidebar activePage={isHistoryPage ? "history" : "orders"} />
 
-      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors">
+      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors min-w-0">
         <Header 
           title={isHistoryPage ? "Order History" : "Orders"} 
           subtitle={isHistoryPage ? "View past completed orders." : "Manage active and incoming orders."}
         />
 
-        <div className="flex-1 p-8 overflow-y-auto">
+        <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto">
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 flex flex-col justify-center shadow-sm">
@@ -194,7 +197,7 @@ export default function Orders() {
             </div>
             <div className={`${isHistoryPage ? 'bg-blue-50 dark:bg-blue-600/10 border-blue-200 dark:border-blue-500/20' : 'bg-amber-50 dark:bg-amber-600/10 border-amber-200 dark:border-amber-500/20'} border rounded-2xl p-6 flex flex-col justify-center shadow-sm`}>
               <p className={`${isHistoryPage ? 'text-blue-600 dark:text-blue-400' : 'text-amber-600 dark:text-amber-400'} font-semibold text-sm mb-1`}>{isHistoryPage ? 'Total Revenue' : 'Total Amount'}</p>
-              <p className={`text-3xl font-black ${isHistoryPage ? 'text-blue-700 dark:text-blue-500' : 'text-amber-700 dark:text-amber-500'}`}>Rs. {totalRevenue.toFixed(2)}</p>
+              <p className={`text-3xl font-black ${isHistoryPage ? 'text-blue-700 dark:text-blue-500' : 'text-amber-700 dark:text-amber-500'}`}>{formatCurrency(totalRevenue)}</p>
             </div>
           </div>
 
@@ -264,7 +267,7 @@ export default function Orders() {
                             </span>
                           </td>
                           <td className="p-4 font-medium text-slate-700 dark:text-slate-300 text-center">{order.total_items}</td>
-                          <td className="p-4 pr-6 font-bold text-blue-600 dark:text-blue-400 text-right">Rs. {order.total_price.toFixed(2)}</td>
+                          <td className="p-4 pr-6 font-bold text-blue-600 dark:text-blue-400 text-right">{formatCurrency(order.total_price)}</td>
                         </tr>
                         {expandedOrderId === order.id && (
                           <tr className="bg-slate-50/50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-800/50">
@@ -294,9 +297,9 @@ export default function Orders() {
                                       <div key={item.id} className="bg-white dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm flex justify-between items-center">
                                         <div>
                                           <p className="text-sm font-semibold text-slate-900 dark:text-white">{item.name}</p>
-                                          <p className="text-xs text-slate-500 dark:text-slate-400">{item.quantity} x Rs. {item.price.toFixed(2)}</p>
+                                          <p className="text-xs text-slate-500 dark:text-slate-400">{item.quantity} x {formatCurrency(item.price)}</p>
                                         </div>
-                                        <p className="text-sm font-bold text-slate-900 dark:text-white">Rs. {(item.quantity * item.price).toFixed(2)}</p>
+                                        <p className="text-sm font-bold text-slate-900 dark:text-white">{formatCurrency((item.quantity * item.price))}</p>
                                       </div>
                                     ))}
                                   </div>
@@ -367,30 +370,30 @@ export default function Orders() {
                                         <div className="space-y-2 mb-4">
                                           <div className="flex justify-between text-sm">
                                             <span className="text-slate-500 dark:text-slate-400">Subtotal</span>
-                                            <span className="font-medium text-slate-900 dark:text-white">Rs. {(order.status === 'Open' ? order.total_price : order.subtotal).toFixed(2)}</span>
+                                            <span className="font-medium text-slate-900 dark:text-white">{formatCurrency((order.status === 'Open' ? order.total_price : order.subtotal))}</span>
                                           </div>
                                           {order.status === 'Closed' && (
                                             <div className="flex justify-between text-sm">
                                               <span className="text-slate-500 dark:text-slate-400">Tax Amount</span>
-                                              <span className="font-medium text-slate-900 dark:text-white">Rs. {order.tax_amount.toFixed(2)}</span>
+                                              <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(order.tax_amount)}</span>
                                             </div>
                                           )}
                                           {(order.service_charge_amount || 0) > 0 && (
                                             <div className="flex justify-between text-sm">
                                               <span className="text-slate-500 dark:text-slate-400">Service Charge</span>
-                                              <span className="font-medium text-slate-900 dark:text-white">Rs. {order.service_charge_amount?.toFixed(2)}</span>
+                                              <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(order.service_charge_amount ?? 0)}</span>
                                             </div>
                                           )}
                                           {order.discount_amount > 0 && (
                                             <div className="flex justify-between text-sm text-emerald-600 dark:text-emerald-400">
                                               <span className="flex items-center"><Percent size={12} className="mr-1" /> Discount</span>
-                                              <span className="font-medium">- Rs. {order.discount_amount.toFixed(2)}</span>
+                                              <span className="font-medium">- {formatCurrency(order.discount_amount)}</span>
                                             </div>
                                           )}
                                         </div>
                                         <div className="flex justify-between items-center pt-3 border-t border-slate-200 dark:border-slate-700 mb-4">
                                           <span className="font-semibold text-slate-900 dark:text-white">Grand Total</span>
-                                          <span className="text-lg font-bold text-blue-600 dark:text-blue-400">Rs. {(order.total_price - order.discount_amount).toFixed(2)}</span>
+                                          <span className="text-lg font-bold text-blue-600 dark:text-blue-400">{formatCurrency((order.total_price - order.discount_amount))}</span>
                                         </div>
 
                                         {/* Editable Net Payable for Open orders */}
@@ -403,11 +406,11 @@ export default function Orders() {
                                           <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-3 space-y-1">
                                             <div className="flex justify-between text-xs sm:text-sm">
                                               <span className="text-slate-500 dark:text-slate-400">Amount Received</span>
-                                              <span className="font-medium text-slate-900 dark:text-white">Rs. {order.amount_received.toFixed(2)}</span>
+                                              <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(order.amount_received)}</span>
                                             </div>
                                             <div className="flex justify-between text-xs sm:text-sm">
                                               <span className="text-slate-500 dark:text-slate-400">Change Given</span>
-                                              <span className="font-medium text-slate-900 dark:text-white">Rs. {order.change_due.toFixed(2)}</span>
+                                              <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(order.change_due)}</span>
                                             </div>
                                           </div>
                                         )}

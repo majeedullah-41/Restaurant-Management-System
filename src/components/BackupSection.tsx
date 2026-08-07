@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/api";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Database, FolderOpen, RefreshCw, Clock, CheckCircle2, AlertCircle } from "lucide-react";
 import AdminPasswordModal from "./AdminPasswordModal";

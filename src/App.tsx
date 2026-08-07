@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./lib/api";
+import { useAuth } from "./lib/auth";
 import Login from "./pages/Login";
+import ChangePassword from "./pages/ChangePassword";
 import LicenseScreen from "./pages/LicenseScreen";
+import ProtectedRoute from "./components/ProtectedRoute";
 import CashierDashboard from "./pages/CashierDashboard";
 import Dashboard from "./pages/Dashboard";
 import MenuManagement from "./pages/MenuManagement";
@@ -29,6 +32,7 @@ interface LicenseStatus {
 }
 
 function App() {
+  const { user, loading: authLoading } = useAuth();
   const [backupWarning, setBackupWarning] = useState<string | null>(null);
 
   // License gating state
@@ -67,8 +71,8 @@ function App() {
   }, []);
 
   useEffect(() => {
-    // Only run auto-backup if license is valid
-    if (!licenseValid) return;
+    // Only run auto-backup when a valid license is active AND a user is logged in
+    if (!licenseValid || !user) return;
 
     async function runAutoBackup() {
       try {
@@ -82,7 +86,7 @@ function App() {
       }
     }
     runAutoBackup();
-  }, [licenseValid]);
+  }, [licenseValid, user]);
 
   // Loading spinner while checking license
   if (licenseChecking) {
@@ -117,6 +121,19 @@ function App() {
     );
   }
 
+  if (authLoading) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-slate-50 dark:bg-slate-950 transition-colors">
+        <div className="flex flex-col items-center space-y-4">
+          <div className="w-10 h-10 border-4 border-blue-200 dark:border-blue-800 border-t-blue-600 dark:border-t-blue-500 rounded-full animate-spin" />
+          <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">Verifying session...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const homePath = user && user.role === "Admin" ? "/admin/dashboard" : "/cashier/dashboard";
+
   // License is valid — render the full application
   return (
     <Router>
@@ -149,34 +166,36 @@ function App() {
       )}
 
       <Routes>
-        <Route path="/" element={<Login />} />
-        <Route path="/cashier/dashboard" element={<CashierDashboard />} />
-        <Route path="/admin/dashboard" element={<Dashboard />} />
-        <Route path="/admin/menu" element={<MenuManagement />} />
-        <Route path="/admin/settings" element={<SettingsPage />} />
-        <Route path="/admin/orders" element={<Orders />} />
-        <Route path="/admin/tables" element={<TableManagement />} />
-        <Route path="/admin/pos/:tableId/:orderId?" element={<POS />} />
+        <Route path="/" element={user ? <Navigate to={homePath} replace /> : <Login />} />
+        <Route path="/change-password" element={<ProtectedRoute><ChangePassword /></ProtectedRoute>} />
+
+        <Route path="/cashier/dashboard" element={<ProtectedRoute><CashierDashboard /></ProtectedRoute>} />
+        <Route path="/admin/dashboard" element={<ProtectedRoute adminOnly><Dashboard /></ProtectedRoute>} />
+        <Route path="/admin/menu" element={<ProtectedRoute adminOnly><MenuManagement /></ProtectedRoute>} />
+        <Route path="/admin/settings" element={<ProtectedRoute adminOnly><SettingsPage /></ProtectedRoute>} />
+        <Route path="/admin/orders" element={<ProtectedRoute adminOnly><Orders /></ProtectedRoute>} />
+        <Route path="/admin/tables" element={<ProtectedRoute adminOnly><TableManagement /></ProtectedRoute>} />
+        <Route path="/admin/pos/:tableId/:orderId?" element={<ProtectedRoute adminOnly><POS /></ProtectedRoute>} />
 
         {/* Cashier Routes */}
-        <Route path="/cashier/orders" element={<Orders />} />
-        <Route path="/cashier/tables" element={<TableManagement />} />
-        <Route path="/cashier/pos/:tableId/:orderId?" element={<POS />} />
-        <Route path="/cashier/customers" element={<Customers />} />
-        <Route path="/cashier/history" element={<Orders />} />
-        <Route path="/cashier/deliveries" element={<DeliveryManagement />} />
-        <Route path="/admin/history" element={<Orders />} />
-        <Route path="/admin/deliveries" element={<DeliveryManagement />} />
-        <Route path="/admin/staff" element={<StaffManagement />} />
-        <Route path="/admin/customers" element={<Customers />} />
-        <Route path="/admin/expenses" element={<Expenses />} />
-        <Route path="/admin/inventory" element={<Inventory />} />
-        <Route path="/admin/payroll" element={<Payroll />} />
-        <Route path="/admin/profile" element={<UserProfile />} />
-        <Route path="/admin/reports" element={<Reports />} />
+        <Route path="/cashier/orders" element={<ProtectedRoute><Orders /></ProtectedRoute>} />
+        <Route path="/cashier/tables" element={<ProtectedRoute><TableManagement /></ProtectedRoute>} />
+        <Route path="/cashier/pos/:tableId/:orderId?" element={<ProtectedRoute><POS /></ProtectedRoute>} />
+        <Route path="/cashier/customers" element={<ProtectedRoute><Customers /></ProtectedRoute>} />
+        <Route path="/cashier/history" element={<ProtectedRoute><Orders /></ProtectedRoute>} />
+        <Route path="/cashier/deliveries" element={<ProtectedRoute><DeliveryManagement /></ProtectedRoute>} />
+        <Route path="/admin/history" element={<ProtectedRoute adminOnly><Orders /></ProtectedRoute>} />
+        <Route path="/admin/deliveries" element={<ProtectedRoute adminOnly><DeliveryManagement /></ProtectedRoute>} />
+        <Route path="/admin/staff" element={<ProtectedRoute adminOnly><StaffManagement /></ProtectedRoute>} />
+        <Route path="/admin/customers" element={<ProtectedRoute adminOnly><Customers /></ProtectedRoute>} />
+        <Route path="/admin/expenses" element={<ProtectedRoute adminOnly><Expenses /></ProtectedRoute>} />
+        <Route path="/admin/inventory" element={<ProtectedRoute adminOnly><Inventory /></ProtectedRoute>} />
+        <Route path="/admin/payroll" element={<ProtectedRoute adminOnly><Payroll /></ProtectedRoute>} />
+        <Route path="/admin/profile" element={<ProtectedRoute><UserProfile /></ProtectedRoute>} />
+        <Route path="/admin/reports" element={<ProtectedRoute adminOnly><Reports /></ProtectedRoute>} />
         
         {/* Wildcard catch-all route should usually be at the very bottom */}
-        <Route path="*" element={<Navigate to="/" />} />
+        <Route path="*" element={<Navigate to={user ? homePath : "/"} replace />} />
       </Routes>
     </Router>
   );

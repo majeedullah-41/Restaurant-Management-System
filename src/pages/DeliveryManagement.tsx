@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/api";
+import { formatCurrency } from "../lib/utils";
 import { Truck, CheckCircle2, MapPin, Clock, User, Phone, Navigation, ChevronDown, Printer } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
@@ -21,7 +22,7 @@ interface DeliveryOrder {
 interface Staff {
   id: number;
   name: string;
-  role: string;
+  role: string | null;
 }
 
 export default function DeliveryManagement() {
@@ -51,9 +52,9 @@ export default function DeliveryManagement() {
 
   const fetchStaff = async () => {
     try {
-      const data: Staff[] = await invoke("get_staff");
+      const data: Staff[] = await invoke("get_staff_dropdown");
       // Filter for drivers if necessary, or show all for now
-      setStaff(data.filter(s => s.role.toLowerCase().includes('driver') || s.role.toLowerCase() === 'staff'));
+      setStaff(data.filter(s => (s.role ?? '').toLowerCase().includes('driver') || (s.role ?? '').toLowerCase() === 'staff'));
     } catch (err) {
       console.error("Failed to load staff:", err);
     }
@@ -143,12 +144,12 @@ export default function DeliveryManagement() {
     items.forEach(item => {
       const name = item.name.length > 15 ? item.name.substring(0, 15) : item.name.padEnd(15, ' ');
       const qty = item.quantity.toString().padStart(3, ' ');
-      const total = (item.price * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2 });
+      const total = formatCurrency(item.price * item.quantity);
       text += padBoth(`${name}  ${qty}`, total) + "\n";
     });
     
     text += "-".repeat(32) + "\n";
-    text += padBoth("Total Amt:", `Rs. ${order.total_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}`) + "\n";
+    text += padBoth("Total Amt:", `${formatCurrency(order.total_price)}`) + "\n";
     text += "-".repeat(32) + "\n";
     
     text += "Customer Details:\n";
@@ -157,7 +158,7 @@ export default function DeliveryManagement() {
     text += `Address:\n${order.delivery_address || 'No address provided'}\n`;
     text += "-".repeat(32) + "\n";
     
-    text += `Please collect Rs. ${order.total_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}\n`;
+    text += `Please collect ${formatCurrency(order.total_price)}\n`;
     text += `from the customer.\n\n`;
     text += center("End of Ticket") + "\n\n\n\n";
 
@@ -170,13 +171,13 @@ export default function DeliveryManagement() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 dark:bg-[#0F172A] text-slate-700 dark:text-slate-300 font-sans overflow-hidden">
+    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-[#0F172A] text-slate-700 dark:text-slate-300 font-sans overflow-hidden">
       <Sidebar activePage="deliveries" />
 
-      <main className="flex-1 flex flex-col relative z-10 overflow-hidden">
+      <main className="flex-1 flex flex-col relative z-10 overflow-hidden min-w-0">
         <Header title="Delivery Management" subtitle="Manage active deliveries and assign drivers" />
 
-        <div className="flex-1 p-6 overflow-y-auto custom-scrollbar">
+        <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto custom-scrollbar">
           {deliveries.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-slate-500">
               <div className="w-24 h-24 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
@@ -217,7 +218,7 @@ export default function DeliveryManagement() {
                     </div>
                     <div className="text-right">
                       <p className="text-xs text-slate-500 dark:text-slate-400 mb-0.5">Total</p>
-                      <p className="font-bold text-blue-600 dark:text-blue-400">Rs. {order.total_price.toLocaleString()}</p>
+                      <p className="font-bold text-blue-600 dark:text-blue-400">{formatCurrency(order.total_price)}</p>
                     </div>
                   </div>
 
@@ -258,7 +259,7 @@ export default function DeliveryManagement() {
                               >
                                 <option value="" disabled>Select Driver...</option>
                                 {staff.map(s => (
-                                  <option key={s.id} value={s.id}>{s.name} ({s.role})</option>
+                                  <option key={s.id} value={s.id}>{s.name} ({s.role || 'Staff'})</option>
                                 ))}
                               </select>
                               <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />

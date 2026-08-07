@@ -1,8 +1,11 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/api";
+import { formatCurrency } from "../lib/utils";
 import { Plus, Trash2, UserCircle, X, Edit2, Clock } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
+import { ConfirmModal } from "../components/ConfirmModal";
+import { AlertModal } from "../components/AlertModal";
 
 interface StaffMember {
   id: number;
@@ -49,6 +52,11 @@ export default function StaffManagement() {
   const [clockCategoryId, setClockCategoryId] = useState<number | "">("");
   const [clockStaffId, setClockStaffId] = useState<number | "">("");
 
+  // App Dialogs
+  const [alertMessage, setAlertMessage] = useState<{ title: string; message: string; type: 'danger' | 'success' } | null>(null);
+  const [deleteCategoryId, setDeleteCategoryId] = useState<number | null>(null);
+  const [deleteStaffId, setDeleteStaffId] = useState<number | null>(null);
+
   const loadStaff = async () => {
     try {
       const data: any = await invoke("get_staff");
@@ -90,18 +98,18 @@ export default function StaffManagement() {
   const handleClockInOut = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clockStaffId) {
-      alert("Please select a staff member.");
+      setAlertMessage({ title: "No Staff Selected", message: "Please select a staff member.", type: "danger" });
       return;
     }
     try {
       const msg = await invoke<string>("clock_in_out", { staffId: Number(clockStaffId) });
-      alert(msg);
+      setAlertMessage({ title: "Success", message: msg, type: "success" });
       setClockStaffId("");
       setClockCategoryId("");
       loadAttendance(attendanceDate);
     } catch (err: any) {
       console.error(err);
-      alert(err);
+      setAlertMessage({ title: "Clock In/Out Failed", message: String(err), type: "danger" });
     }
   };
 
@@ -170,27 +178,37 @@ export default function StaffManagement() {
   };
 
   const handleDeleteCategory = async (id: number) => {
-    if (!window.confirm("Remove this category?")) return;
+    setDeleteCategoryId(id);
+  };
+
+  const confirmDeleteCategory = async () => {
+    if (deleteCategoryId === null) return;
     try {
-      await invoke("delete_staff_category", { id });
+      await invoke("delete_staff_category", { id: deleteCategoryId });
       loadCategories();
     } catch (err) {
       console.error(err);
     }
+    setDeleteCategoryId(null);
   };
 
   const handleDeleteStaff = async (id: number) => {
-    if (!window.confirm("Remove this staff member from the system?")) return;
+    setDeleteStaffId(id);
+  };
+
+  const confirmDeleteStaff = async () => {
+    if (deleteStaffId === null) return;
     try {
-      await invoke("delete_staff", { id });
+      await invoke("delete_staff", { id: deleteStaffId });
       loadStaff();
     } catch (err) {
       console.error(err);
     }
+    setDeleteStaffId(null);
   };
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden relative transition-colors">
+    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden relative transition-colors">
 
       {isModalOpen && (
         <div className="absolute inset-0 bg-black/60 z-50 flex items-center justify-center backdrop-blur-sm">
@@ -230,7 +248,7 @@ export default function StaffManagement() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Monthly Salary (₨)</label>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Monthly Salary (Rs.)</label>
                 <input
                   type="number" value={salary} onChange={(e) => setSalary(e.target.value)}
                   className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" required
@@ -377,10 +395,10 @@ export default function StaffManagement() {
 
       <Sidebar activePage="staff" />
 
-      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors">
+      <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors min-w-0">
         <Header title="Staff Management" subtitle="Manage employee access, roles, and contact information." />
 
-        <div className="flex-1 p-8 overflow-y-auto flex flex-col">
+        <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto flex flex-col">
           <div className="mb-6 flex justify-end shrink-0 space-x-3">
             <button
               onClick={() => setIsAttendanceModalOpen(true)}
@@ -424,7 +442,7 @@ export default function StaffManagement() {
                       {person.phone || "No phone listed"}
                     </div>
                     <div className="text-sm font-bold text-green-600 dark:text-green-400">
-                      Salary: ₨ {person.salary.toFixed(2)}
+                      Salary: {formatCurrency(person.salary)}
                     </div>
                   </div>
                 </div>
@@ -455,6 +473,35 @@ export default function StaffManagement() {
           </div>
         </div>
       </main>
+
+      <ConfirmModal
+        isOpen={deleteCategoryId !== null}
+        title="Delete Category"
+        message="Remove this category?"
+        type="danger"
+        confirmText="Delete"
+        onConfirm={confirmDeleteCategory}
+        onCancel={() => setDeleteCategoryId(null)}
+      />
+
+      <ConfirmModal
+        isOpen={deleteStaffId !== null}
+        title="Delete Staff Member"
+        message="Remove this staff member from the system?"
+        type="danger"
+        confirmText="Delete"
+        onConfirm={confirmDeleteStaff}
+        onCancel={() => setDeleteStaffId(null)}
+      />
+
+      <AlertModal
+        isOpen={alertMessage !== null}
+        title={alertMessage?.title || ""}
+        message={alertMessage?.message || ""}
+        type={alertMessage?.type || "danger"}
+        buttonText="OK"
+        onClose={() => setAlertMessage(null)}
+      />
     </div>
   );
 }

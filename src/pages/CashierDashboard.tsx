@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/api';
+import { formatCurrency } from '../lib/utils';
 import { useNavigate } from 'react-router-dom';
 import { 
   TrendingUp, ShoppingBag, PieChart, 
@@ -7,6 +8,7 @@ import {
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
+import { AlertModal } from '../components/AlertModal';
 
 interface CashierStats {
   todays_sales: number;
@@ -35,9 +37,10 @@ interface DetailedTableStatus {
   elapsed_minutes: number | null;
 }
 
-interface StaffMember {
+interface StaffDropdown {
   id: number;
   name: string;
+  role: string | null;
   category_id: number | null;
   category_name: string | null;
 }
@@ -58,8 +61,10 @@ export default function CashierDashboard() {
   const [clockCategoryId, setClockCategoryId] = useState<number | "">("");
   const [clockStaffId, setClockStaffId] = useState<number | "">("");
   
-  const [staff, setStaff] = useState<StaffMember[]>([]);
+  const [staff, setStaff] = useState<StaffDropdown[]>([]);
   const [categories, setCategories] = useState<StaffCategory[]>([]);
+
+  const [alertModal, setAlertModal] = useState<{ title: string; message: string; type: 'danger' | 'warning' | 'info' | 'success' } | null>(null);
 
   const loadData = async () => {
     try {
@@ -76,7 +81,7 @@ export default function CashierDashboard() {
       const _tables = await invoke<DetailedTableStatus[]>("get_detailed_table_statuses");
       setTables(_tables);
 
-      const _staff = await invoke<StaffMember[]>("get_staff");
+      const _staff = await invoke<StaffDropdown[]>("get_staff_dropdown");
       setStaff(_staff);
 
       const _categories = await invoke<StaffCategory[]>("get_staff_categories");
@@ -99,18 +104,18 @@ export default function CashierDashboard() {
   const handleClockInOut = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clockStaffId) {
-      alert("Please select a staff member.");
+      setAlertModal({ title: "No Staff Selected", message: "Please select a staff member.", type: "warning" });
       return;
     }
     try {
       const msg = await invoke<string>("clock_in_out", { staffId: Number(clockStaffId) });
-      alert(msg);
+      setAlertModal({ title: "Success", message: msg, type: "success" });
       setShowClockModal(false);
       setClockStaffId("");
       setClockCategoryId("");
     } catch (err) {
       console.error(err);
-      alert(err);
+      setAlertModal({ title: "Clock In/Out Failed", message: String(err), type: "danger" });
     }
   };
 
@@ -142,10 +147,10 @@ export default function CashierDashboard() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 dark:bg-[#0F172A] text-slate-700 dark:text-slate-300 font-sans overflow-hidden">
+    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-[#0F172A] text-slate-700 dark:text-slate-300 font-sans overflow-hidden">
       <Sidebar activePage="cashier_dashboard" />
 
-      <main className="flex-1 flex flex-col z-10 overflow-hidden relative">
+      <main className="flex-1 flex flex-col z-10 overflow-hidden relative min-w-0">
         {/* Header */}
         <Header title="Cashier Dashboard" subtitle="Welcome back, Cashier!">
           <button onClick={() => setShowClockModal(true)} className="bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 px-4 py-2 rounded-lg text-sm font-semibold flex items-center space-x-2 transition-colors border border-blue-500/20">
@@ -154,7 +159,7 @@ export default function CashierDashboard() {
           </button>
         </Header>
 
-        <div className="flex-1 p-6 overflow-y-auto flex gap-6 custom-scrollbar">
+        <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto flex gap-6 custom-scrollbar">
           {/* Main Content Area */}
           <div className="flex-1 flex flex-col space-y-6">
             
@@ -167,7 +172,7 @@ export default function CashierDashboard() {
                   </div>
                   <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400">Today's Sales</h3>
                 </div>
-                <p className="text-2xl font-bold text-slate-900 dark:text-white mb-1">Rs. {(stats?.todays_sales || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
+                <p className="text-2xl font-bold text-slate-900 dark:text-white mb-1">{formatCurrency((stats?.todays_sales || 0))}</p>
                 <p className="text-xs text-slate-500">Orders: {stats?.completed_orders || 0}</p>
               </div>
 
@@ -192,7 +197,7 @@ export default function CashierDashboard() {
                   </div>
                   <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400">Average Order Value</h3>
                 </div>
-                <p className="text-2xl font-bold text-slate-900 dark:text-white mb-1">Rs. {(stats?.avg_order_value || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
+                <p className="text-2xl font-bold text-slate-900 dark:text-white mb-1">{formatCurrency((stats?.avg_order_value || 0))}</p>
                 <p className="text-xs text-slate-500">Based on {stats?.completed_orders || 0} completed orders</p>
               </div>
             </div>
@@ -222,7 +227,7 @@ export default function CashierDashboard() {
                         key={table.id}
                         onClick={() => {
                           if (table.status === 'Maintenance' || table.status === 'Reserved') {
-                            alert(`Cannot open order: Table is marked as ${table.status} by admin.`);
+                            setAlertModal({ title: "Table Unavailable", message: `Cannot open order: Table is marked as ${table.status} by admin.`, type: "warning" });
                             return;
                           }
                           navigate(`/cashier/pos/${table.table_number}`);
@@ -260,7 +265,7 @@ export default function CashierDashboard() {
                             {table.status === 'Available' ? 'Vacant' : table.status}
                           </span>
                           <span className="text-xs font-bold opacity-100">
-                            Rs. {(table.active_order_total || 0).toLocaleString()}
+                            {formatCurrency((table.active_order_total || 0))}
                           </span>
                           {table.status === 'Occupied' && (
                             <div className="flex items-center space-x-1 mt-1 opacity-70 text-[9px]">
@@ -288,7 +293,7 @@ export default function CashierDashboard() {
               <div className="space-y-3">
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-slate-500 dark:text-slate-400 flex items-center"><Banknote size={12} className="mr-2 text-green-500"/> Total Sales</span>
-                  <span className="text-slate-900 dark:text-white font-medium">Rs. {(stats?.todays_sales || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                  <span className="text-slate-900 dark:text-white font-medium">{formatCurrency((stats?.todays_sales || 0))}</span>
                 </div>
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-slate-500 dark:text-slate-400 flex items-center"><ShoppingBag size={12} className="mr-2 text-blue-500"/> Total Orders</span>
@@ -334,7 +339,7 @@ export default function CashierDashboard() {
                         </div>
                         <div className="text-[11px] text-slate-500 dark:text-slate-400">{order.table}</div>
                         <div className="text-[11px] text-slate-500">{formatTime(order.time)}</div>
-                        <div className="text-xs font-bold text-red-400 text-right w-16">Rs. {order.amount.toLocaleString()}</div>
+                        <div className="text-xs font-bold text-red-400 text-right w-16">{formatCurrency(order.amount)}</div>
                       </div>
                     );
                   })
@@ -476,6 +481,15 @@ export default function CashierDashboard() {
           background: #475569;
         }
       `}</style>
+
+      <AlertModal
+        isOpen={alertModal !== null}
+        title={alertModal?.title || ""}
+        message={alertModal?.message || ""}
+        type={alertModal?.type || "danger"}
+        buttonText="OK"
+        onClose={() => setAlertModal(null)}
+      />
     </div>
   );
 }
