@@ -14,20 +14,36 @@ use std::sync::OnceLock;
 
 static HWID_CACHE: OnceLock<String> = OnceLock::new();
 
-/// Generates a hardware-bound identifier from the machine's hostname, MAC address, and Windows MachineGuid.
-/// This value is 100% deterministic and permanently stable across reinstalls on the same device.
+/// Generates a hardware-bound identifier from strictly permanent machine
+/// hardware: the CPU ProcessorId, motherboard serial, BIOS serial and the
+/// SMBIOS system UUID. Unlike hostname / MAC / MachineGuid these values never
+/// change when Windows is reinstalled, the machine is renamed, or network
+/// adapters are swapped, so a license stays bound to the physical device.
 pub fn get_hwid() -> String {
     HWID_CACHE.get_or_init(|| {
-        let hostname = System::host_name()
-            .or_else(|| std::env::var("COMPUTERNAME").ok())
-            .unwrap_or_else(|| "UNKNOWN-HOST".to_string());
+        let mut components: Vec<String> = Vec::new();
 
-        let mac = get_primary_mac().unwrap_or_else(|| "00:00:00:00:00:00".to_string());
-        let machine_guid = get_windows_machine_guid().unwrap_or_else(|| "UNKNOWN-GUID".to_string());
+        for id in get_permanent_hardware_ids() {
+            if !id.is_empty() {
+                components.push(id);
+            }
+        }
+
+        // Last-resort fallback so the app still works on a machine where no
+        // permanent hardware identifier is exposed (locked-down VM / sandbox).
+        // It intentionally never runs on a normal physical PC.
+        if components.is_empty() {
+            let hostname = System::host_name()
+                .or_else(|| std::env::var("COMPUTERNAME").ok())
+                .unwrap_or_else(|| "UNKNOWN-HOST".to_string());
+            let mac = get_primary_mac().unwrap_or_else(|| "00:00:00:00:00:00".to_string());
+            let machine_guid = get_windows_machine_guid().unwrap_or_else(|| "UNKNOWN-GUID".to_string());
+            components.push(format!("{}|{}|{}", hostname, mac, machine_guid));
+        }
 
         use sha2::Digest;
         let mut hasher = sha2::Sha256::new();
-        hasher.update(format!("{}|{}|{}", hostname, mac, machine_guid));
+        hasher.update(components.join("|"));
         let result = hasher.finalize();
 
         let hex: String = result.iter().take(16).map(|b| format!("{:02X}", b)).collect();
@@ -40,6 +56,79 @@ pub fn get_hwid() -> String {
             &hex[12..16]
         )
     }).clone()
+}
+
+/// Reads the strictly permanent hardware identifiers from WMI in a single
+/// PowerShell invocation (avoids spawning one process per identifier).
+/// Returns them in a fixed, deterministic order:
+///   [CPU ProcessorId, Motherboard Serial, BIOS Serial, System UUID]
+fn get_permanent_hardware_ids() -> Vec<String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        let script = r#"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+$mb  = Get-CimInstance Win32_BaseBoard | Select-Object -First 1
+$bios = Get-CimInstance Win32_BIOS | Select-Object -First 1
+$sys = Get-CimInstance Win32_ComputerSystemProduct | Select-Object -First 1
+Write-Output ("CPU=" + $cpu.ProcessorId)
+Write-Output ("MB=" + $mb.SerialNumber)
+Write-Output ("BIOS=" + $bios.SerialNumber)
+Write-Output ("UUID=" + $sys.UUID)
+"#;
+
+        let mut cmd = std::process::Command::new("powershell.exe");
+        cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        if let Ok(output) = cmd.output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let mut ids: Vec<String> = Vec::new();
+            for line in stdout.lines() {
+                let line = line.trim();
+                if let Some(value) = line.strip_prefix("CPU=") {
+                    push_hardware_id(&mut ids, value);
+                } else if let Some(value) = line.strip_prefix("MB=") {
+                    push_hardware_id(&mut ids, value);
+                } else if let Some(value) = line.strip_prefix("BIOS=") {
+                    push_hardware_id(&mut ids, value);
+                } else if let Some(value) = line.strip_prefix("UUID=") {
+                    push_hardware_id(&mut ids, value);
+                }
+            }
+            return ids;
+        }
+    }
+    Vec::new()
+}
+
+/// Appends an identifier unless it is a WMI placeholder value that some OEM
+/// boards/firmware report in place of a real serial number.
+fn push_hardware_id(ids: &mut Vec<String>, value: &str) {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let lower = trimmed.to_lowercase();
+    const PLACEHOLDERS: &[&str] = &[
+        "default string",
+        "to be filled by o.e.m.",
+        "o.e.m.",
+        "system serial number",
+        "none",
+        "not specified",
+        "unknown",
+        "n/a",
+        "null",
+        "0",
+    ];
+    if PLACEHOLDERS.iter().any(|p| lower == *p) {
+        return;
+    }
+    ids.push(trimmed.to_string());
 }
 
 /// Retrieves the primary MAC address deterministically by sorting all interface MACs.
