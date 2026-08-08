@@ -21,6 +21,41 @@ fn authorize(command: &str, payload: &tauri::ipc::InvokeBody) -> Result<(), Stri
 
     let session = auth::validate(&token)?;
 
+    // License enforcement (defense in depth — the UI also gates on this).
+    // Only license-management and pre-auth commands remain usable without a
+    // valid, unexpired license.
+    const LICENSE_EXEMPT: &[&str] = &[
+        "login",
+        "logout",
+        "get_settings",
+        "get_restaurant_name",
+        "get_security_question",
+        "reset_password_with_security_answer",
+        "activate_license",
+        "check_license_status",
+        "get_machine_hwid",
+        "get_license_info",
+    ];
+    if !LICENSE_EXEMPT.contains(&command) && !license::is_license_valid() {
+        return Err("License is invalid or expired. Please activate your license.".to_string());
+    }
+
+    // Force a password change before any other protected command can run.
+    const PASSWORD_CHANGE_OK: &[&str] = &[
+        "logout",
+        "get_current_session",
+        "update_user_profile",
+        "get_settings",
+        "get_restaurant_name",
+        "activate_license",
+        "check_license_status",
+        "get_machine_hwid",
+        "get_license_info",
+    ];
+    if db::user_must_change_password(&session.username) && !PASSWORD_CHANGE_OK.contains(&command) {
+        return Err("You must change your password before continuing.".to_string());
+    }
+
     if auth::ADMIN_COMMANDS.contains(&command) && session.role != "Admin" {
         return Err("Admin access required for this action.".to_string());
     }
@@ -55,6 +90,7 @@ pub fn run() {
         .invoke_handler(wrap_handler(tauri::generate_handler![
     db::pay_advance_salary,
     db::get_user_role_by_username,
+    db::get_users,
     db::get_restaurant_name,
     db::login,
     db::update_user_profile,
@@ -75,12 +111,18 @@ pub fn run() {
     db::init_tables_if_needed,
     db::get_table_statuses,
     db::add_table,
+    db::add_tables,
     db::delete_table,
+    db::get_table_categories,
+    db::add_table_category,
+    db::update_table_category,
+    db::delete_table_category,
     db::get_or_create_order,
     db::get_active_order,
     db::create_walkin_order,
     db::get_order_by_id,
     db::get_order_items,
+    db::mark_kot_printed,
     db::add_item_to_order,
     db::remove_item_from_order,
     db::delete_item_from_order,

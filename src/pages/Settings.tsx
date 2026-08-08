@@ -12,7 +12,6 @@ export default function SettingsPage() {
   const [contact, setContact] = useState("");
   const [address, setAddress] = useState("");
   const [taxRate, setTaxRate] = useState("");
-  const [tables, setTables] = useState("");
   const [serviceChargeRate, setServiceChargeRate] = useState("");
   const [serviceChargeTypes, setServiceChargeTypes] = useState<string[]>(["Dine-in"]);
   const [logo, setLogo] = useState<string | null>(null);
@@ -52,7 +51,6 @@ export default function SettingsPage() {
         setAddress(data.address || "");
         setLogo(data.logo_path || null);
         setTaxRate(data.tax_rate.toString());
-        setTables(data.total_tables.toString());
         setServiceChargeRate(data.service_charge_rate?.toString() || "0");
         setServiceChargeTypes(data.service_charge_types ? data.service_charge_types.split(",") : ["Dine-in"]);
       } catch (err) {
@@ -90,14 +88,25 @@ export default function SettingsPage() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setMessage("");
+
+    const parsedTaxRate = parseFloat(taxRate);
+    const parsedServiceChargeRate = parseFloat(serviceChargeRate);
+    if (!isFinite(parsedTaxRate) || parsedTaxRate < 0) {
+      setMessage("Tax rate must be a valid non-negative number.");
+      return;
+    }
+    if (!isFinite(parsedServiceChargeRate) || parsedServiceChargeRate < 0) {
+      setMessage("Service charge rate must be a valid non-negative number.");
+      return;
+    }
+
     try {
       await invoke("update_settings", {
         name: name,
         address: address,
         logoPath: logo ? logo : null,
-        taxRate: parseFloat(taxRate) || 0,
-        totalTables: parseInt(tables) || 0,
-        serviceChargeRate: parseFloat(serviceChargeRate) || 0,
+        taxRate: parsedTaxRate,
+        serviceChargeRate: parsedServiceChargeRate,
         serviceChargeTypes: serviceChargeTypes.join(","),
         contactNumber: contact.trim() || null
       });
@@ -176,13 +185,6 @@ export default function SettingsPage() {
                     className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" required
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Total Physical Tables</label>
-                  <input 
-                    type="number" value={tables} onChange={(e) => setTables(e.target.value)}
-                    className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" required
-                  />
-                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 rounded-xl border border-blue-100 dark:border-blue-900/30 bg-blue-50/50 dark:bg-blue-900/10">
@@ -211,7 +213,9 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              {message && <p className="text-green-600 dark:text-green-400 text-sm font-bold">{message}</p>}
+              {message && (
+                <p className={`text-sm font-bold ${message.startsWith("Error") || message.includes("valid non-negative") ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}>{message}</p>
+              )}
 
               <button type="submit" className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors flex items-center justify-center space-x-2 mt-4 shadow-lg shadow-blue-600/20 cursor-pointer">
                 <Save size={18} />

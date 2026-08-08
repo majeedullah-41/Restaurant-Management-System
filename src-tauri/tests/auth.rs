@@ -104,14 +104,14 @@ fn test_auth_flow_and_admin_override() {
         cashier_token.clone(),
         "cashier@restaurant.com".to_string(),
         "What is your pet's name?".to_string(),
-        "rex".to_string(),
+        "rexrexrex".to_string(),
     )
     .expect("cashier should set their own security question");
 
     // 4e. The planted question answers to the forgot-password flow.
     db::reset_password_with_security_answer(
         "cashier@restaurant.com".to_string(),
-        "rex".to_string(),
+        "rexrexrex".to_string(),
         "changed-by-recovery".to_string(),
     )
     .expect("forgot-password flow should succeed with the correct answer");
@@ -123,7 +123,7 @@ fn test_auth_flow_and_admin_override() {
     // Restore the original password so the remaining assertions stay consistent.
     db::reset_password_with_security_answer(
         "cashier@restaurant.com".to_string(),
-        "rex".to_string(),
+        "rexrexrex".to_string(),
         "password".to_string(),
     )
     .expect("should restore the original password");

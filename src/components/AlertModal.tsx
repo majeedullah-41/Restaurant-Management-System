@@ -9,6 +9,9 @@ interface AlertModalProps {
   type?: AlertModalType;
   onClose: () => void;
   buttonText?: string;
+  onConfirm?: () => void;
+  secondaryButtonText?: string;
+  onSecondaryAction?: () => void;
 }
 
 export function AlertModal({
@@ -18,6 +21,9 @@ export function AlertModal({
   type = 'info',
   onClose,
   buttonText = 'OK',
+  onConfirm,
+  secondaryButtonText,
+  onSecondaryAction,
 }: AlertModalProps) {
   if (!isOpen) return null;
 
@@ -80,9 +86,17 @@ export function AlertModal({
             <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed">{message}</p>
           </div>
 
-          <div className="flex items-center">
+          <div className="flex items-center gap-2">
+            {onSecondaryAction && secondaryButtonText && (
+              <button
+                onClick={onSecondaryAction}
+                className="flex-1 px-4 py-2.5 rounded-xl font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition-colors flex items-center justify-center space-x-2"
+              >
+                <span>{secondaryButtonText}</span>
+              </button>
+            )}
             <button
-              onClick={onClose}
+              onClick={onConfirm ?? onClose}
               className={`flex-1 px-4 py-2.5 rounded-xl font-semibold shadow-lg transition-colors flex items-center justify-center space-x-2 ${getButtonClasses()}`}
             >
               <span>{buttonText}</span>

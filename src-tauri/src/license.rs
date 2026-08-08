@@ -310,6 +310,50 @@ pub fn verify_license_key(key_string: &str) -> LicenseStatus {
 
 // ─── Tauri Commands ─────────────────────────────────────────────────────────
 
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+struct LicenseCache {
+    checked_at: Instant,
+    valid: bool,
+}
+
+static LICENSE_CACHE: Mutex<Option<LicenseCache>> = Mutex::new(None);
+
+/// Fast boolean license check used by the central `authorize()` gate in lib.rs.
+/// Every protected IPC command is blocked unless a valid, unexpired license for
+/// this machine is present. The result is cached for a short window so we do
+/// not re-read the key and re-verify the RSA signature on every single IPC call.
+pub fn is_license_valid() -> bool {
+    {
+        if let Ok(cache) = LICENSE_CACHE.lock() {
+            if let Some(c) = cache.as_ref() {
+                if c.checked_at.elapsed() < Duration::from_secs(5) {
+                    return c.valid;
+                }
+            }
+        }
+    }
+
+    let valid = matches!(check_license_status(), Ok(s) if s.valid);
+
+    if let Ok(mut cache) = LICENSE_CACHE.lock() {
+        *cache = Some(LicenseCache {
+            checked_at: Instant::now(),
+            valid,
+        });
+    }
+    valid
+}
+
+/// Invalidates the cached license verdict (called after a successful
+/// activation or renewal so the new key takes effect immediately).
+pub fn invalidate_license_cache() {
+    if let Ok(mut cache) = LICENSE_CACHE.lock() {
+        *cache = None;
+    }
+}
+
 /// Returns the current machine's HWID for display on the License screen.
 #[tauri::command]
 pub fn get_machine_hwid() -> String {
@@ -333,7 +377,49 @@ pub fn check_license_status() -> Result<LicenseStatus, String> {
         .ok();
 
     match key {
-        Some(k) if !k.is_empty() => Ok(verify_license_key(&k)),
+        Some(k) if !k.is_empty() => {
+            let status = verify_license_key(&k);
+            if status.valid {
+                // Detect clock rollback: the license can only be valid if the
+                // current date is not earlier than the last date it validated.
+                // Persist today on every successful check.
+                let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                let last_validated: Option<String> = conn
+                    .query_row(
+                        "SELECT last_validated_date FROM license WHERE id = 1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .ok();
+
+                if let Some(prev) = last_validated {
+                    if !prev.is_empty() {
+                        if let (Ok(prev_date), Ok(today_date)) = (
+                            NaiveDate::parse_from_str(&prev, "%Y-%m-%d"),
+                            NaiveDate::parse_from_str(&today, "%Y-%m-%d"),
+                        ) {
+                            if today_date < prev_date {
+                                let expiry_date = status.expiry_date.clone();
+                                let days_remaining = expiry_date.as_deref().and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()).map(|exp| (exp - today_date).num_days());
+                                return Ok(LicenseStatus {
+                                    valid: false,
+                                    hwid,
+                                    message: "System clock appears to have been rolled back. Please restore the correct date.".to_string(),
+                                    expiry_date,
+                                    days_remaining,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                let _ = conn.execute(
+                    "UPDATE license SET last_validated_date = ?1 WHERE id = 1",
+                    rusqlite::params![today],
+                );
+            }
+            Ok(status)
+        }
         _ => Ok(LicenseStatus {
             valid: false,
             hwid,
@@ -365,6 +451,8 @@ pub fn activate_license(key: String) -> Result<LicenseStatus, String> {
         [&key, expiry, &now.as_str()],
     )
     .map_err(|e| e.to_string())?;
+
+    invalidate_license_cache();
 
     Ok(status)
 }

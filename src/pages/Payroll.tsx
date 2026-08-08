@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { invoke } from '../lib/api';
-import { formatCurrency } from '../lib/utils';
+import { formatCurrency, todayLocal } from '../lib/utils';
 import { useAuth } from '../lib/auth';
 import { CreditCard, Calendar, CheckCircle, Clock, History, Users, Check, AlertCircle, ArrowUpRight, ArrowDownRight, Banknote, Printer } from 'lucide-react';
+import { useReactToPrint } from 'react-to-print';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import DateFilterToolbar from '../components/DateFilterToolbar';
-import { AlertModal } from '../components/AlertModal';
+import PayrollSlipTemplate from '../components/PayrollSlipTemplate';
 
 interface PayrollSummary {
   staff_id: number;
@@ -18,13 +19,16 @@ interface PayrollSummary {
   paid_amount: number | null;
 }
 
-interface SalaryPayout {
+export interface SalaryPayout {
   id: number;
+  staff_id: number;
   staff_name: string;
   amount: number;
   bonus: number;
   deduction: number;
   advance_deduction: number;
+  payout_type: string;
+  note: string | null;
   date: string;
 }
 
@@ -48,14 +52,27 @@ export default function Payroll() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [printError, setPrintError] = useState<string | null>(null);
 
   const [showAdvanceModal, setShowAdvanceModal] = useState(false);
   const [advanceStaffId, setAdvanceStaffId] = useState<number | ''>('');
   const [advanceAmount, setAdvanceAmount] = useState('');
-  const [advanceDate, setAdvanceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [advanceDate, setAdvanceDate] = useState(todayLocal());
   const [advanceNote, setAdvanceNote] = useState('');
   const [advancing, setAdvancing] = useState(false);
+  
+  const [selectedPrintPayout, setSelectedPrintPayout] = useState<SalaryPayout | null>(null);
+  const [restaurantName, setRestaurantName] = useState('Restaurant');
+  const printRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    invoke<string>('get_restaurant_name')
+      .then(setRestaurantName)
+      .catch(() => setRestaurantName('Restaurant'));
+  }, []);
+  const handlePrint = useReactToPrint({
+    contentRef: printRef,
+    documentTitle: 'Payroll_Slip',
+  });
 
   useEffect(() => {
     setSuccessMsg(null);
@@ -122,7 +139,6 @@ export default function Payroll() {
     }
   };
 
-  // Selection helpers
   const unpaidRows = rows.filter(r => !r.isPaid);
   const selectedRows = rows.filter(r => r.selected && !r.isPaid);
   const paidRows = rows.filter(r => r.isPaid);
@@ -152,10 +168,9 @@ export default function Payroll() {
   const totalAdvanceDeduction = selectedRows.reduce((s, r) => s + r.advance_balance, 0);
   const totalNet = totalBase + totalBonus - totalDeduction - totalAdvanceDeduction;
 
-  // Stats for cards
   const totalStaff = rows.length;
   const totalPayrollAmount = rows.reduce((s, r) => s + r.base_salary, 0);
-  const totalPaidAmount = paidRows.reduce((s, r) => s + r.base_salary, 0);
+  const totalPaidAmount = paidRows.reduce((s, r) => s + (r.paid_amount ?? r.base_salary), 0);
   const totalPendingAmount = unpaidRows.reduce((s, r) => s + r.base_salary, 0);
 
   const handleBatchPayout = () => {
@@ -179,11 +194,10 @@ export default function Payroll() {
         staff_name: r.name,
       }));
       
-      const payoutDate = dateRange.endDate || new Date().toISOString().split('T')[0];
+      const payoutDate = dateRange.endDate || todayLocal();
       const msg = await invoke<string>('process_batch_payout', { payouts, payoutDate });
       setSuccessMsg(msg);
       
-      // Refresh data — pass dates explicitly to avoid stale closure
       await fetchSummary(dateRange.startDate, dateRange.endDate);
     } catch (e: any) {
       console.error(e);
@@ -218,12 +232,11 @@ export default function Payroll() {
       setSuccessMsg(msg);
       setShowAdvanceModal(false);
       
-      // Reset form
       setAdvanceStaffId('');
       setAdvanceAmount('');
       setAdvanceNote('');
+      setAdvanceDate(dateRange.endDate || todayLocal());
       
-      // Refresh summary to see updated advance balance
       if (activeTab === 'process' && dateRange.startDate) {
         await fetchSummary(dateRange.startDate, dateRange.endDate);
       }
@@ -237,56 +250,10 @@ export default function Payroll() {
   };
 
   const handlePrintSlip = async (payout: SalaryPayout) => {
-    try {
-      const restName = await invoke<string>('get_restaurant_name').catch(() => 'Restaurant');
-      const adminName = user?.display_name || user?.role || 'Admin';
-      const baseAmount = payout.amount - payout.bonus + payout.deduction + payout.advance_deduction;
-
-      const padBoth = (left: string, right: string, width = 32) => {
-        const spaces = width - left.length - right.length;
-        return left + " ".repeat(Math.max(1, spaces)) + right;
-      };
-    
-      const center = (text: string, width = 32) => {
-        if (text.length >= width) return text.substring(0, width);
-        const left = Math.floor((width - text.length) / 2);
-        return " ".repeat(left) + text;
-      };
-
-      let text = "";
-      text += center(restName) + "\n";
-      text += center("SALARY SLIP") + "\n";
-      text += "-".repeat(32) + "\n";
-      
-      text += `Staff: ${payout.staff_name}\n`;
-      text += `Date:  ${payout.date}\n`;
-      text += `Admin: ${adminName}\n`;
-      text += "-".repeat(32) + "\n";
-      
-      text += padBoth("Base Salary", `${formatCurrency(baseAmount)}`) + "\n";
-      
-      if (payout.bonus > 0) {
-        text += padBoth("Bonus/Allowances", `+ ${formatCurrency(payout.bonus)}`) + "\n";
-      }
-      if (payout.deduction > 0) {
-        text += padBoth("Deductions", `- ${formatCurrency(payout.deduction)}`) + "\n";
-      }
-      if (payout.advance_deduction > 0) {
-        text += padBoth("Advance Ded.", `- ${formatCurrency(payout.advance_deduction)}`) + "\n";
-      }
-      
-      text += "=".repeat(32) + "\n";
-      text += padBoth("NET PAY", `${formatCurrency(payout.amount)}`) + "\n";
-      text += "-".repeat(32) + "\n\n";
-      
-      text += "Employer Sig: _________________\n\n";
-      text += "Employee Sig: _________________\n\n\n\n";
-
-      await invoke("print_receipt_text", { text });
-    } catch (e) {
-      console.error('Failed to print slip:', e);
-      setPrintError('Failed to print slip: ' + e);
-    }
+    setSelectedPrintPayout(payout);
+    setTimeout(() => {
+      handlePrint();
+    }, 100);
   };
 
   const getInitials = (name: string) => {
@@ -309,6 +276,17 @@ export default function Payroll() {
 
   return (
     <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
+      <div className="hidden">
+        <div ref={printRef}>
+          {selectedPrintPayout && (
+            <PayrollSlipTemplate 
+              payout={selectedPrintPayout} 
+              restaurantName={restaurantName}
+              adminName={user?.display_name || user?.role || 'Admin'}
+            />
+          )}
+        </div>
+      </div>
       <Sidebar activePage="payroll" />
       
       <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors min-w-0">
@@ -316,7 +294,6 @@ export default function Payroll() {
 
         <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto flex flex-col">
 
-          {/* Large Stats Grid */}
           {activeTab === 'process' && !loading && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 flex flex-col justify-center shadow-sm">
@@ -338,7 +315,6 @@ export default function Payroll() {
             </div>
           )}
 
-          {/* Tabs & Filters */}
           <div className="flex items-center justify-between mb-3 shrink-0">
             <div className="flex space-x-1 bg-white dark:bg-slate-900 p-1.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
               <button
@@ -371,7 +347,12 @@ export default function Payroll() {
 
             <div className="flex items-center space-x-3">
               <button 
-                onClick={() => setShowAdvanceModal(true)}
+                onClick={() => {
+                  if (dateRange.endDate) {
+                    setAdvanceDate(dateRange.endDate);
+                  }
+                  setShowAdvanceModal(true);
+                }}
                 className="bg-amber-100 hover:bg-amber-200 text-amber-700 dark:bg-amber-500/20 dark:hover:bg-amber-500/30 dark:text-amber-400 px-4 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center space-x-2"
               >
                 <Banknote size={15} />
@@ -384,7 +365,6 @@ export default function Payroll() {
             </div>
           </div>
 
-          {/* Success message */}
           {successMsg && (
             <div className="mb-3 flex items-center space-x-3 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-400 px-4 py-2.5 rounded-xl text-sm font-semibold shrink-0">
               <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center shrink-0">
@@ -395,7 +375,6 @@ export default function Payroll() {
             </div>
           )}
 
-          {/* Error message */}
           {errorMsg && (
             <div className="mb-3 flex items-center space-x-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-red-700 dark:text-red-400 px-4 py-2.5 rounded-xl text-sm font-semibold shrink-0">
               <div className="w-8 h-8 rounded-lg bg-red-500/20 flex items-center justify-center shrink-0">
@@ -691,7 +670,8 @@ export default function Payroll() {
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
                     {history.map((record) => {
-                      const baseAmount = record.amount - record.bonus + record.deduction + record.advance_deduction;
+                      const isAdvance = record.payout_type === 'Advance';
+                      const baseAmount = isAdvance ? record.amount : (record.amount - record.bonus + record.deduction + record.advance_deduction);
                       return (
                         <tr key={record.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition-colors">
                           <td className="py-3 px-4">
@@ -707,16 +687,21 @@ export default function Payroll() {
                               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold border shrink-0 ${getAvatarColor(record.staff_name)}`}>
                                 {getInitials(record.staff_name)}
                               </div>
-                              <span className="font-bold text-sm text-slate-900 dark:text-white whitespace-nowrap">{record.staff_name}</span>
+                              <div>
+                                <span className="font-bold text-sm text-slate-900 dark:text-white whitespace-nowrap">{record.staff_name}</span>
+                                {record.note && (
+                                  <p className="text-[11px] text-slate-400 dark:text-slate-500 max-w-[220px] truncate">{record.note}</p>
+                                )}
+                              </div>
                             </div>
                           </td>
                           <td className="py-3 px-4 text-right">
-                            <span className="font-mono font-medium text-sm text-slate-600 dark:text-400 whitespace-nowrap">
+                            <span className="font-mono font-medium text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">
                               {formatCurrency(baseAmount)}
                             </span>
                           </td>
                           <td className="py-3 px-4 text-right">
-                            {record.bonus > 0 ? (
+                            {!isAdvance && record.bonus > 0 ? (
                               <span className="inline-flex items-center space-x-1 font-mono font-semibold text-sm text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                                 <ArrowUpRight size={12} />
                                 <span>{formatCurrency(record.bonus)}</span>
@@ -726,7 +711,7 @@ export default function Payroll() {
                             )}
                           </td>
                           <td className="py-3 px-4 text-right">
-                            {record.deduction > 0 ? (
+                            {!isAdvance && record.deduction > 0 ? (
                               <span className="inline-flex items-center space-x-1 font-mono font-semibold text-sm text-red-500 dark:text-red-400 whitespace-nowrap">
                                 <ArrowDownRight size={12} />
                                 <span>{formatCurrency(record.deduction)}</span>
@@ -736,7 +721,7 @@ export default function Payroll() {
                             )}
                           </td>
                           <td className="py-3 px-4 text-right">
-                            {record.advance_deduction > 0 ? (
+                            {!isAdvance && record.advance_deduction > 0 ? (
                               <span className="inline-flex items-center space-x-1 font-mono font-semibold text-sm text-orange-500 dark:text-orange-400 whitespace-nowrap">
                                 <span>{formatCurrency(record.advance_deduction)}</span>
                               </span>
@@ -750,10 +735,17 @@ export default function Payroll() {
                             </span>
                           </td>
                           <td className="py-3 px-4 text-center">
-                            <span className="inline-flex items-center space-x-1.5 bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 px-3 py-1.5 rounded-full text-xs font-bold border border-emerald-200 dark:border-emerald-500/25 whitespace-nowrap">
-                              <Check size={11} strokeWidth={3} />
-                              <span>Completed</span>
-                            </span>
+                            {isAdvance ? (
+                              <span className="inline-flex items-center space-x-1.5 bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400 px-3 py-1.5 rounded-full text-xs font-bold border border-amber-200 dark:border-amber-500/25 whitespace-nowrap">
+                                <Banknote size={11} />
+                                <span>Advance</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center space-x-1.5 bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 px-3 py-1.5 rounded-full text-xs font-bold border border-emerald-200 dark:border-emerald-500/25 whitespace-nowrap">
+                                <Check size={11} strokeWidth={3} />
+                                <span>Completed</span>
+                              </span>
+                            )}
                           </td>
                           <td className="py-3 px-4 text-center">
                             <button
@@ -921,14 +913,14 @@ export default function Payroll() {
           </div>
         </div>
       )}
-
-      <AlertModal
-        isOpen={printError !== null}
-        title="Print Failed"
-        message={printError || ""}
-        type="danger"
-        onClose={() => setPrintError(null)}
-      />
+      {selectedPrintPayout && (
+        <PayrollSlipTemplate
+          ref={printRef}
+          payout={selectedPrintPayout}
+          restaurantName={restaurantName}
+          adminName={user?.display_name || user?.role || 'Admin'}
+        />
+      )}
     </div>
   );
 }

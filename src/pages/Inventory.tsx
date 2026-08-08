@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "../lib/api";
-import { formatCurrency } from "../lib/utils";
+import { formatCurrency, todayLocal } from "../lib/utils";
 import {
   Package, Plus, Minus, ShoppingCart, Trash2, Pencil, X, AlertTriangle,
   TrendingDown, Archive, ClipboardList, ChevronDown, Download
@@ -91,8 +91,8 @@ export default function Inventory() {
 
   // ── History Filters ──
   const [dateRange, setDateRange] = useState({ 
-    startDate: new Date().toISOString().split('T')[0], 
-    endDate: new Date().toISOString().split('T')[0] 
+    startDate: todayLocal(), 
+    endDate: todayLocal() 
   });
   const [historyItemFilter, setHistoryItemFilter] = useState<number | "">("");
   const [historyTypeFilter, setHistoryTypeFilter] = useState<string>("all");
@@ -112,7 +112,10 @@ export default function Inventory() {
 
   const loadSummary = async () => {
     try {
-      const data = await invoke<InventorySummary>("get_inventory_summary");
+      const data = await invoke<InventorySummary>("get_inventory_summary", {
+        startDate: dateRange.startDate || null,
+        endDate: dateRange.endDate || null,
+      });
       setSummary(data);
     } catch (err) {
       console.error("Failed to load inventory summary:", err);

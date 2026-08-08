@@ -39,6 +39,10 @@ export default function ForgotPasswordModal({ isOpen, onClose }: ForgotPasswordM
         setError("Please provide an answer and a new password.");
         return;
       }
+      if (newPassword.length < 6) {
+        setError("Password must be at least 6 characters long.");
+        return;
+      }
       try {
         await invoke("reset_password_with_security_answer", {
           username,

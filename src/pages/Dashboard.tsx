@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '../lib/api';
-import { formatCurrency } from '../lib/utils';
+import { formatCurrency, todayLocal } from '../lib/utils';
 import { useAuth } from '../lib/auth';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { DollarSign, TrendingDown, BarChart2, ShoppingBag, Plus } from "lucide-react";
@@ -76,7 +76,7 @@ export default function Dashboard() {
         setLoading(true);
         setError(null);
 
-        const clientDate = new Date().toISOString().split('T')[0];
+        const clientDate = todayLocal();
         const [
           _stats,
           _revenue,

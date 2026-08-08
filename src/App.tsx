@@ -71,8 +71,9 @@ function App() {
   }, []);
 
   useEffect(() => {
-    // Only run auto-backup when a valid license is active AND a user is logged in
-    if (!licenseValid || !user) return;
+    // Only run auto-backup when a valid license is active, an admin is logged
+    // in (the backup command is admin-gated server-side), and backup is due.
+    if (!licenseValid || !user || user.role !== "Admin") return;
 
     async function runAutoBackup() {
       try {

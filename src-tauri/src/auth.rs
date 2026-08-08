@@ -12,9 +12,95 @@ use rand::RngCore;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 const SESSION_TTL_HOURS: i64 = 12;
 const MAX_SESSIONS_PER_USER: usize = 5;
+
+const RESET_MAX_ATTEMPTS: usize = 5;
+const RESET_WINDOW_SECS: u64 = 900; // 15 minutes
+
+// ─── Login & reset throttling ───────────────────────────────────────────────
+
+const LOGIN_MAX_ATTEMPTS: usize = 5;
+const LOGIN_WINDOW_SECS: u64 = 300; // 5 minutes
+
+/// Tracks failed login attempts per username to throttle brute force.
+static LOGIN_ATTEMPTS: OnceLock<Mutex<HashMap<String, Vec<Instant>>>> = OnceLock::new();
+
+fn login_attempts() -> &'static Mutex<HashMap<String, Vec<Instant>>> {
+    LOGIN_ATTEMPTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Returns true when the username has exceeded the allowed number of failed
+/// login attempts within the window.
+pub fn is_login_locked(username: &str) -> bool {
+    let now = Instant::now();
+    let cutoff = now - std::time::Duration::from_secs(LOGIN_WINDOW_SECS);
+    let mut map = login_attempts().lock().unwrap();
+    let attempts = map.entry(username.to_string()).or_insert_with(Vec::new);
+    attempts.retain(|t| *t > cutoff);
+    attempts.len() >= LOGIN_MAX_ATTEMPTS
+}
+
+/// Records a failed login attempt for the given username.
+pub fn record_login_attempt(username: &str) {
+    let now = Instant::now();
+    let cutoff = now - std::time::Duration::from_secs(LOGIN_WINDOW_SECS);
+    let mut map = login_attempts().lock().unwrap();
+    let attempts = map.entry(username.to_string()).or_insert_with(Vec::new);
+    attempts.retain(|t| *t > cutoff);
+    attempts.push(now);
+}
+
+/// Clears recorded login attempts for the given username (successful login).
+pub fn clear_login_attempts(username: &str) {
+    if let Ok(mut map) = login_attempts().lock() {
+        map.remove(username);
+    }
+}
+
+// Password-reset throttling is stored in the `reset_attempts` table so the
+// counter survives an app restart and a local attacker cannot trivially reset
+// it by relaunching the process.
+
+/// Returns true when the username has exceeded the allowed number of failed
+/// reset attempts within the window.
+pub fn is_reset_locked(conn: &rusqlite::Connection, username: &str) -> bool {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let row: Option<(i64, i64)> = conn.query_row(
+        "SELECT count, window_start FROM reset_attempts WHERE username = ?1",
+        [username], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).ok();
+    match row {
+        Some((count, window_start)) => {
+            if now.saturating_sub(window_start as u64) >= RESET_WINDOW_SECS {
+                let _ = conn.execute("DELETE FROM reset_attempts WHERE username = ?1", [username]);
+                false
+            } else {
+                count as usize >= RESET_MAX_ATTEMPTS
+            }
+        }
+        None => false,
+    }
+}
+
+/// Records a failed reset attempt for the given username.
+pub fn record_reset_attempt(conn: &rusqlite::Connection, username: &str) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let _ = conn.execute(
+        "INSERT INTO reset_attempts (username, count, window_start) VALUES (?1, 1, ?2)
+         ON CONFLICT(username) DO UPDATE SET count = count + 1",
+        rusqlite::params![username, now as i64],
+    );
+}
+
+/// Clears recorded reset attempts for the given username (successful reset).
+pub fn clear_reset_attempts(conn: &rusqlite::Connection, username: &str) {
+    let _ = conn.execute("DELETE FROM reset_attempts WHERE username = ?1", [username]);
+}
 
 #[derive(Clone, Debug)]
 pub struct Session {
@@ -137,7 +223,13 @@ pub const ADMIN_COMMANDS: &[&str] = &[
     "import_backup_file",
     // Structural table changes
     "add_table",
+    "add_tables",
     "delete_table",
+    "get_table_categories",
+    "add_table_category",
+    "update_table_category",
+    "delete_table_category",
+    "admin_update_table_status",
     // Staff
     "get_staff",
     "add_staff",
@@ -157,8 +249,17 @@ pub const ADMIN_COMMANDS: &[&str] = &[
     "get_analytics_report",
     "get_detailed_report",
     "save_text_report",
+    // Backup (copies the entire live database to disk)
+    "check_and_run_auto_backup",
+    // Attendance exposes all staff HR data (names, clock in/out)
+    "get_attendance",
     // Admin password confirmation (backup / restore gates)
     "verify_admin_password",
+    // License metadata (used on the admin Settings page)
+    "get_license_info",
+    // User management
+    "get_users",
+    "get_user_role_by_username",
     // Payroll
     "get_payroll_summary",
     "process_payout",

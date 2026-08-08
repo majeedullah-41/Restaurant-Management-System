@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '../lib/api';
-import { formatCurrency } from '../lib/utils';
+import { formatCurrency, todayLocal } from '../lib/utils';
 import { useNavigate } from 'react-router-dom';
 import { 
   TrendingUp, ShoppingBag, PieChart, 
@@ -30,11 +30,13 @@ interface TodaySale {
 
 interface DetailedTableStatus {
   id: number;
+  table_id: number;
   table_number: number;
   status: string;
   active_order_id: number | null;
   active_order_total: number | null;
   elapsed_minutes: number | null;
+  category_name: string | null;
 }
 
 interface StaffDropdown {
@@ -70,7 +72,7 @@ export default function CashierDashboard() {
     try {
       await invoke("init_tables_if_needed");
       
-      const clientDate = new Date().toISOString().split('T')[0];
+      const clientDate = todayLocal();
       
       const _stats = await invoke<CashierStats>("get_cashier_dashboard_stats", { clientDate });
       setStats(_stats);
@@ -230,7 +232,7 @@ export default function CashierDashboard() {
                             setAlertModal({ title: "Table Unavailable", message: `Cannot open order: Table is marked as ${table.status} by admin.`, type: "warning" });
                             return;
                           }
-                          navigate(`/cashier/pos/${table.table_number}`);
+                          navigate(`/cashier/pos/${table.table_id}`);
                         }}
                         className={`relative border rounded-xl p-4 flex flex-col justify-center items-center h-28 transition-all hover:-translate-y-1 group ${getTableColor(table.status)} ${(table.status === 'Maintenance' || table.status === 'Reserved') ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
@@ -260,13 +262,18 @@ export default function CashierDashboard() {
                           </span>
                         </div>
                         
-                        <div className="z-10 flex flex-col items-center">
-                          <span className="text-xs font-medium uppercase tracking-wider mb-0.5 opacity-90">
-                            {table.status === 'Available' ? 'Vacant' : table.status}
-                          </span>
-                          <span className="text-xs font-bold opacity-100">
-                            {formatCurrency((table.active_order_total || 0))}
-                          </span>
+                          <div className="z-10 flex flex-col items-center">
+                            <span className="text-xs font-medium uppercase tracking-wider mb-0.5 opacity-90">
+                              {table.status === 'Available' ? 'Vacant' : table.status}
+                            </span>
+                            {table.category_name && (
+                              <span className="text-[9px] font-medium text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded-full mb-0.5">
+                                {table.category_name}
+                              </span>
+                            )}
+                            <span className="text-xs font-bold opacity-100">
+                              {formatCurrency((table.active_order_total || 0))}
+                            </span>
                           {table.status === 'Occupied' && (
                             <div className="flex items-center space-x-1 mt-1 opacity-70 text-[9px]">
                               <Clock size={9} />

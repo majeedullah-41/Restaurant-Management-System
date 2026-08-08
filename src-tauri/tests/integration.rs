@@ -44,11 +44,14 @@ fn test_delivery_checkout_status() {
     db::init_tables_if_needed().unwrap();
     
     // Ensure table 99 exists for our order
-    let _ = db::add_table(99); 
+    let _ = db::add_table(99);
 
     // 3. Create an order on table 99
     let order = db::get_or_create_order(99).expect("Failed to create order");
     let order_id = order.id;
+
+    // Add an item so the server-side checkout recomputation has data to work from
+    db::add_item_to_order(order_id, 1, "Burger".to_string(), 100.0).expect("Failed to add item");
 
     // 4. Checkout the order as "Delivery"
     db::checkout_order(
@@ -57,9 +60,9 @@ fn test_delivery_checkout_status() {
         "Delivery".to_string(),
         None, // customer_id
         100.0,
+        16.0,
         0.0,
-        0.0,
-        100.0,
+        116.0,
         0.0,
         "Test Cashier".to_string(),
         "".to_string(), // order_note is String, not Option<String>

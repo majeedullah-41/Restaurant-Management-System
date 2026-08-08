@@ -10,7 +10,9 @@ import DateFilterToolbar from "../components/DateFilterToolbar";
 
 interface OrderHistory {
   id: number;
+  table_id: number;
   table_number: number;
+  table_category_name?: string;
   status: string;
   total_items: number;
   total_price: number;
@@ -40,10 +42,11 @@ interface OrderItem {
 }
 
 const EditablePayable = ({ order, onDiscountUpdated }: { order: OrderHistory, onDiscountUpdated: (orderId: number, discountAmt: number) => void }) => {
-  const [val, setVal] = useState<string>((order.total_price - order.discount_amount).toFixed(2));
-  
+  const grossTotal = order.total_price + order.discount_amount;
+  const [val, setVal] = useState<string>(order.total_price.toFixed(2));
+
   useEffect(() => {
-    setVal((order.total_price - order.discount_amount).toFixed(2));
+    setVal(order.total_price.toFixed(2));
   }, [order.total_price, order.discount_amount]);
 
   return (
@@ -61,8 +64,8 @@ const EditablePayable = ({ order, onDiscountUpdated }: { order: OrderHistory, on
               setVal(order.total_price.toFixed(2));
               return;
             }
-            const capped = Math.min(parsed, order.total_price);
-            const discountAmt = order.total_price - capped;
+            const capped = Math.min(parsed, grossTotal);
+            const discountAmt = Math.max(0, grossTotal - capped);
             try {
               await invoke("update_order_discount", { orderId: order.id, discountAmount: discountAmt });
               onDiscountUpdated(order.id, discountAmt);
@@ -103,7 +106,7 @@ export default function Orders() {
   const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
 
   const handleDiscountUpdated = (orderId: number, discountAmt: number) => {
-    setAllOrders(prev => prev.map(o => o.id === orderId ? { ...o, discount_amount: discountAmt } : o));
+    setAllOrders(prev => prev.map(o => o.id === orderId ? { ...o, discount_amount: discountAmt, total_price: o.total_price + o.discount_amount - discountAmt } : o));
   };
 
   // Filter orders based on the current page
@@ -255,7 +258,9 @@ export default function Orders() {
                             {expandedOrderId === order.id ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
                             <span>#{order.id}</span>
                           </td>
-                          <td className="p-4 font-medium text-slate-700 dark:text-slate-300">{order.table_number === 0 ? 'Walk-in' : `Table ${order.table_number}`}</td>
+                          <td className="p-4 font-medium text-slate-700 dark:text-slate-300">
+                            {order.table_number === 0 ? 'Walk-in' : (order.table_category_name ? `${order.table_category_name} - Table ${order.table_number.toString().padStart(2, '0')}` : `Table ${order.table_number.toString().padStart(2, '0')}`)}
+                          </td>
                           <td className="p-4">
                             <span className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${
                               order.status === 'Open'
@@ -279,7 +284,7 @@ export default function Orders() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        navigate(`${basePath}/pos/${order.table_number}/${order.id}`);
+                                        navigate(`${basePath}/pos/${order.table_id}/${order.id}`);
                                       }}
                                       className="inline-flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm shadow-blue-600/20"
                                     >

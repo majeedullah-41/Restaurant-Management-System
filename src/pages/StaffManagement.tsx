@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "../lib/api";
-import { formatCurrency } from "../lib/utils";
+import { formatCurrency, todayLocal } from "../lib/utils";
 import { Plus, Trash2, UserCircle, X, Edit2, Clock } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
@@ -46,7 +46,7 @@ export default function StaffManagement() {
 
   // Attendance State
   const [attendanceRecords, setAttendanceRecords] = useState<any[]>([]);
-  const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [attendanceDate, setAttendanceDate] = useState(todayLocal());
 
   // Clock In/Out State
   const [clockCategoryId, setClockCategoryId] = useState<number | "">("");

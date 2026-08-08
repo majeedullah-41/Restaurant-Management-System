@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "../lib/api";
-import { formatCurrency } from "../lib/utils";
+import { formatCurrency, todayLocal } from "../lib/utils";
 import { Plus, Trash2, Landmark, X } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
@@ -25,6 +25,7 @@ export default function Expenses() {
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("Groceries");
   const [note, setNote] = useState("");
+  const [expenseDate, setExpenseDate] = useState(todayLocal());
 
   const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
 
@@ -47,7 +48,7 @@ export default function Expenses() {
     try {
       await invoke("add_expense", { 
         amount: parseFloat(amount), 
-        date: new Date().toISOString().split('T')[0], 
+        date: expenseDate, 
         category, 
         note 
       });
@@ -55,6 +56,7 @@ export default function Expenses() {
       setAmount("");
       setCategory("Groceries");
       setNote("");
+      setExpenseDate(todayLocal());
       loadExpenses();
     } catch (err) {
       console.error(err);
@@ -131,6 +133,13 @@ export default function Expenses() {
                   <option value="Maintenance">Maintenance & Repairs</option>
                   <option value="Miscellaneous">Miscellaneous</option>
                 </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Date</label>
+                <input 
+                  type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)}
+                  className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" required
+                />
               </div>
               <div>
                 <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Note (Optional)</label>

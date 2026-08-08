@@ -35,3 +35,13 @@ export function formatDateTime(value: string | null | undefined): string {
   const d = new Date(value);
   return isNaN(d.getTime()) ? value : d.toLocaleString();
 }
+
+/**
+ * Returns today's date as a local (not UTC) "YYYY-MM-DD" string. Backend
+ * queries use `date('now','localtime')`, so sending the UTC date can select
+ * the wrong day for timezones east of UTC between 00:00–04:59 local.
+ */
+export function todayLocal(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
