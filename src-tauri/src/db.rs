@@ -3615,7 +3615,7 @@ pub fn import_backup_file(file_path: String) -> Result<String, String> {
     let safety_file = backups_dir.join(format!("pre-import-{}.db", timestamp));
 
     // Save existing license before overwriting
-    let mut current_license: Option<(String, String)> = None;
+    let mut current_license: Option<(String, String, Option<String>, Option<String>)> = None;
     if db_path.exists() {
         // Flush any un-checkpointed WAL frames so the safety copy is complete
         // and matches what the running connection sees.
@@ -3627,11 +3627,14 @@ pub fn import_backup_file(file_path: String) -> Result<String, String> {
             .map_err(|e| format!("Failed to create safety backup of current database: {}", e))?;
 
         if let Ok(old_conn) = Connection::open(db_path) {
-            if let Ok(mut stmt) = old_conn.prepare("SELECT current_key, expiry_date FROM license LIMIT 1") {
+            // Include activated_at and last_validated_date so they are preserved
+            if let Ok(mut stmt) = old_conn.prepare("SELECT current_key, expiry_date, activated_at, last_validated_date FROM license LIMIT 1") {
                 if let Ok(mut rows) = stmt.query([]) {
                     if let Ok(Some(row)) = rows.next() {
                         if let (Ok(k), Ok(e)) = (row.get::<_, String>(0), row.get::<_, String>(1)) {
-                            current_license = Some((k, e));
+                            let act: Option<String> = row.get(2).unwrap_or(None);
+                            let val: Option<String> = row.get(3).unwrap_or(None);
+                            current_license = Some((k, e, act, val));
                         }
                     }
                 }
@@ -3651,10 +3654,10 @@ pub fn import_backup_file(file_path: String) -> Result<String, String> {
     let conn = slot.as_ref().expect("Database connection not initialized");
 
     // Restore the license to the newly imported database
-    if let Some((key, expiry)) = current_license {
-        let _ = conn.execute("CREATE TABLE IF NOT EXISTS license (id INTEGER PRIMARY KEY, current_key TEXT, expiry_date TEXT)", []);
+    if let Some((key, expiry, activated, validated)) = current_license {
+        let _ = conn.execute("CREATE TABLE IF NOT EXISTS license (id INTEGER PRIMARY KEY, current_key TEXT, expiry_date TEXT, activated_at TEXT, last_validated_date TEXT)", []);
         let _ = conn.execute("DELETE FROM license", []);
-        let _ = conn.execute("INSERT INTO license (current_key, expiry_date) VALUES (?1, ?2)", rusqlite::params![key, expiry]);
+        let _ = conn.execute("INSERT INTO license (current_key, expiry_date, activated_at, last_validated_date) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![key, expiry, activated, validated]);
     }
 
     run_migrations(conn)?;
