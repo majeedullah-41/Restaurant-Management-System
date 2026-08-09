@@ -352,6 +352,34 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
     conn.execute("ALTER TABLE users ADD COLUMN security_answer TEXT", []).ok();
     conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0", []).ok();
 
+    // Enforce case-insensitive unique usernames at the data layer. Without this,
+    // two accounts can differ only in case (e.g. "Admin@x.com" and "admin@x.com")
+    // and the case-insensitive login lookup becomes ambiguous. First rename any
+    // legacy case-insensitive duplicates (preferring to keep an Admin account),
+    // then build the unique index. The existing column-level UNIQUE constraint
+    // only catches exact-case duplicates, so this closes the remaining gap.
+    {
+        let _ = conn.execute(
+            "UPDATE users SET username = username || '-dup' WHERE id IN (
+                SELECT u.id FROM users u
+                WHERE LOWER(u.username) IN (
+                    SELECT LOWER(username) FROM users GROUP BY LOWER(username) HAVING COUNT(*) > 1
+                )
+                AND u.id NOT IN (
+                    SELECT COALESCE(MIN(CASE WHEN r.name = 'Admin' THEN u2.id END),
+                                    MIN(u2.id))
+                    FROM users u2 JOIN roles r ON u2.role_id = r.id
+                    GROUP BY LOWER(u2.username)
+                )
+            )",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_ci ON users(LOWER(username))",
+            [],
+        );
+    }
+
     // 6b. Security-answer hashing migration: legacy plaintext answers are
     // upgraded to bcrypt hashes (lowercased for case-insensitive matching) so
     // anyone with file access to the DB cannot read recovery answers.
@@ -438,6 +466,97 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
     conn.execute("ALTER TABLE orders ADD COLUMN table_id INTEGER DEFAULT 0", []).ok();
     conn.execute("UPDATE orders SET table_id = (SELECT id FROM table_status WHERE table_status.table_number = orders.table_number LIMIT 1) WHERE table_number > 0 AND table_id = 0", []).ok();
 
+    // 10. Payroll overhaul: payroll_records becomes the source of truth for
+    //     payroll, and expenses gain an explicit reference to what created them.
+    //     These blocks are idempotent and safe to re-run on every startup.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS payroll_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            staff_id INTEGER NOT NULL,
+            base_salary REAL NOT NULL DEFAULT 0,
+            bonus REAL NOT NULL DEFAULT 0,
+            deduction REAL NOT NULL DEFAULT 0,
+            advance_deduction REAL NOT NULL DEFAULT 0,
+            gross_pay REAL NOT NULL DEFAULT 0,
+            net_pay REAL NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'Pending',
+            payroll_id TEXT,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+            paid_at TEXT,
+            FOREIGN KEY(staff_id) REFERENCES staff(id)
+        )", []
+    ).map_err(|e| e.to_string())?;
+    // One payroll record per staff per period: structurally prevents double-pay.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_payroll_record_unique ON payroll_records(start_date, end_date, staff_id)",
+        [],
+    ).ok();
+    // Index used by the default "current month" lookup.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_payroll_record_period ON payroll_records(start_date, end_date)",
+        [],
+    ).ok();
+
+    // Expenses now link back to their originating payroll/advance by id.
+    conn.execute("ALTER TABLE expenses ADD COLUMN reference_type TEXT", []).ok();
+    conn.execute("ALTER TABLE expenses ADD COLUMN reference_id INTEGER", []).ok();
+
+    // Backfill expense references for existing data. Salary expenses created by
+    // the old batch payout carried a "Payroll: {name}" note but no record id, so
+    // they are tagged salary_payout with a NULL reference (deleting them will no
+    // longer cascade into payouts). Advance expenses are matched to their
+    // advance_salaries row by note so they get a real reference_id.
+    conn.execute(
+        "UPDATE expenses SET reference_type = 'salary_payout' WHERE reference_type IS NULL AND COALESCE(note, '') LIKE 'Payroll%'",
+        [],
+    ).ok();
+    conn.execute(
+        "UPDATE expenses SET reference_type = 'salary_advance', reference_id = (
+            SELECT a.id FROM advance_salaries a
+            WHERE a.amount = expenses.amount
+              AND a.date = expenses.date
+              AND COALESCE(note, '') LIKE 'Advance Salary: %'
+            LIMIT 1
+        ) WHERE reference_type IS NULL AND COALESCE(note, '') LIKE 'Advance Salary: %'",
+        [],
+    ).ok();
+
+    // Backfill payroll_records from the legacy salary_payouts table so existing
+    // paid history remains visible and reproducible under the new structure.
+    // Group legacy payouts by (staff, month) — the old system recorded one
+    // payout row per staff per payment, so the earliest payout in a month is the
+    // period payout. base_salary is reconstructed from the stored split.
+    conn.execute(
+        "INSERT OR IGNORE INTO payroll_records
+            (start_date, end_date, staff_id, base_salary, bonus, deduction, advance_deduction, gross_pay, net_pay, status, payroll_id, paid_at)
+         SELECT
+            date(min_p.date, 'start of month') AS start_date,
+            date(min_p.date, 'start of month', '+1 month', '-1 day') AS end_date,
+            min_p.staff_id,
+            CASE WHEN COALESCE(min_p.bonus,0) + COALESCE(min_p.deduction,0) + COALESCE(min_p.advance_deduction,0) = 0
+                 THEN min_p.amount ELSE min_p.amount + COALESCE(min_p.deduction,0) + COALESCE(min_p.advance_deduction,0) - COALESCE(min_p.bonus,0) END AS base_salary,
+            COALESCE(min_p.bonus, 0),
+            COALESCE(min_p.deduction, 0),
+            COALESCE(min_p.advance_deduction, 0),
+            COALESCE(min_p.amount,0) + COALESCE(min_p.deduction,0) + COALESCE(min_p.advance_deduction,0) AS gross_pay,
+            min_p.amount AS net_pay,
+            'Paid' AS status,
+            substr(strftime('%Y', min_p.date), 3) || '-' || strftime('%m', min_p.date) || '-' || printf('%04d', min_p.id) AS payroll_id,
+            min_p.date AS paid_at
+         FROM (
+             SELECT staff_id, MIN(date) AS date, MIN(id) AS id, MIN(amount) AS amount,
+                    MIN(COALESCE(bonus,0)) AS bonus, MIN(COALESCE(deduction,0)) AS deduction,
+                    MIN(COALESCE(advance_deduction,0)) AS advance_deduction
+             FROM salary_payouts
+             GROUP BY staff_id, substr(date, 1, 7)
+         ) min_p
+         WHERE EXISTS (SELECT 1 FROM staff s WHERE s.id = min_p.staff_id)",
+        [],
+    ).map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -452,6 +571,7 @@ pub fn update_user_profile(
     display_name: Option<String>,
     new_role: Option<String>,
 ) -> Result<(), String> {
+    let new_username = new_username.trim().to_string();
     // Server-side authorization: never trust a client-supplied override flag.
     let caller = crate::auth::validate(&session_token)?;
     let is_admin = caller.role == "Admin";
@@ -475,11 +595,36 @@ pub fn update_user_profile(
 
     let conn = get_conn()?;
 
-    // First check if user exists
-    let mut stmt = conn.prepare("SELECT password_hash FROM users WHERE username = ?").map_err(|e| e.to_string())?;
-    
-    let db_password = stmt.query_row([&old_username], |row| row.get::<_, String>(0))
-        .map_err(|_| "User not found".to_string())?;
+    // First check if user exists. Usernames are case-insensitive for login, so
+    // match case-insensitively here too. The DB enforces a case-insensitive
+    // unique index on username; if multiple rows still match (legacy data),
+    // refuse to operate on an ambiguous record.
+    let mut stmt = conn.prepare("SELECT id, password_hash, username FROM users WHERE LOWER(username) = LOWER(?)").map_err(|e| e.to_string())?;
+    let mut matches: Vec<(i32, String, String)> = stmt.query_map([&old_username], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    if matches.is_empty() {
+        return Err("User not found".to_string());
+    }
+    if matches.len() > 1 {
+        return Err("Multiple accounts share this username. Please contact an administrator to resolve the duplicate.".to_string());
+    }
+    let (user_id, db_password, db_username) = matches.remove(0);
+
+    // Check if new_username is already taken by another user (case-insensitive).
+    // Exclude by id rather than by raw username so a case-only rename of the
+    // current user is not mistaken for a different account.
+    let count: i32 = conn.query_row(
+        "SELECT COUNT(*) FROM users WHERE LOWER(username) = LOWER(?) AND id != ?",
+        rusqlite::params![&new_username, &user_id],
+        |row| row.get(0)
+    ).unwrap_or(0);
+
+    if count > 0 {
+        return Err("This username is already taken by another user.".to_string());
+    }
 
     // If they want to change password, they must provide the correct current password
     if let Some(new_pw) = new_password {
@@ -501,20 +646,20 @@ pub fn update_user_profile(
 
         // Update username, password, and display_name
         conn.execute(
-            "UPDATE users SET username = ?, password_hash = ?, display_name = ?, must_change_password = 0 WHERE username = ?",
-            [&new_username, &new_pw_hash, &display_name.unwrap_or_default(), &old_username],
+            "UPDATE users SET username = ?, password_hash = ?, display_name = ?, must_change_password = 0 WHERE id = ?",
+            rusqlite::params![&new_username, &new_pw_hash, &display_name.unwrap_or_default(), user_id],
         ).map_err(|e| e.to_string())?;
     } else {
         // Just update username and display_name
         conn.execute(
-            "UPDATE users SET username = ?, display_name = ? WHERE username = ?",
-            [&new_username, &display_name.unwrap_or_default(), &old_username],
+            "UPDATE users SET username = ?, display_name = ? WHERE id = ?",
+            rusqlite::params![&new_username, &display_name.unwrap_or_default(), user_id],
         ).map_err(|e| e.to_string())?;
     }
 
     if let Some(role) = new_role {
         if let Ok(role_id) = conn.query_row("SELECT id FROM roles WHERE name = ?", [&role], |row| row.get::<_, i32>(0)) {
-            conn.execute("UPDATE users SET role_id = ? WHERE username = ?", rusqlite::params![role_id, &new_username]).ok();
+            conn.execute("UPDATE users SET role_id = ? WHERE id = ?", rusqlite::params![role_id, user_id]).ok();
         }
     }
 
@@ -564,8 +709,9 @@ pub fn get_security_question(username: String) -> Result<String, String> {
     let conn = get_conn()?;
     // Return the same message whether the user doesn't exist or has no question,
     // so this endpoint cannot be used to enumerate registered usernames.
-    let mut stmt = conn.prepare("SELECT security_question FROM users WHERE username = ?").map_err(|e| e.to_string())?;
-    let question: Option<Option<String>> = stmt.query_row([&username], |row| row.get(0)).ok();
+    let username_lower = username.to_lowercase();
+    let mut stmt = conn.prepare("SELECT security_question FROM users WHERE LOWER(username) = ?").map_err(|e| e.to_string())?;
+    let question: Option<Option<String>> = stmt.query_row([&username_lower], |row| row.get(0)).ok();
     match question {
         Some(Some(q)) => Ok(q),
         _ => Err("Invalid username or no security question set for this account".to_string()),
@@ -579,18 +725,19 @@ pub fn reset_password_with_security_answer(username: String, answer: String, new
     }
 
     let conn = get_conn()?;
-    if crate::auth::is_reset_locked(&conn, &username) {
+    let username_lower = username.to_lowercase();
+    if crate::auth::is_reset_locked(&conn, &username_lower) {
         return Err("Too many reset attempts. Please try again later.".to_string());
     }
 
-    let mut stmt = conn.prepare("SELECT security_answer FROM users WHERE username = ?").map_err(|e| e.to_string())?;
-    let db_answer: Option<Option<String>> = stmt.query_row([&username], |row| row.get(0)).ok();
+    let mut stmt = conn.prepare("SELECT security_answer, username FROM users WHERE LOWER(username) = ?").map_err(|e| e.to_string())?;
+    let db_res: Option<(Option<String>, String)> = stmt.query_row([&username_lower], |row| Ok((row.get(0).ok(), row.get(1)?))).ok();
 
     // Generic failure so usernames cannot be enumerated through the reset flow.
     let generic_fail = || Err("Invalid username or security answer. Please try again.".to_string());
 
-    let stored = match db_answer {
-        Some(Some(a)) => a,
+    let (stored, db_username) = match db_res {
+        Some((Some(a), u)) => (a, u),
         _ => return generic_fail(),
     };
 
@@ -607,14 +754,14 @@ pub fn reset_password_with_security_answer(username: String, answer: String, new
     };
 
     if !valid {
-        crate::auth::record_reset_attempt(&conn, &username);
+        crate::auth::record_reset_attempt(&conn, &username_lower);
         return generic_fail();
     }
 
     let new_pw_hash = bcrypt::hash(&new_password, bcrypt::DEFAULT_COST).map_err(|e| e.to_string())?;
     conn.execute(
         "UPDATE users SET password_hash = ?, must_change_password = 0 WHERE username = ?",
-        rusqlite::params![&new_pw_hash, &username],
+        rusqlite::params![&new_pw_hash, &db_username],
     ).map_err(|e| e.to_string())?;
 
     // Upgrade a legacy plaintext answer to a hash so it stays protected going forward.
@@ -622,11 +769,11 @@ pub fn reset_password_with_security_answer(username: String, answer: String, new
         let answer_hash = bcrypt::hash(&normalized_answer, bcrypt::DEFAULT_COST).map_err(|e| e.to_string())?;
         conn.execute(
             "UPDATE users SET security_answer = ?1 WHERE username = ?2",
-            rusqlite::params![answer_hash, username],
+            rusqlite::params![answer_hash, db_username],
         ).map_err(|e| e.to_string())?;
     }
 
-    crate::auth::clear_reset_attempts(&conn, &username);
+    crate::auth::clear_reset_attempts(&conn, &username_lower);
     Ok(())
 }
 
@@ -708,53 +855,75 @@ pub fn login(email: String, password: String) -> LoginResponse {
     };
 
     // Throttle brute-force attempts per username (locked after 5 failures / 5 min).
-    if crate::auth::is_login_locked(&email) {
+    // Normalize email (username) to lowercase for case-insensitive login
+    let email_lower = email.trim().to_lowercase();
+    let password = password.trim().to_string();
+
+    if crate::auth::is_login_locked(&email_lower) {
         return fail("Too many failed login attempts. Please try again in a few minutes.");
     }
 
-    let mut stmt = match conn.prepare(
-        "SELECT r.name, u.display_name, u.password_hash, COALESCE(u.must_change_password, 0) FROM users u 
-         JOIN roles r ON u.role_id = r.id 
-         WHERE u.username = ?1"
-    ) {
-        Ok(s) => s,
-        Err(_) => return fail("Query preparation failed"),
-    };
+    let mut matches: Vec<(String, Option<String>, String, bool, String)> = Vec::new();
 
-    let mut rows = match stmt.query([&email]) {
-        Ok(r) => r,
-        Err(_) => return fail("Query execution failed"),
-    };
+    {
+        let mut stmt = match conn.prepare(
+            "SELECT r.name, u.display_name, u.password_hash, COALESCE(u.must_change_password, 0), u.username FROM users u 
+             JOIN roles r ON u.role_id = r.id 
+             WHERE LOWER(u.username) = ?1"
+        ) {
+            Ok(s) => s,
+            Err(_) => return fail("Query preparation failed"),
+        };
 
-    if let Ok(Some(row)) = rows.next() {
-        let role: String = row.get(0).unwrap_or_default();
-        let display_name: Option<String> = row.get(1).unwrap_or(None);
-        let password_hash: String = row.get(2).unwrap_or_default();
-        let must_change_password: bool = row.get::<_, i32>(3).unwrap_or(0) == 1;
-        
-        match bcrypt::verify(&password, &password_hash) {
-            Ok(true) => {
-                crate::auth::clear_login_attempts(&email);
-                let token = crate::auth::create_session(email.clone(), role.clone());
-                LoginResponse {
-                    success: true,
-                    role: Some(role),
-                    username: Some(email),
-                    display_name,
-                    session_token: Some(token),
-                    must_change_password,
-                    message: "Login successful".into(),
-                }
-            },
-            _ => {
-                crate::auth::record_login_attempt(&email);
-                fail("Invalid email or password")
-            }
+        let mut rows = match stmt.query([&email_lower]) {
+            Ok(r) => r,
+            Err(_) => return fail("Query execution failed"),
+        };
+
+        while let Ok(Some(row)) = rows.next() {
+            let role: String = row.get(0).unwrap_or_default();
+            let display_name: Option<String> = row.get(1).unwrap_or(None);
+            let password_hash: String = row.get(2).unwrap_or_default();
+            let must_change_password: bool = row.get::<_, i32>(3).unwrap_or(0) == 1;
+            let db_username: String = row.get(4).unwrap_or(email.clone());
+            matches.push((role, display_name, password_hash, must_change_password, db_username));
         }
-    } else {
-        crate::auth::record_login_attempt(&email);
-        fail("Invalid email or password")
     }
+
+    if matches.is_empty() {
+        crate::auth::record_login_attempt(&email_lower);
+        return fail("Invalid email or password");
+    }
+
+    // If several accounts share the same username case-insensitively, refuse
+    // to log in rather than silently authenticating to the first match.
+    // The DB enforces a case-insensitive unique index, but this guards legacy
+    // databases that may predate it.
+    if matches.len() > 1 {
+        return fail("Multiple accounts share this username. Please contact an administrator to resolve the duplicate.");
+    }
+
+    let (role, display_name, password_hash, must_change_password, db_username) = matches.remove(0);
+
+    match bcrypt::verify(&password, &password_hash) {
+        Ok(true) => {
+            crate::auth::clear_login_attempts(&email_lower);
+            let token = crate::auth::create_session(db_username.clone(), role.clone());
+            return LoginResponse {
+                success: true,
+                role: Some(role),
+                username: Some(db_username),
+                display_name,
+                session_token: Some(token),
+                must_change_password,
+                message: "Login successful".into(),
+            };
+        },
+        _ => {}
+    }
+
+    crate::auth::record_login_attempt(&email_lower);
+    fail("Invalid email or password")
 }
 
 /// Returns the currently authenticated user for the given session token,
@@ -2438,10 +2607,16 @@ pub fn add_expense(amount: f64, date: String, category: String, note: Option<Str
 pub fn delete_expense(id: i32) -> Result<String, String> {
     let mut conn_guard = get_conn()?;
     
-    // Fetch the expense details before deleting it
-    let mut stmt = conn_guard.prepare("SELECT amount, date, note FROM expenses WHERE id = ?1").map_err(|e| e.to_string())?;
+    // Fetch the expense details (including its reference) before deleting it.
+    let mut stmt = conn_guard.prepare("SELECT amount, date, note, reference_type, reference_id FROM expenses WHERE id = ?1").map_err(|e| e.to_string())?;
     let expense_data = stmt.query_row([&id], |row| {
-        Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?))
+        Ok((
+            row.get::<_, f64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<i64>>(4)?,
+        ))
     });
     drop(stmt);
 
@@ -2449,36 +2624,67 @@ pub fn delete_expense(id: i32) -> Result<String, String> {
 
     tx.execute("DELETE FROM expenses WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
 
-    if let Ok((amount, date, Some(note))) = expense_data {
-        if note.starts_with("Payroll: ") {
-            // Batch payout: one expense per staff member, note carries the name.
-            let staff_name = note.trim_start_matches("Payroll: ");
-            let mut stmt = tx.prepare("SELECT id FROM staff WHERE name = ?1").map_err(|e| e.to_string())?;
-            if let Ok(staff_id) = stmt.query_row([&staff_name], |row| row.get::<_, i32>(0)) {
-                tx.execute(
-                    "DELETE FROM salary_payouts WHERE staff_id = ?1 AND date = ?2",
-                    rusqlite::params![staff_id, date]
-                ).map_err(|e| e.to_string())?;
-            }
-        } else if note.starts_with("Payroll Processed") {
-            // Single payout: note has no staff name, so match the payout row by
-            // date and the net amount that was recorded as an expense.
-            tx.execute(
-                "DELETE FROM salary_payouts WHERE date = ?1 AND amount = ?2",
-                rusqlite::params![date, amount]
-            ).map_err(|e| e.to_string())?;
-        } else if note.starts_with("Advance Salary: ") {
+    if let Ok((amount, date, _note, reference_type, reference_id)) = expense_data {
+        match (reference_type.as_deref(), reference_id) {
             // Advance salary: delete the matching advance so it is no longer
             // shown as outstanding / deductible on the next payroll.
-            let rest = note.trim_start_matches("Advance Salary: ");
-            let staff_name = rest.split(" - ").next().unwrap_or("");
-            let mut stmt = tx.prepare("SELECT id FROM staff WHERE name = ?1").map_err(|e| e.to_string())?;
-            if let Ok(staff_id) = stmt.query_row([&staff_name], |row| row.get::<_, i32>(0)) {
-                tx.execute(
-                    "DELETE FROM advance_salaries WHERE staff_id = ?1 AND date = ?2 AND amount = ?3",
-                    rusqlite::params![staff_id, date, amount]
-                ).map_err(|e| e.to_string())?;
+            (Some("salary_advance"), Some(advance_id)) => {
+                tx.execute("DELETE FROM advance_salaries WHERE id = ?1", [&advance_id]).map_err(|e| e.to_string())?;
             }
+            // New-style payroll expense: cascade the reversal so the payroll
+            // record returns to Pending and its advance deductions are restored.
+            (Some("payroll"), Some(record_id)) => {
+                if let Ok((staff_id, advance_deduction)) = tx.query_row(
+                    "SELECT staff_id, COALESCE(advance_deduction, 0.0) FROM payroll_records WHERE id = ?1",
+                    [&record_id],
+                    |row| Ok((row.get::<_, i32>(0)?, row.get::<_, f64>(1)?))
+                ) {
+                    if advance_deduction > 0.0 {
+                        restore_advances(&tx, staff_id, advance_deduction)?;
+                    }
+                    tx.execute("DELETE FROM salary_payouts WHERE staff_id = ?1 AND date = ?2", rusqlite::params![staff_id, date]).map_err(|e| e.to_string())?;
+                    tx.execute(
+                        "UPDATE payroll_records SET status = 'Pending', payroll_id = NULL, paid_at = NULL, updated_at = datetime('now', 'localtime') WHERE id = ?1",
+                        [&record_id]
+                    ).map_err(|e| e.to_string())?;
+                }
+            }
+            // Legacy rows: fall back to the old note-based matching so nothing
+            // silently loses its payout/advance history.
+            (None, _) => {
+                let note = _note.unwrap_or_default();
+                if note.starts_with("Payroll: ") {
+                    // Batch payout: one expense per staff member, note carries the name.
+                    let staff_name = note.trim_start_matches("Payroll: ");
+                    let mut stmt = tx.prepare("SELECT id FROM staff WHERE name = ?1").map_err(|e| e.to_string())?;
+                    if let Ok(staff_id) = stmt.query_row([&staff_name], |row| row.get::<_, i32>(0)) {
+                        tx.execute(
+                            "DELETE FROM salary_payouts WHERE staff_id = ?1 AND date = ?2",
+                            rusqlite::params![staff_id, date]
+                        ).map_err(|e| e.to_string())?;
+                    }
+                } else if note.starts_with("Payroll Processed") {
+                    // Single payout: note has no staff name, so match the payout row by
+                    // date and the net amount that was recorded as an expense.
+                    tx.execute(
+                        "DELETE FROM salary_payouts WHERE date = ?1 AND amount = ?2",
+                        rusqlite::params![date, amount]
+                    ).map_err(|e| e.to_string())?;
+                } else if note.starts_with("Advance Salary: ") {
+                    // Advance salary: delete the matching advance so it is no longer
+                    // shown as outstanding / deductible on the next payroll.
+                    let rest = note.trim_start_matches("Advance Salary: ");
+                    let staff_name = rest.split(" - ").next().unwrap_or("");
+                    let mut stmt = tx.prepare("SELECT id FROM staff WHERE name = ?1").map_err(|e| e.to_string())?;
+                    if let Ok(staff_id) = stmt.query_row([&staff_name], |row| row.get::<_, i32>(0)) {
+                        tx.execute(
+                            "DELETE FROM advance_salaries WHERE staff_id = ?1 AND date = ?2 AND amount = ?3",
+                            rusqlite::params![staff_id, date, amount]
+                        ).map_err(|e| e.to_string())?;
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -3196,20 +3402,512 @@ pub fn pay_advance_salary(staff_id: i32, amount: f64, date: String, note: String
     let mut conn_guard = get_conn()?;
     let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
     
+    if !amount.is_finite() || amount <= 0.0 {
+        return Err("Advance amount must be a positive number.".into());
+    }
+
     tx.execute(
         "INSERT INTO advance_salaries (staff_id, amount, date, note) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![staff_id, amount, date, note]
     ).map_err(|e| e.to_string())?;
-    
+    let advance_id = tx.last_insert_rowid();
+
     tx.execute(
-        "INSERT INTO expenses (amount, date, category, note) VALUES (?1, ?2, 'Salaries', ?3)",
-        rusqlite::params![amount, date, format!("Advance Salary: {} - {}", staff_name, note)]
+        "INSERT INTO expenses (amount, date, category, note, reference_type, reference_id) VALUES (?1, ?2, 'Salaries', ?3, 'salary_advance', ?4)",
+        rusqlite::params![amount, date, format!("Advance Salary: {} - {}", staff_name, note), advance_id]
     ).map_err(|e| e.to_string())?;
     
     tx.commit().map_err(|e| e.to_string())?;
     
     Ok("Advance salary recorded successfully".to_string())
 }
+
+// ─── Payroll periods & payroll records ───────────────────────────────────────
+
+#[derive(serde::Serialize)]
+pub struct PayrollPeriodSummary {
+    pub total_staff: i32,
+    pub total_gross: f64,
+    pub advance_outstanding: f64,
+    pub total_paid: f64,
+    pub total_remaining: f64,
+    pub paid_count: i32,
+    pub pending_count: i32,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct PayrollRecordRow {
+    pub id: i32,
+    pub staff_id: i32,
+    pub name: String,
+    pub category_name: Option<String>,
+    pub base_salary: f64,
+    pub days_present: i32,
+    pub advance_balance: f64,
+    pub bonus: f64,
+    pub deduction: f64,
+    pub advance_deduction: f64,
+    pub gross_pay: f64,
+    pub net_pay: f64,
+    pub status: String,
+    pub payroll_id: Option<String>,
+    pub paid_at: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct PayrollPeriod {
+    pub start_date: String,
+    pub end_date: String,
+    pub summary: PayrollPeriodSummary,
+    pub rows: Vec<PayrollRecordRow>,
+}
+
+/// Returns the outstanding (undeducted) advance balance for a staff member.
+pub fn outstanding_advance(conn: &rusqlite::Connection, staff_id: i32) -> f64 {
+    conn.query_row(
+        "SELECT COALESCE(SUM(amount - COALESCE(deducted_amount, 0)), 0) FROM advance_salaries WHERE staff_id = ?1",
+        [&staff_id], |row| row.get(0),
+    ).unwrap_or(0.0)
+}
+
+fn map_payroll_row(row: &rusqlite::Row) -> rusqlite::Result<PayrollRecordRow> {
+    Ok(PayrollRecordRow {
+        id: row.get(0)?,
+        staff_id: row.get(1)?,
+        name: row.get(2)?,
+        category_name: row.get(3).unwrap_or(None),
+        base_salary: row.get(4).unwrap_or(0.0),
+        days_present: row.get(5).unwrap_or(0),
+        advance_balance: row.get(6).unwrap_or(0.0),
+        bonus: row.get(7).unwrap_or(0.0),
+        deduction: row.get(8).unwrap_or(0.0),
+        advance_deduction: row.get(9).unwrap_or(0.0),
+        gross_pay: row.get(10).unwrap_or(0.0),
+        net_pay: row.get(11).unwrap_or(0.0),
+        status: row.get(12).unwrap_or_else(|_| "Pending".to_string()),
+        payroll_id: row.get(13).unwrap_or(None),
+        paid_at: row.get(14).unwrap_or(None),
+    })
+}
+
+const PAYROLL_RECORD_SELECT: &str =
+    "SELECT pr.id, pr.staff_id, s.name, c.name, pr.base_salary,
+            (SELECT COUNT(DISTINCT a.date) FROM staff_attendance a WHERE a.staff_id = s.id AND a.date >= ?1 AND a.date <= ?2) AS days_present,
+            COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = s.id), 0) AS advance_balance,
+            pr.bonus, pr.deduction, pr.advance_deduction, pr.gross_pay, pr.net_pay, pr.status, pr.payroll_id, pr.paid_at
+     FROM payroll_records pr
+     JOIN staff s ON pr.staff_id = s.id
+     LEFT JOIN staff_categories c ON s.category_id = c.id
+     WHERE pr.start_date = ?1 AND pr.end_date = ?2";
+
+/// Loads (creating if needed) the payroll period and returns a summary plus
+/// every staff member's payroll record for that period. Pending records are
+/// automatically created from each staff member's current salary snapshot so
+/// the admin only has to review, adjust and confirm.
+#[tauri::command]
+pub fn get_payroll_period(start_date: String, end_date: String) -> Result<PayrollPeriod, String> {
+    let conn = get_conn()?;
+
+    // Create a Pending payroll record for every active staff member in this
+    // period if one does not already exist (INSERT OR IGNORE + unique index).
+    conn.execute(
+        "INSERT OR IGNORE INTO payroll_records (start_date, end_date, staff_id, base_salary, gross_pay, net_pay, status)
+         SELECT ?1, ?2, s.id, COALESCE(s.salary, 0), COALESCE(s.salary, 0), COALESCE(s.salary, 0), 'Pending'
+         FROM staff s WHERE COALESCE(s.status, 'Active') = 'Active'",
+        rusqlite::params![&start_date, &end_date],
+    ).map_err(|e| e.to_string())?;
+
+    // Recompute gross/net for pending records from their stored split so the
+    // table always reflects the latest saved adjustments.
+    conn.execute(
+        "UPDATE payroll_records SET
+            gross_pay = base_salary + bonus,
+            net_pay = base_salary + bonus - deduction - advance_deduction,
+            updated_at = datetime('now', 'localtime')
+         WHERE start_date = ?1 AND end_date = ?2 AND status = 'Pending'",
+        rusqlite::params![&start_date, &end_date],
+    ).map_err(|e| e.to_string())?;
+
+    let mut stmt = conn.prepare(PAYROLL_RECORD_SELECT).map_err(|e| e.to_string())?;
+    let mut rows = Vec::new();
+    let iter = stmt.query_map([&start_date, &end_date], map_payroll_row).map_err(|e| e.to_string())?;
+    for r in iter {
+        rows.push(r.map_err(|e| e.to_string())?);
+    }
+
+    let total_staff = rows.len() as i32;
+    let total_gross: f64 = rows.iter().map(|r| r.base_salary).sum();
+    let advance_outstanding: f64 = rows.iter().map(|r| r.advance_balance).sum();
+    let total_paid: f64 = rows.iter().filter(|r| r.status == "Paid").map(|r| r.net_pay).sum();
+    let total_remaining: f64 = rows.iter().filter(|r| r.status == "Pending").map(|r| r.net_pay).sum();
+    let paid_count = rows.iter().filter(|r| r.status == "Paid").count() as i32;
+    let pending_count = rows.iter().filter(|r| r.status == "Pending").count() as i32;
+
+    Ok(PayrollPeriod {
+        start_date,
+        end_date,
+        summary: PayrollPeriodSummary {
+            total_staff,
+            total_gross,
+            advance_outstanding,
+            total_paid,
+            total_remaining,
+            paid_count,
+            pending_count,
+        },
+        rows,
+    })
+}
+
+/// Saves adjustments to a Pending payroll record. Advance deduction may be any
+/// value up to the outstanding balance; net pay can never go negative.
+#[tauri::command]
+pub fn update_payroll_record(record_id: i32, bonus: f64, deduction: f64, advance_deduction: f64) -> Result<PayrollRecordRow, String> {
+    let conn = get_conn()?;
+
+    let (staff_id, base_salary, status): (i32, f64, String) = conn.query_row(
+        "SELECT staff_id, base_salary, status FROM payroll_records WHERE id = ?1",
+        [&record_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).map_err(|_| "Payroll record not found.".to_string())?;
+
+    if status != "Pending" {
+        return Err("This payroll has already been paid and is locked.".to_string());
+    }
+
+    if !bonus.is_finite() || !deduction.is_finite() || !advance_deduction.is_finite()
+        || bonus < 0.0 || deduction < 0.0 || advance_deduction < 0.0 {
+        return Err("Bonus and deductions must be non-negative numbers.".to_string());
+    }
+
+    let outstanding = outstanding_advance(&conn, staff_id);
+    if advance_deduction > outstanding + 0.001 {
+        return Err(format!(
+            "Advance deduction of {:.2} exceeds the outstanding balance of {:.2}.",
+            advance_deduction, outstanding
+        ));
+    }
+
+    let net_pay = base_salary + bonus - deduction - advance_deduction;
+    if net_pay < -0.001 {
+        return Err(format!(
+            "Net pay would be negative ({:.2}). Reduce the deduction or advance deduction.",
+            net_pay
+        ));
+    }
+    let net_pay = net_pay.max(0.0);
+
+    conn.execute(
+        "UPDATE payroll_records SET bonus = ?1, deduction = ?2, advance_deduction = ?3,
+                gross_pay = ?4, net_pay = ?5, updated_at = datetime('now', 'localtime')
+         WHERE id = ?6",
+        rusqlite::params![bonus, deduction, advance_deduction, base_salary + bonus, net_pay, record_id],
+    ).map_err(|e| e.to_string())?;
+
+    let (start_date, end_date): (String, String) = conn.query_row(
+        "SELECT start_date, end_date FROM payroll_records WHERE id = ?1",
+        [&record_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).map_err(|_| "Payroll record not found.".to_string())?;
+    conn.query_row(PAYROLL_RECORD_SELECT, rusqlite::params![&start_date, &end_date], map_payroll_row)
+        .map_err(|e| format!("Payroll record not found: {}", e))
+}
+
+/// Returns a single payroll record row by id (period bounds are looked up so
+/// attendance days and advance balance can be computed consistently).
+#[tauri::command]
+pub fn get_payroll_record(record_id: i32) -> Result<PayrollRecordRow, String> {
+    let conn = get_conn()?;
+    let (start_date, end_date): (String, String) = conn.query_row(
+        "SELECT start_date, end_date FROM payroll_records WHERE id = ?1",
+        [&record_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).map_err(|_| "Payroll record not found.".to_string())?;
+    conn.query_row(PAYROLL_RECORD_SELECT, rusqlite::params![&start_date, &end_date], map_payroll_row)
+        .map_err(|e| format!("Payroll record not found: {}", e))
+}
+
+/// Reverses a previous advance deduction, oldest advances first, up to `amount`.
+/// Returns how much was actually restored.
+fn restore_advances(tx: &rusqlite::Transaction, staff_id: i32, mut amount: f64) -> std::result::Result<f64, String> {
+    if amount <= 0.0 {
+        return Ok(0.0);
+    }
+    let mut stmt = tx.prepare(
+        "SELECT id, amount, COALESCE(deducted_amount, 0.0) FROM advance_salaries
+         WHERE staff_id = ?1 AND COALESCE(deducted_amount, 0.0) > 0.0 ORDER BY id DESC"
+    ).map_err(|e| e.to_string())?;
+    let rows: Vec<(i32, f64, f64)> = stmt.query_map([&staff_id], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    }).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
+    drop(stmt);
+
+    let mut restored_total = 0.0;
+    for (id, advance_amount, already_deducted) in rows {
+        if amount <= 0.001 { break; }
+        if already_deducted <= 0.001 { continue; }
+        let to_restore = if already_deducted > amount { amount } else { already_deducted };
+        let new_deducted = already_deducted - to_restore;
+        let is_deducted = if new_deducted <= 0.001 { 0 } else { 1 };
+        tx.execute(
+            "UPDATE advance_salaries SET deducted_amount = ?1, is_deducted = ?2 WHERE id = ?3",
+            rusqlite::params![new_deducted, is_deducted, id]
+        ).map_err(|e| e.to_string())?;
+        amount -= to_restore;
+        restored_total += to_restore;
+    }
+    Ok(restored_total)
+}
+
+/// Confirms the payroll for a period: marks every pending record as Paid,
+/// deducts advances, records a salary payout and a matching expense for each
+/// staff member. Idempotent per record (only Pending rows are processed).
+#[tauri::command]
+pub fn process_payroll_batch(start_date: String, end_date: String) -> Result<String, String> {
+    let mut conn_guard = get_conn()?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
+
+    let mut stmt = tx.prepare(
+        "SELECT pr.id, pr.staff_id, pr.base_salary, pr.bonus, pr.deduction, pr.advance_deduction, s.name
+         FROM payroll_records pr JOIN staff s ON pr.staff_id = s.id
+         WHERE pr.start_date = ?1 AND pr.end_date = ?2 AND pr.status = 'Pending'
+         ORDER BY pr.id"
+    ).map_err(|e| e.to_string())?;
+    let rows: Vec<(i32, i32, f64, f64, f64, f64, String)> = stmt.query_map(
+        rusqlite::params![&start_date, &end_date],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?))
+    ).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    if rows.is_empty() {
+        return Err("No pending payroll records found for this period.".to_string());
+    }
+
+    let mut total_paid = 0.0;
+    let mut count = 0;
+
+    for (record_id, staff_id, base_salary, bonus, deduction, advance_deduction, name) in rows {
+        // Recompute using the amount actually recovered from advances so a
+        // stale balance can never over-charge a staff member.
+        let actually_deducted = if advance_deduction > 0.0 {
+            deduct_advances(&tx, staff_id, advance_deduction)?
+        } else {
+            0.0
+        };
+        let net_amount = (base_salary + bonus - deduction - actually_deducted).max(0.0);
+
+        tx.execute(
+            "INSERT INTO salary_payouts (staff_id, amount, bonus, deduction, advance_deduction, date) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![staff_id, net_amount, bonus, deduction, actually_deducted, &end_date]
+        ).map_err(|e| e.to_string())?;
+
+        tx.execute(
+            "INSERT INTO expenses (amount, date, category, note, reference_type, reference_id) VALUES (?1, ?2, 'Salaries', ?3, 'payroll', ?4)",
+            rusqlite::params![net_amount, &end_date, format!("Payroll: {}", name), record_id]
+        ).map_err(|e| e.to_string())?;
+
+        let payroll_id = format!("PR-{}-{:03}", end_date.replace('-', ""), record_id);
+        tx.execute(
+            "UPDATE payroll_records SET status = 'Paid', payroll_id = ?1, paid_at = ?2,
+                    advance_deduction = ?3, net_pay = ?4, updated_at = datetime('now', 'localtime')
+             WHERE id = ?5",
+            rusqlite::params![&payroll_id, &end_date, actually_deducted, net_amount, record_id]
+        ).map_err(|e| e.to_string())?;
+
+        total_paid += net_amount;
+        count += 1;
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(format!("Processed {} payouts totalling {:.2}", count, total_paid))
+}
+
+/// Reverts a paid period back to Pending. Deletes the payout and expense rows,
+/// restores any advance deductions, and clears the payroll/paid metadata so the
+/// period can be reviewed and re-processed.
+#[tauri::command]
+pub fn reopen_payroll(start_date: String, end_date: String) -> Result<String, String> {
+    let mut conn_guard = get_conn()?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
+
+    let mut stmt = tx.prepare(
+        "SELECT id, staff_id, advance_deduction FROM payroll_records
+         WHERE start_date = ?1 AND end_date = ?2 AND status = 'Paid'"
+    ).map_err(|e| e.to_string())?;
+    let rows: Vec<(i32, i32, f64)> = stmt.query_map(rusqlite::params![&start_date, &end_date], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2).unwrap_or(0.0)))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    if rows.is_empty() {
+        return Err("No paid payroll records found for this period.".to_string());
+    }
+    let reopened_count = rows.len();
+
+    for (record_id, staff_id, advance_deduction) in rows {
+        if advance_deduction > 0.0 {
+            restore_advances(&tx, staff_id, advance_deduction)?;
+        }
+        tx.execute("DELETE FROM salary_payouts WHERE staff_id = ?1 AND date = ?2", rusqlite::params![staff_id, &end_date]).map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM expenses WHERE reference_type = 'payroll' AND reference_id = ?1", [&record_id]).map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE payroll_records SET status = 'Pending', payroll_id = NULL, paid_at = NULL, updated_at = datetime('now', 'localtime') WHERE id = ?1",
+            [&record_id]
+        ).map_err(|e| e.to_string())?;
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(format!("Reopened payroll for {} staff members.", reopened_count))
+}
+
+/// Voids a paid period: reverses payouts, advances and expenses like reopening,
+/// but marks the records as Void instead of Pending so it cannot be re-paid by
+/// accident.
+#[tauri::command]
+pub fn void_payroll(start_date: String, end_date: String) -> Result<String, String> {
+    let mut conn_guard = get_conn()?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
+
+    let mut stmt = tx.prepare(
+        "SELECT id, staff_id, advance_deduction FROM payroll_records
+         WHERE start_date = ?1 AND end_date = ?2 AND status = 'Paid'"
+    ).map_err(|e| e.to_string())?;
+    let rows: Vec<(i32, i32, f64)> = stmt.query_map(rusqlite::params![&start_date, &end_date], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2).unwrap_or(0.0)))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    if rows.is_empty() {
+        return Err("No paid payroll records found for this period.".to_string());
+    }
+    let voided_count = rows.len();
+
+    for (record_id, staff_id, advance_deduction) in rows {
+        if advance_deduction > 0.0 {
+            restore_advances(&tx, staff_id, advance_deduction)?;
+        }
+        tx.execute("DELETE FROM salary_payouts WHERE staff_id = ?1 AND date = ?2", rusqlite::params![staff_id, &end_date]).map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM expenses WHERE reference_type = 'payroll' AND reference_id = ?1", [&record_id]).map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE payroll_records SET status = 'Void', payroll_id = NULL, paid_at = NULL, updated_at = datetime('now', 'localtime') WHERE id = ?1",
+            [&record_id]
+        ).map_err(|e| e.to_string())?;
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(format!("Voided payroll for {} staff members.", voided_count))
+}
+
+#[derive(serde::Serialize)]
+pub struct AdvanceHistoryRow {
+    pub id: i32,
+    pub staff_id: i32,
+    pub staff_name: String,
+    pub amount: f64,
+    pub date: String,
+    pub note: Option<String>,
+    pub deducted_amount: f64,
+    pub outstanding: f64,
+    pub is_deducted: bool,
+}
+
+#[tauri::command]
+pub fn get_advance_history(staff_id: i32, start_date: String, end_date: String) -> Result<Vec<AdvanceHistoryRow>, String> {
+    let conn = get_conn()?;
+    let mut stmt = conn.prepare(
+        "SELECT a.id, a.staff_id, s.name, a.amount, a.date, a.note,
+                COALESCE(a.deducted_amount, 0.0), (a.amount - COALESCE(a.deducted_amount, 0.0)), COALESCE(a.is_deducted, 0)
+         FROM advance_salaries a JOIN staff s ON a.staff_id = s.id
+         WHERE a.staff_id = ?1 AND a.date >= ?2 AND a.date <= ?3
+         ORDER BY a.date DESC, a.id DESC"
+    ).map_err(|e| e.to_string())?;
+    let iter = stmt.query_map(rusqlite::params![&staff_id, &start_date, &end_date], |row| {
+        Ok(AdvanceHistoryRow {
+            id: row.get(0)?,
+            staff_id: row.get(1)?,
+            staff_name: row.get(2)?,
+            amount: row.get(3)?,
+            date: row.get(4)?,
+            note: row.get(5).unwrap_or(None),
+            deducted_amount: row.get(6).unwrap_or(0.0),
+            outstanding: row.get(7).unwrap_or(0.0),
+            is_deducted: row.get::<_, i32>(8).unwrap_or(0) == 1,
+        })
+    }).map_err(|e| e.to_string())?;
+
+    let mut out = Vec::new();
+    for r in iter {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+/// Returns the outstanding advance balance for a single staff member.
+#[tauri::command]
+pub fn get_staff_advance_balance(staff_id: i32) -> Result<f64, String> {
+    let conn = get_conn()?;
+    Ok(outstanding_advance(&conn, staff_id))
+}
+
+#[derive(serde::Serialize)]
+pub struct PayrollHistoryPeriod {
+    pub start_date: String,
+    pub end_date: String,
+    pub paid_at: Option<String>,
+    pub total_count: i32,
+    pub paid_count: i32,
+    pub total_net: f64,
+    pub rows: Vec<PayrollRecordRow>,
+}
+
+/// Returns all payroll periods that overlap the given range, newest first,
+/// along with their records and a summary of paid vs pending.
+#[tauri::command]
+pub fn get_payroll_history(start_date: String, end_date: String) -> Result<Vec<PayrollHistoryPeriod>, String> {
+    let conn = get_conn()?;
+
+    let mut periods = Vec::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT start_date, end_date FROM payroll_records
+             WHERE (start_date >= ?1 AND start_date <= ?2)
+                OR (start_date <= ?2 AND end_date >= ?1)
+             ORDER BY end_date DESC, start_date DESC"
+        ).map_err(|e| e.to_string())?;
+        let iter = stmt.query_map(rusqlite::params![&start_date, &end_date], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }).map_err(|e| e.to_string())?;
+        for r in iter {
+            periods.push(r.map_err(|e| e.to_string())?);
+        }
+    }
+
+    let mut out = Vec::new();
+    for (sd, ed) in periods {
+        let mut stmt = conn.prepare(PAYROLL_RECORD_SELECT).map_err(|e| e.to_string())?;
+        let mut rows = Vec::new();
+        let iter = stmt.query_map(rusqlite::params![&sd, &ed], map_payroll_row).map_err(|e| e.to_string())?;
+        for r in iter {
+            rows.push(r.map_err(|e| e.to_string())?);
+        }
+        let total_count = rows.len() as i32;
+        let paid_count = rows.iter().filter(|r| r.status == "Paid").count() as i32;
+        let total_net: f64 = rows.iter().filter(|r| r.status == "Paid").map(|r| r.net_pay).sum();
+        let paid_at = rows.iter().find(|r| r.paid_at.is_some()).and_then(|r| r.paid_at.clone());
+        out.push(PayrollHistoryPeriod {
+            start_date: sd,
+            end_date: ed,
+            paid_at,
+            total_count,
+            paid_count,
+            total_net,
+            rows,
+        });
+    }
+    Ok(out)
+}
+
 
 #[derive(serde::Serialize, Debug)]
 pub struct DailyTrend {

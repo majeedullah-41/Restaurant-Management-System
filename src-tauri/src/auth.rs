@@ -267,6 +267,15 @@ pub const ADMIN_COMMANDS: &[&str] = &[
     "pay_advance_salary",
     "get_payout_history",
     "get_paid_staff_ids",
+    "get_payroll_period",
+    "update_payroll_record",
+    "get_payroll_record",
+    "process_payroll_batch",
+    "reopen_payroll",
+    "void_payroll",
+    "get_advance_history",
+    "get_staff_advance_balance",
+    "get_payroll_history",
     // Customers (removing customers is an admin action)
     "delete_customer",
     // Inventory
