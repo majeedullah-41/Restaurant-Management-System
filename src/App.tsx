@@ -110,11 +110,21 @@ function App() {
         hwid={machineHwid}
         status={licenseStatus}
         onActivated={() => {
-          // Re-check license status after activation
+          // Re-check license status after activation / restore. Never let a
+          // transient HWID query failure strand a successfully activated license.
           setLicenseChecking(true);
-          invoke<LicenseStatus>("check_license_status").then((status) => {
-            setLicenseStatus(status);
-            setLicenseValid(status.valid);
+          Promise.allSettled([
+            invoke<string>("get_machine_hwid"),
+            invoke<LicenseStatus>("check_license_status"),
+          ]).then(([hwidRes, statusRes]) => {
+            if (hwidRes.status === "fulfilled") setMachineHwid(hwidRes.value);
+            const status = statusRes.status === "fulfilled" ? statusRes.value : null;
+            if (status) {
+              setLicenseStatus(status);
+              setLicenseValid(status.valid);
+            } else {
+              setLicenseValid(false);
+            }
             setLicenseChecking(false);
           }).catch(() => {
             setLicenseChecking(false);

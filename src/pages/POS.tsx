@@ -90,13 +90,13 @@ export default function POS() {
   const [itemSearch, setItemSearch] = useState<string>("");
   const [orderId, setOrderId] = useState<number | null>(null);
   const [orderNumber, setOrderNumber] = useState<number | null>(null);
-  const [orderType, setOrderType] = useState<string>(tableId === "0" ? "Takeaway" : "Dine-in");
+  const [orderType, setOrderType] = useState<string>("Dine-in");
   
   useEffect(() => {
     if (!routeOrderId || routeOrderId === "new") {
-      setOrderType(tableId === "0" ? "Takeaway" : "Dine-in");
+      setOrderType("Dine-in");
     }
-  }, [tableId]);
+  }, [tableId, routeOrderId]);
 
   const [view, setView] = useState<'payment' | 'menu'>('payment');
   const isCheckingOut = useRef(false);
@@ -331,6 +331,7 @@ export default function POS() {
           setOrderNumber(null);
           setCartItems([]);
           setDiscount(0);
+          setOrderType("Dine-in");
           setDeliveryPhone("");
           setDeliveryAddress("");
           setOrderNote("");
@@ -388,6 +389,20 @@ export default function POS() {
   };
 
   const handleAddToCart = async (item: MenuItem) => {
+    // Dine-in orders require both a table and an order taker before any item
+    // can be added (which is what places/creates the order).
+    if (orderType === "Dine-in") {
+      const tableSelected = !!tableId && tableId !== "0";
+      const takerSelected = orderTakerId != null;
+      const missing: string[] = [];
+      if (!tableSelected) missing.push("table");
+      if (!takerSelected) missing.push("order taker");
+      if (missing.length > 0) {
+        showAlert("Selection Required", `Please select ${missing.join(" and ")} before adding items to a dine-in order.`);
+        return;
+      }
+    }
+
     setRecentlyAdded(prev => new Set(prev).add(item.id));
     setTimeout(() => {
       setRecentlyAdded(prev => {
@@ -537,11 +552,9 @@ export default function POS() {
     if (isCheckingOut.current) return;
     isCheckingOut.current = true;
     try {
-      const received = amountReceived ? parseFloat(amountReceived) : NaN;
+      let received = amountReceived ? parseFloat(amountReceived) : totalAmount;
       if (!isFinite(received)) {
-        showAlert("Validation Error", "Please enter a valid amount received.");
-        isCheckingOut.current = false;
-        return;
+        received = totalAmount;
       }
       if (received < totalAmount - 0.009) {
         showAlert("Validation Error", `Amount received (${received.toFixed(2)}) is less than the order total (${totalAmount.toFixed(2)}).`);
@@ -708,7 +721,7 @@ export default function POS() {
                   className="w-full text-left px-3 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg flex items-start justify-between transition-colors"
                 >
                   <div>
-                    <span className="font-bold text-slate-900 dark:text-white block">Order #{po.order_number || po.id} - {po.table_number ? `Table ${po.table_number}` : 'Walk-in'}</span>
+                    <span className="font-bold text-slate-900 dark:text-white block">Order #{po.order_number || po.id} - {po.table_number ? (po.table_category_name ? `${po.table_category_name.trim()} ${po.table_number}` : `Table ${po.table_number}`) : 'Walk-in'}</span>
                     <span className="text-xs text-slate-500">{po.order_type === 'Delivery' ? 'Delivery Pending' : po.status}</span>
                   </div>
                   <div className="text-right">
@@ -1027,11 +1040,11 @@ export default function POS() {
                   {/* Table Dropdown */}
                   <div className="relative">
                     <select
-                      value={tableId !== "0" && tableId ? tableId : "Dine-in"}
+                      value={tableId !== "0" && tableId ? tableId : "Walk-in Customer"}
                       onChange={(e) => handleTableChange(e.target.value)}
                       className={`pl-3 pr-7 py-1.5 text-xs font-bold rounded-lg focus:outline-none cursor-pointer appearance-none shadow-sm transition-colors ${tableId !== "0" && tableId ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800/50 text-blue-600 dark:text-blue-400 border' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border border-transparent'}`}
                     >
-                      <option value="Dine-in" disabled hidden>Dine-in</option>
+                      <option value="Walk-in Customer" disabled hidden>Walk-in Customer</option>
                       {tables.map(t => {
                           if (t.status === 'Available' || t.table_id.toString() === tableId) {
                             return <option key={t.id} value={t.table_id} className="text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-800">{t.category_name ? `${t.category_name} ${t.table_number.toString().padStart(2, '0')}` : `Table ${t.table_number.toString().padStart(2, '0')}`}</option>
@@ -1043,7 +1056,7 @@ export default function POS() {
                   </div>
                   <div className="relative">
                     <select
-                      value={tableId === "0" || !tableId ? orderType : "Walk-in"}
+                      value={tableId === "0" || !tableId ? orderType : "Dine-in"}
                       onChange={async (e) => {
                         const newOrderType = e.target.value;
                         if (tableId !== "0") {
@@ -1055,7 +1068,11 @@ export default function POS() {
                       }}
                       className={`pl-3 pr-7 py-1.5 text-xs font-bold rounded-lg focus:outline-none cursor-pointer appearance-none shadow-sm transition-colors border ${tableId === "0" || !tableId ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800/50 text-blue-600 dark:text-blue-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border-transparent'}`}
                     >
-                      {tableId !== "0" && <option value="Walk-in" disabled hidden>Walk-in</option>}
+                      {tableId !== "0" ? (
+                        <option value="Dine-in" disabled hidden>Dine-in</option>
+                      ) : (
+                        <option value="Dine-in" className="text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-800">Dine-in</option>
+                      )}
                       <option value="Takeaway" className="text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-800">Takeaway</option>
                       <option value="Delivery" className="text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-800">Delivery</option>
                     </select>

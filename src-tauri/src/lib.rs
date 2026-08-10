@@ -35,6 +35,7 @@ fn authorize(command: &str, payload: &tauri::ipc::InvokeBody) -> Result<(), Stri
         "check_license_status",
         "get_machine_hwid",
         "get_license_info",
+        "restore_license_from_backup",
     ];
     if !LICENSE_EXEMPT.contains(&command) && !license::is_license_valid() {
         return Err("License is invalid or expired. Please activate your license.".to_string());
@@ -51,6 +52,7 @@ fn authorize(command: &str, payload: &tauri::ipc::InvokeBody) -> Result<(), Stri
         "check_license_status",
         "get_machine_hwid",
         "get_license_info",
+        "restore_license_from_backup",
     ];
     if db::user_must_change_password(&session.username) && !PASSWORD_CHANGE_OK.contains(&command) {
         return Err("You must change your password before continuing.".to_string());
@@ -195,6 +197,8 @@ pub fn run() {
     db::validate_backup_file,
     db::import_backup_file,
     db::verify_admin_password,
+    db::verify_operator_password,
+    db::delete_order_history,
 
     db::get_delivery_settings,
     db::update_delivery_settings,
@@ -216,6 +220,7 @@ pub fn run() {
     license::check_license_status,
     license::activate_license,
     license::get_license_info,
+    license::restore_license_from_backup,
 
     db::get_current_session,
     db::logout

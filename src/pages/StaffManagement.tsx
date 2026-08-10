@@ -212,7 +212,7 @@ export default function StaffManagement() {
     <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden relative transition-colors">
 
       {isModalOpen && (
-        <div className="absolute inset-0 bg-black/60 z-50 flex items-center justify-center backdrop-blur-sm">
+        <div className="absolute inset-0 bg-black/60 z-[60] flex items-center justify-center backdrop-blur-sm">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-96 shadow-2xl">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">
@@ -264,7 +264,7 @@ export default function StaffManagement() {
       )}
 
       {isCategoryModalOpen && (
-        <div className="absolute inset-0 bg-black/60 z-50 flex items-center justify-center backdrop-blur-sm">
+        <div className="absolute inset-0 bg-black/60 z-[60] flex items-center justify-center backdrop-blur-sm">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-96 shadow-2xl">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">Staff Categories</h3>
@@ -295,7 +295,7 @@ export default function StaffManagement() {
       )}
 
       {isAttendanceModalOpen && (
-        <div className="absolute inset-0 bg-black/60 z-50 flex items-center justify-center backdrop-blur-sm p-4">
+        <div className="absolute inset-0 bg-black/60 z-[60] flex items-center justify-center backdrop-blur-sm p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col max-h-full">
             <div className="flex justify-between items-center p-6 border-b border-slate-200 dark:border-slate-800 shrink-0">
               <h3 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -307,61 +307,89 @@ export default function StaffManagement() {
 
             <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
               {/* Left Side: Manual Clock In/Out */}
-              <div className="w-full md:w-1/3 p-6 border-b md:border-b-0 md:border-r border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 overflow-y-auto">
-                <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider mb-4">Manual Clock</h4>
-                <form onSubmit={handleClockInOut} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Filter by Category</label>
-                    <select
-                      value={clockCategoryId}
-                      onChange={(e) => {
-                        setClockCategoryId(e.target.value === "" ? "" : Number(e.target.value));
-                        setClockStaffId("");
-                      }}
-                      className="w-full h-11 bg-white dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm shadow-sm"
-                    >
-                      <option value="">All Categories</option>
-                      {categories.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </select>
+              <div className="w-full md:w-1/3 p-6 md:p-8 border-b md:border-b-0 md:border-r border-slate-200 dark:border-slate-800 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-950 overflow-y-auto">
+                <div className="flex items-center gap-2 mb-6">
+                  <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                    <Clock size={16} strokeWidth={2.5} />
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Select Staff Member</label>
-                    <select
-                      required
-                      value={clockStaffId}
-                      onChange={e => setClockStaffId(Number(e.target.value))}
-                      className="w-full h-11 bg-white dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm shadow-sm"
-                    >
-                      <option value="" disabled>Select Staff</option>
-                      {staff
-                        .filter(s => clockCategoryId === "" ? true : s.category_id === clockCategoryId)
-                        .map(s => (
-                          <option key={s.id} value={s.id}>{s.name} ({s.category_name || 'Uncategorized'})</option>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">Manual Clock</h4>
+                </div>
+                
+                <form onSubmit={handleClockInOut} className="space-y-5">
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Filter by Category</label>
+                    <div className="relative">
+                      <select
+                        value={clockCategoryId}
+                        onChange={(e) => {
+                          setClockCategoryId(e.target.value === "" ? "" : Number(e.target.value));
+                          setClockStaffId("");
+                        }}
+                        className="w-full h-11 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-sm shadow-sm transition-all appearance-none"
+                      >
+                        <option value="">All Categories</option>
+                        {categories.map(c => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
                         ))}
-                    </select>
+                      </select>
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                      </div>
+                    </div>
                   </div>
-                  <button type="submit" className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-md shadow-blue-500/20 transition-all mt-2">
-                    Clock In / Out
+
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Select Staff Member</label>
+                    <div className="relative">
+                      <select
+                        required
+                        value={clockStaffId}
+                        onChange={e => setClockStaffId(Number(e.target.value))}
+                        className="w-full h-11 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-sm shadow-sm transition-all appearance-none"
+                      >
+                        <option value="" disabled>Select Staff</option>
+                        {staff
+                          .filter(s => clockCategoryId === "" ? true : s.category_id === clockCategoryId)
+                          .map(s => (
+                            <option key={s.id} value={s.id}>{s.name} ({s.category_name || 'Uncategorized'})</option>
+                          ))}
+                      </select>
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button type="submit" className="w-full h-12 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-2 mt-2 transform hover:-translate-y-0.5 active:translate-y-0">
+                    <Clock size={18} strokeWidth={2.5} />
+                    <span>Clock In / Out</span>
                   </button>
                 </form>
               </div>
 
               {/* Right Side: Daily Attendance Log */}
-              <div className="w-full md:w-2/3 p-6 flex flex-col overflow-hidden bg-white dark:bg-slate-900">
-                <div className="flex justify-between items-center mb-4 shrink-0">
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">Daily Log</h4>
+              <div className="w-full md:w-2/3 p-6 md:p-8 flex flex-col overflow-hidden bg-white dark:bg-slate-900 relative">
+                <div className="flex justify-between items-center mb-6 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+                    </div>
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">Daily Log</h4>
+                  </div>
                   <input
                     type="date" value={attendanceDate} onChange={(e) => setAttendanceDate(e.target.value)}
-                    className="h-9 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-md px-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm"
+                    className="h-10 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-sm font-medium shadow-sm transition-all"
                   />
                 </div>
 
                 <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
                   {attendanceRecords.length === 0 ? (
-                    <div className="flex items-center justify-center h-40 text-sm text-slate-500 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
-                      No attendance records for this date.
+                    <div className="flex flex-col items-center justify-center h-full min-h-[200px] bg-slate-50/50 dark:bg-slate-800/20 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
+                      <div className="w-16 h-16 bg-white dark:bg-slate-800 shadow-sm border border-slate-100 dark:border-slate-700 rounded-full flex items-center justify-center mb-4">
+                        <Clock size={28} className="text-slate-400 dark:text-slate-500" />
+                      </div>
+                      <p className="text-sm text-slate-600 dark:text-slate-400 font-bold">No attendance records for this date</p>
+                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Use the manual clock panel to log attendance.</p>
                     </div>
                   ) : (
                     attendanceRecords.map(rec => (

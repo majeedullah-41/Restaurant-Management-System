@@ -201,6 +201,7 @@ pub const PUBLIC_COMMANDS: &[&str] = &[
     "activate_license",
     "check_license_status",
     "get_machine_hwid",
+    "restore_license_from_backup",
 ];
 
 /// Commands that require the session role to be `Admin`.

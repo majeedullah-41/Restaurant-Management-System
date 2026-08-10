@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "../lib/api";
-import { Save, ShieldCheck, Copy, CheckCircle, CalendarClock, Clock, Cpu, RefreshCw, Key, XCircle, Loader2, Upload, Trash } from "lucide-react";
+import { Save, ShieldCheck, Copy, CheckCircle, CalendarClock, Clock, Cpu, RefreshCw, Key, XCircle, Loader2, Upload, Trash, DatabaseBackup } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import BackupSection from "../components/BackupSection";
@@ -21,6 +21,7 @@ export default function SettingsPage() {
   // License info state
   const [licenseInfo, setLicenseInfo] = useState<any>(null);
   const [hwidCopied, setHwidCopied] = useState(false);
+  const [keyCopied, setKeyCopied] = useState(false);
   const [showRenewForm, setShowRenewForm] = useState(false);
   const [renewKey, setRenewKey] = useState("");
   const [renewLoading, setRenewLoading] = useState(false);
@@ -85,6 +86,22 @@ export default function SettingsPage() {
     }
     setHwidCopied(true);
     setTimeout(() => setHwidCopied(false), 2000);
+  };
+
+  const copyLicenseKey = async () => {
+    if (!licenseInfo?.license_key) return;
+    try {
+      await navigator.clipboard.writeText(licenseInfo.license_key);
+    } catch {
+      const el = document.createElement("textarea");
+      el.value = licenseInfo.license_key;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+    }
+    setKeyCopied(true);
+    setTimeout(() => setKeyCopied(false), 2000);
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -322,6 +339,47 @@ export default function SettingsPage() {
                     {licenseInfo.expiry_date || "—"}
                   </span>
                 </div>
+
+                {/* License Key */}
+                {licenseInfo.license_key && (
+                  <div className="flex flex-col space-y-2">
+                    <div className="flex items-center space-x-3">
+                      <span className="text-sm font-semibold text-slate-600 dark:text-slate-400 w-32 flex items-center space-x-2">
+                        <Key size={14} />
+                        <span>License Key</span>
+                      </span>
+                      <code className="bg-slate-100 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-700 dark:text-slate-300 tracking-wider break-all max-w-md">
+                        {licenseInfo.license_key}
+                      </code>
+                      <button
+                        onClick={copyLicenseKey}
+                        className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                        title="Copy license key"
+                      >
+                        {keyCopied ? (
+                          <CheckCircle size={16} className="text-green-500" />
+                        ) : (
+                          <Copy size={16} className="text-slate-400" />
+                        )}
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-400 dark:text-slate-500 ml-[8.75rem]">
+                      Keep this key safe — you will need it (with your backup) when switching to a new device.
+                    </p>
+                  </div>
+                )}
+
+                {/* Restored from backup tracking */}
+                {licenseInfo.restore_count > 0 && (
+                  <div className="flex items-start space-x-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 text-xs text-amber-700 dark:text-amber-300">
+                    <DatabaseBackup size={16} className="mt-0.5 flex-shrink-0" />
+                    <span>
+                      This license was restored from a backup ({licenseInfo.restore_count} time{licenseInfo.restore_count !== 1 ? "s" : ""})
+                      {licenseInfo.hwid_restored_at ? ` on ${licenseInfo.hwid_restored_at}` : ""}. Restoring the same backup on
+                      multiple devices is a license violation.
+                    </span>
+                  </div>
+                )}
 
                 {/* Last Activated */}
                 <div className="flex items-center space-x-3">

@@ -10,52 +10,110 @@ use serde::Serialize;
 use sha2::Sha256;
 use sysinfo::System;
 
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
-static HWID_CACHE: OnceLock<String> = OnceLock::new();
+static HWID_CACHE: Mutex<Option<String>> = Mutex::new(None);
 
 /// Generates a hardware-bound identifier from strictly permanent machine
 /// hardware: the CPU ProcessorId, motherboard serial, BIOS serial and the
 /// SMBIOS system UUID. Unlike hostname / MAC / MachineGuid these values never
 /// change when Windows is reinstalled, the machine is renamed, or network
 /// adapters are swapped, so a license stays bound to the physical device.
+///
+/// The first value computed for a device is persisted in the license table
+/// and reused on every subsequent launch. This makes the HWID stable even if
+/// WMI intermittently returns a different set of identifiers, a BIOS/CMOS
+/// update alters the reported serials, or the PowerShell query fails entirely
+/// (the fallback would otherwise produce a different value than the primary
+/// path). Once stored, the HWID only changes if the database is wiped.
 pub fn get_hwid() -> String {
-    HWID_CACHE.get_or_init(|| {
-        let mut components: Vec<String> = Vec::new();
-
-        for id in get_permanent_hardware_ids() {
-            if !id.is_empty() {
-                components.push(id);
-            }
+    {
+        let cache = HWID_CACHE.lock().unwrap();
+        if let Some(h) = cache.as_ref() {
+            return h.clone();
         }
+    }
 
-        // Last-resort fallback so the app still works on a machine where no
-        // permanent hardware identifier is exposed (locked-down VM / sandbox).
-        // It intentionally never runs on a normal physical PC.
-        if components.is_empty() {
-            let hostname = System::host_name()
-                .or_else(|| std::env::var("COMPUTERNAME").ok())
-                .unwrap_or_else(|| "UNKNOWN-HOST".to_string());
-            let mac = get_primary_mac().unwrap_or_else(|| "00:00:00:00:00:00".to_string());
-            let machine_guid = get_windows_machine_guid().unwrap_or_else(|| "UNKNOWN-GUID".to_string());
-            components.push(format!("{}|{}|{}", hostname, mac, machine_guid));
+    let value = if let Some(persisted) = load_persisted_hwid() {
+        persisted
+    } else {
+        let computed = compute_hwid();
+        persist_hwid(&computed);
+        computed
+    };
+
+    let mut cache = HWID_CACHE.lock().unwrap();
+    *cache = Some(value.clone());
+    value
+}
+
+/// Clears the in-memory HWID cache so the next call re-reads the persisted
+/// value. Required after a backup import swaps in a license from another
+/// machine: the restored DB carries that machine's HWID, and the cache must not
+/// keep serving the pre-import value.
+pub fn invalidate_hwid_cache() {
+    let mut cache = HWID_CACHE.lock().unwrap();
+    *cache = None;
+}
+
+/// Computes a HWID from the current hardware, without consulting persistence.
+fn compute_hwid() -> String {
+    let mut components: Vec<String> = Vec::new();
+
+    for id in get_permanent_hardware_ids() {
+        if !id.is_empty() {
+            components.push(id);
         }
+    }
 
-        use sha2::Digest;
-        let mut hasher = sha2::Sha256::new();
-        hasher.update(components.join("|"));
-        let result = hasher.finalize();
+    // Last-resort fallback so the app still works on a machine where no
+    // permanent hardware identifier is exposed (locked-down VM / sandbox).
+    // It intentionally never runs on a normal physical PC.
+    if components.is_empty() {
+        let hostname = System::host_name()
+            .or_else(|| std::env::var("COMPUTERNAME").ok())
+            .unwrap_or_else(|| "UNKNOWN-HOST".to_string());
+        let mac = get_primary_mac().unwrap_or_else(|| "00:00:00:00:00:00".to_string());
+        let machine_guid = get_windows_machine_guid().unwrap_or_else(|| "UNKNOWN-GUID".to_string());
+        components.push(format!("{}|{}|{}", hostname, mac, machine_guid));
+    }
 
-        let hex: String = result.iter().take(16).map(|b| format!("{:02X}", b)).collect();
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(components.join("|"));
+    let result = hasher.finalize();
 
-        format!(
-            "{}-{}-{}-{}",
-            &hex[0..4],
-            &hex[4..8],
-            &hex[8..12],
-            &hex[12..16]
-        )
-    }).clone()
+    let hex: String = result.iter().take(16).map(|b| format!("{:02X}", b)).collect();
+
+    format!(
+        "{}-{}-{}-{}",
+        &hex[0..4],
+        &hex[4..8],
+        &hex[8..12],
+        &hex[12..16]
+    )
+}
+
+/// Returns the HWID previously persisted for this installation, if any.
+fn load_persisted_hwid() -> Option<String> {
+    let conn = crate::db::get_conn().ok()?;
+    let hwid: Option<String> = conn
+        .query_row("SELECT hwid FROM license WHERE id = 1", [], |row| row.get(0))
+        .ok()?;
+    hwid.filter(|h| !h.trim().is_empty())
+}
+
+/// Stores the HWID in the license table so it is reused on future launches.
+/// Best-effort: if the database is unavailable we simply skip persistence and
+/// keep the in-memory value for this process.
+fn persist_hwid(hwid: &str) {
+    if let Ok(conn) = crate::db::get_conn() {
+        let _ = conn.execute(
+            "INSERT INTO license (id, hwid) VALUES (1, ?1) \
+             ON CONFLICT(id) DO UPDATE SET hwid = excluded.hwid",
+            [hwid],
+        );
+    }
 }
 
 /// Reads the strictly permanent hardware identifiers from WMI in a single
@@ -237,7 +295,15 @@ pub struct LicenseStatus {
 
 /// Verifies a license key against the current machine's HWID and today's date.
 pub fn verify_license_key(key_string: &str) -> LicenseStatus {
-    let hwid = get_hwid();
+    verify_license_key_for_hwid(key_string, &get_hwid())
+}
+
+/// Verifies a license key against a *specific* HWID and today's date. This is
+/// used to check a license stored inside a backup file: the backup belongs to
+/// another machine, so it must be validated against the HWID embedded in the
+/// backup (not the current machine's), using today's real date for expiry.
+pub fn verify_license_key_for_hwid(key_string: &str, expected_hwid: &str) -> LicenseStatus {
+    let hwid = expected_hwid.to_string();
 
     // Decode the key from Base64
     let decoded = match BASE64.decode(key_string.trim()) {
@@ -399,7 +465,6 @@ pub fn verify_license_key(key_string: &str) -> LicenseStatus {
 
 // ─── Tauri Commands ─────────────────────────────────────────────────────────
 
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 struct LicenseCache {
@@ -546,14 +611,76 @@ pub fn activate_license(key: String) -> Result<LicenseStatus, String> {
     Ok(status)
 }
 
-/// Returns license info for the Settings page (HWID, expiry, activated_at, days remaining).
+/// Extracts the HWID embedded in a license key's payload (`hwid|expiry`).
+/// Used when a backup file predates the `hwid` column in the license table.
+fn hwid_from_key_payload(key_string: &str) -> Option<String> {
+    let decoded = BASE64.decode(key_string.trim()).ok()?;
+    let s = String::from_utf8(decoded).ok()?;
+    let payload = s.splitn(2, '\n').next()?;
+    let hwid = payload.splitn(2, '|').next()?.trim();
+    if hwid.is_empty() { None } else { Some(hwid.to_string()) }
+}
+
+/// Restores a license from a backup database file, for moving to a new device.
+///
+/// The backup is validated against its *own* embedded HWID and *today's* real
+/// date BEFORE any data is imported:
+/// - If the license has expired (or fails verification), nothing is imported
+///   and the status is returned so the License screen can tell the user the
+///   backup's license is no longer active.
+/// - If the license is still valid, the backup data is imported and the
+///   backup's license (key + HWID) is adopted so it keeps working on the new
+///   machine. Restores are tracked (original HWID + restore count) so a vendor
+///   can detect license sharing across machines.
+#[tauri::command]
+pub fn restore_license_from_backup(file_path: String) -> Result<LicenseStatus, String> {
+    // Defense in depth: this command is reachable without a session (it is
+    // PUBLIC so the pre-login License screen can use it), so it must not be able
+    // to silently overwrite an installation that already has a valid license.
+    // On such a device the Settings → Data Migration flow is the correct path.
+    if is_license_valid() {
+        return Err(
+            "This installation already has an active license. Restoring from a backup would overwrite its data and license. Use Settings → Data Migration instead.".to_string(),
+        );
+    }
+
+    let (key, _expiry, _activated, _validated, backup_hwid) =
+        crate::db::read_backup_license(&file_path)?;
+
+    let hwid = backup_hwid
+        .or_else(|| hwid_from_key_payload(&key))
+        .ok_or_else(|| "Backup license is missing a machine identifier.".to_string())?;
+
+    let status = verify_license_key_for_hwid(&key, &hwid);
+
+    if !status.valid {
+        return Ok(status);
+    }
+
+    crate::db::import_backup_adopting_license(file_path)?;
+    crate::db::mark_license_restored(&hwid)?;
+
+    // The adopted HWID now lives in the imported database — drop the in-memory
+    // caches so the next check reads it instead of the new machine's HWID.
+    invalidate_hwid_cache();
+    invalidate_license_cache();
+
+    Ok(status)
+}
+
+/// Returns license info for the Settings page (license key, HWID, expiry,
+/// activated_at, days remaining, restore tracking).
 #[derive(Serialize)]
 pub struct LicenseInfo {
+    pub license_key: Option<String>,
     pub hwid: String,
     pub expiry_date: Option<String>,
     pub activated_at: Option<String>,
     pub days_remaining: Option<i64>,
     pub status: String,
+    pub original_hwid: Option<String>,
+    pub hwid_restored_at: Option<String>,
+    pub restore_count: Option<i64>,
 }
 
 #[tauri::command]
@@ -562,16 +689,24 @@ pub fn get_license_info() -> Result<LicenseInfo, String> {
     let hwid = get_hwid();
 
     // Read license data from DB
-    let result: Option<(Option<String>, Option<String>)> = conn
+    let result: Option<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<i64>)> = conn
         .query_row(
-            "SELECT expiry_date, activated_at FROM license WHERE id = 1",
+            "SELECT license_key, expiry_date, activated_at, original_hwid, hwid_restored_at, restore_count \
+             FROM (SELECT current_key AS license_key, expiry_date, activated_at, original_hwid, hwid_restored_at, restore_count FROM license) WHERE 1 = 1",
             [],
-            |row| Ok((row.get(0).ok(), row.get(1).ok())),
+            |row| Ok((
+                row.get(0).ok().flatten(),
+                row.get(1).ok().flatten(),
+                row.get(2).ok().flatten(),
+                row.get(3).ok().flatten(),
+                row.get(4).ok().flatten(),
+                row.get::<_, Option<i64>>(5).ok().flatten(),
+            )),
         )
         .ok();
 
     match result {
-        Some((expiry_date, activated_at)) => {
+        Some((license_key, expiry_date, activated_at, original_hwid, hwid_restored_at, restore_count)) => {
             let (days_remaining, status) = if let Some(ref exp) = expiry_date {
                 if let Ok(expiry) = NaiveDate::parse_from_str(exp, "%Y-%m-%d") {
                     let today = chrono::Local::now().date_naive();
@@ -589,19 +724,27 @@ pub fn get_license_info() -> Result<LicenseInfo, String> {
             };
 
             Ok(LicenseInfo {
+                license_key,
                 hwid,
                 expiry_date,
                 activated_at,
                 days_remaining,
                 status,
+                original_hwid,
+                hwid_restored_at,
+                restore_count,
             })
         }
         None => Ok(LicenseInfo {
+            license_key: None,
             hwid,
             expiry_date: None,
             activated_at: None,
             days_remaining: None,
             status: "No License".to_string(),
+            original_hwid: None,
+            hwid_restored_at: None,
+            restore_count: None,
         }),
     }
 }

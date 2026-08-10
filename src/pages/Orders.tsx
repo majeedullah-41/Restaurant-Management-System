@@ -1,13 +1,17 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { invoke } from "../lib/api";
 import { formatCurrency } from "../lib/utils";
 import { useAuth } from "../lib/auth";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Search, CheckCircle2, ChevronDown, ChevronRight, PackageOpen, User, Clock, Banknote, FileText, Tag, AlertCircle, ExternalLink, Percent, Phone, MapPin } from "lucide-react";
+import { Search, CheckCircle2, ChevronDown, ChevronRight, PackageOpen, User, Clock, Banknote, FileText, Tag, AlertCircle, ExternalLink, Percent, Phone, MapPin, Printer, Trash2 } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import DateFilterToolbar from "../components/DateFilterToolbar";
 import { MoneyInput } from "../components/MoneyInput";
+import AdminPasswordModal from "../components/AdminPasswordModal";
+import { AlertModal } from "../components/AlertModal";
+import { ReceiptTemplate } from "../components/ReceiptTemplate";
+import { useReactToPrint } from "react-to-print";
 
 interface OrderHistory {
   id: number;
@@ -105,9 +109,59 @@ export default function Orders() {
   const [orderItems, setOrderItems] = useState<Record<number, OrderItem[]>>({});
   const [loadingItems, setLoadingItems] = useState<Record<number, boolean>>({});
   const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
+  const [deleteOrderId, setDeleteOrderId] = useState<number | null>(null);
+  const [showDeletePassword, setShowDeletePassword] = useState(false);
+  const [alertModal, setAlertModal] = useState<{isOpen: boolean; title: string; message: string; type: 'danger' | 'warning' | 'info' | 'success'}>({ isOpen: false, title: '', message: '', type: 'danger' });
+  const [printOrderId, setPrintOrderId] = useState<number | null>(null);
+  const [restaurantName, setRestaurantName] = useState("RMS");
+  const [restaurantAddress, setRestaurantAddress] = useState("");
+  const [restaurantContact, setRestaurantContact] = useState("");
+  const [taxRate, setTaxRate] = useState(0);
+  const printRef = useRef<HTMLDivElement>(null);
+
+  const showAlert = (title: string, message: string, type: 'danger' | 'warning' | 'info' | 'success' = 'danger') => {
+    setAlertModal({ isOpen: true, title, message, type });
+  };
+
+  const triggerReceiptPrint = useReactToPrint({
+    contentRef: printRef,
+  });
 
   const handleDiscountUpdated = (orderId: number, discountAmt: number) => {
     setAllOrders(prev => prev.map(o => o.id === orderId ? { ...o, discount_amount: discountAmt, total_price: o.total_price + o.discount_amount - discountAmt } : o));
+  };
+
+  const handleDeleteOrder = async (orderId: number) => {
+    setShowDeletePassword(false);
+    try {
+      await invoke("delete_order_history", { orderId });
+      setAllOrders(prev => prev.filter(o => o.id !== orderId));
+      setOrderItems(prev => { const next = { ...prev }; delete next[orderId]; return next; });
+      if (expandedOrderId === orderId) setExpandedOrderId(null);
+      showAlert("Success", `Order #${orderId} deleted from history.`, "success");
+    } catch (err) {
+      console.error("Failed to delete order", err);
+      showAlert("Error", "Failed to delete order: " + err);
+    }
+  };
+
+  const handlePrintReceipt = async (orderId: number) => {
+    if (!orderItems[orderId]) {
+      setLoadingItems(prev => ({ ...prev, [orderId]: true }));
+      try {
+        const items: OrderItem[] = await invoke("get_order_items", { orderId });
+        setOrderItems(prev => ({ ...prev, [orderId]: items }));
+      } catch (err) {
+        console.error("Failed to load order items", err);
+        setLoadingItems(prev => ({ ...prev, [orderId]: false }));
+        showAlert("Error", "Failed to load order items for printing.");
+        return;
+      }
+    }
+    setPrintOrderId(orderId);
+    setTimeout(() => {
+      if (triggerReceiptPrint) triggerReceiptPrint();
+    }, 100);
   };
 
   // Filter orders based on the current page
@@ -174,6 +228,13 @@ export default function Orders() {
       }
     }
     fetchHistory();
+
+    invoke("get_settings").then((settings: any) => {
+      if (settings.restaurant_name) setRestaurantName(settings.restaurant_name);
+      if (settings.address) setRestaurantAddress(settings.address);
+      if (settings.contact_number) setRestaurantContact(settings.contact_number);
+      if (settings.tax_rate) setTaxRate(settings.tax_rate);
+    }).catch(err => console.error("Failed to load settings", err));
   }, []);
 
   const totalRevenue = orders.reduce((sum, order) => sum + order.total_price, 0);
@@ -292,6 +353,33 @@ export default function Orders() {
                                     >
                                       <ExternalLink size={16} />
                                       <span>Continue in POS</span>
+                                    </button>
+                                  </div>
+                                )}
+
+                                {/* Action buttons for closed orders */}
+                                {order.status === 'Closed' && isHistoryPage && (
+                                  <div className="mb-4 flex items-center space-x-3">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handlePrintReceipt(order.id);
+                                      }}
+                                      className="inline-flex items-center space-x-2 bg-slate-700 hover:bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm"
+                                    >
+                                      <Printer size={16} />
+                                      <span>Print Receipt</span>
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setDeleteOrderId(order.id);
+                                        setShowDeletePassword(true);
+                                      }}
+                                      className="inline-flex items-center space-x-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm shadow-red-600/20"
+                                    >
+                                      <Trash2 size={16} />
+                                      <span>Delete Order</span>
                                     </button>
                                   </div>
                                 )}
@@ -439,6 +527,60 @@ export default function Orders() {
           </div>
         </div>
       </main>
+
+      <AdminPasswordModal
+        isOpen={showDeletePassword}
+        title="Delete Order from History"
+        description="Enter your password to permanently delete this order. This action cannot be undone."
+        verifyCommand="verify_operator_password"
+        confirmLabel="Delete Order"
+        accentColor="red"
+        onClose={() => {
+          setShowDeletePassword(false);
+          setDeleteOrderId(null);
+        }}
+        onSuccess={() => {
+          if (deleteOrderId !== null) handleDeleteOrder(deleteOrderId);
+        }}
+      />
+
+      <AlertModal
+        isOpen={alertModal.isOpen}
+        title={alertModal.title}
+        message={alertModal.message}
+        type={alertModal.type}
+        onClose={() => setAlertModal({ ...alertModal, isOpen: false })}
+      />
+
+      {printOrderId && (() => {
+        const order = allOrders.find(o => o.id === printOrderId);
+        const items = orderItems[printOrderId] || [];
+        if (!order) return null;
+        return (
+          <div style={{ display: "none" }}>
+            <ReceiptTemplate
+              ref={printRef}
+              restaurantName={restaurantName}
+              restaurantAddress={restaurantAddress}
+              orderId={`#ORD-${(order.order_number || order.id).toString().padStart(4, '0')}`}
+              orderType={order.order_type || 'Dine-in'}
+              tableNumber={(order.table_number || 0).toString()}
+              tableCategoryName={order.table_category_name}
+              date={new Date(order.closed_at || order.created_at || new Date()).toLocaleString()}
+              items={items}
+              subtotal={order.subtotal}
+              discount={order.discount_amount}
+              taxAmount={order.tax_amount}
+              taxRate={taxRate}
+              totalAmount={order.total_price}
+              amountReceived={order.amount_received}
+              changeAmount={order.change_due}
+              cashierName={order.cashier_name || 'Admin'}
+              restaurantContact={restaurantContact}
+            />
+          </div>
+        );
+      })()}
     </div>
   );
 }

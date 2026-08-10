@@ -21,12 +21,28 @@ export const KOTTemplate = React.forwardRef<HTMLDivElement, KOTProps>((props, re
     <div className="hidden">
       <div
         ref={ref}
-        className="w-[80mm] min-h-screen bg-white text-black p-4 text-[14px] font-mono mx-auto"
+        className="w-[80mm] bg-white text-black p-2 text-[14px] font-mono mx-auto"
         style={{
           printColorAdjust: 'exact',
           WebkitPrintColorAdjust: 'exact'
         }}
       >
+        <style type="text/css">
+          {`
+            @media print {
+              @page {
+                size: 80mm auto;
+                margin: 0;
+              }
+              html, body {
+                height: max-content !important;
+                min-height: 0 !important;
+                margin: 0;
+                padding: 0;
+              }
+            }
+          `}
+        </style>
         <div className="text-center mb-6">
           <h1 className="text-3xl font-bold uppercase tracking-widest">KOT</h1>
           <p className="font-bold uppercase tracking-widest mt-1">*** KITCHEN COPY ***</p>
@@ -66,18 +82,25 @@ export const KOTTemplate = React.forwardRef<HTMLDivElement, KOTProps>((props, re
 
         <div className="border-b-2 border-dashed border-black my-3"></div>
 
-        <div className="flex justify-between font-bold text-[15px] mb-2 uppercase border-b border-black pb-1">
-          <span className="w-3/4">Item</span>
-          <span className="w-1/4 text-right">Qty</span>
-        </div>
-
-        <div className="space-y-4 mb-4">
-          {props.items.map((item, i) => (
-            <div key={i} className="flex justify-between items-start text-[16px] font-bold">
-              <span className="w-3/4 break-words pr-2">{item.name}</span>
-              <span className="w-1/4 text-right">[ {item.printQty} ]</span>
-            </div>
-          ))}
+        <div className="border border-slate-200 rounded-sm overflow-hidden mb-4 mt-2">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-100 text-[12px] uppercase tracking-wider text-slate-600">
+                <th className="w-6 px-1 py-1.5 text-center font-bold border-b border-r border-slate-200">#</th>
+                <th className="px-2 py-1.5 font-bold border-b border-r border-slate-200">Item</th>
+                <th className="w-1/4 px-2 py-1.5 font-bold border-b border-slate-200 text-center">Qty</th>
+              </tr>
+            </thead>
+            <tbody className="text-[14px] font-bold text-slate-900">
+              {props.items.map((item, i) => (
+                <tr key={i} className="border-b border-slate-200 last:border-b-0">
+                  <td className="px-1 py-2 text-center text-slate-500 border-r border-slate-200 font-normal">{i + 1}</td>
+                  <td className="px-2 py-2 break-words align-top border-r border-slate-200">{item.name}</td>
+                  <td className="px-2 py-2 text-center align-top whitespace-nowrap">{item.printQty}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
 
         <div className="border-b-2 border-dashed border-black my-4"></div>

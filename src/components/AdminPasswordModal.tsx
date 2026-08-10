@@ -8,6 +8,9 @@ interface AdminPasswordModalProps {
   description: string;
   onClose: () => void;
   onSuccess: () => void;
+  verifyCommand?: string;
+  confirmLabel?: string;
+  accentColor?: "amber" | "red";
 }
 
 export default function AdminPasswordModal({
@@ -16,6 +19,9 @@ export default function AdminPasswordModal({
   description,
   onClose,
   onSuccess,
+  verifyCommand = "verify_admin_password",
+  confirmLabel = "Verify & Proceed",
+  accentColor = "amber",
 }: AdminPasswordModalProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -29,9 +35,9 @@ export default function AdminPasswordModal({
     setLoading(true);
 
     try {
-      const verified = await invoke<boolean>("verify_admin_password", { password });
+      const verified = await invoke<boolean>(verifyCommand, { password });
       if (!verified) {
-        throw new Error("Incorrect Admin Password");
+        throw new Error("Incorrect password");
       }
       setPassword("");
       setError(null);
@@ -49,12 +55,14 @@ export default function AdminPasswordModal({
     onClose();
   };
 
+  const isRed = accentColor === "red";
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
       <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 rounded-xl">
+            <div className={`p-2.5 rounded-xl ${isRed ? 'bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400' : 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400'}`}>
               <Lock size={22} />
             </div>
             <div>
@@ -90,7 +98,7 @@ export default function AdminPasswordModal({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter admin password"
-              className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-xl px-4 text-slate-900 dark:text-white focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-sm font-medium"
+              className={`w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-xl px-4 text-slate-900 dark:text-white focus:outline-none focus:ring-1 text-sm font-medium ${isRed ? 'focus:border-red-500 focus:ring-red-500' : 'focus:border-amber-500 focus:ring-amber-500'}`}
             />
           </div>
 
@@ -105,10 +113,10 @@ export default function AdminPasswordModal({
             <button
               type="submit"
               disabled={loading || !password.trim()}
-              className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold rounded-xl text-sm flex items-center gap-2 transition-all cursor-pointer shadow-md shadow-amber-600/20"
+              className={`px-5 py-2.5 disabled:opacity-50 text-white font-bold rounded-xl text-sm flex items-center gap-2 transition-all cursor-pointer shadow-md ${isRed ? 'bg-red-600 hover:bg-red-700 shadow-red-600/20' : 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20'}`}
             >
               <Check size={16} />
-              <span>{loading ? "Verifying..." : "Verify & Proceed"}</span>
+              <span>{loading ? "Verifying..." : confirmLabel}</span>
             </button>
           </div>
         </form>

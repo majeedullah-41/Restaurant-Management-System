@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { invoke } from "../lib/api";
-import { ShieldCheck, Key, Copy, CheckCircle, XCircle, AlertTriangle, Loader2 } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { ShieldCheck, Key, Copy, CheckCircle, XCircle, AlertTriangle, Loader2, DatabaseBackup, RefreshCw } from "lucide-react";
 
 interface LicenseStatus {
   valid: boolean;
@@ -21,6 +22,10 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [selectedBackup, setSelectedBackup] = useState<string | null>(null);
+  const [confirmRestore, setConfirmRestore] = useState(false);
+  const [restoreMsg, setRestoreMsg] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
   const handleCopyHwid = async () => {
     try {
@@ -42,7 +47,10 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
 
   const handleActivate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading || restoring) return;
     setError("");
+    setRestoreMsg(null);
+    setConfirmRestore(false);
 
     const trimmed = licenseKey.trim();
     if (!trimmed) {
@@ -66,6 +74,52 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
   };
 
   const isExpired = status && !status.valid && status.days_remaining !== null && status.days_remaining < 0;
+
+  const handlePickBackup = async () => {
+    if (loading || restoring) return;
+    setRestoreMsg(null);
+    setError("");
+    setConfirmRestore(false);
+    setSelectedBackup(null);
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        title: "Select Your Backup File",
+        filters: [
+          { name: "RMS Database Backup", extensions: ["db"] },
+          { name: "All Files", extensions: ["*"] },
+        ],
+      });
+      if (!selected || typeof selected !== "string") return;
+      setSelectedBackup(selected);
+      setConfirmRestore(true);
+    } catch (err: any) {
+      setRestoreMsg({ text: err?.toString() || "Failed to open file picker.", type: "error" });
+    }
+  };
+
+  const handleRestoreBackup = async () => {
+    if (!selectedBackup || loading || restoring) return;
+    setRestoring(true);
+    setRestoreMsg(null);
+    setError("");
+    setConfirmRestore(false);
+    try {
+      const res: LicenseStatus = await invoke("restore_license_from_backup", { filePath: selectedBackup });
+      if (res.valid) {
+        setRestoreMsg({ text: "Backup restored. Your license is active on this device.", type: "success" });
+      } else {
+        setRestoreMsg({ text: res.message, type: "error" });
+        setSelectedBackup(null);
+      }
+    } catch (err: any) {
+      setRestoreMsg({ text: err?.toString() || "Failed to restore backup.", type: "error" });
+      setSelectedBackup(null);
+    } finally {
+      setRestoring(false);
+    }
+  };
 
   return (
     <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 transition-colors p-4 md:p-6 lg:p-8">
@@ -200,7 +254,7 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
 
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || restoring}
                 className="w-full h-12 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-blue-600/25 flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed"
               >
                 {loading ? (
@@ -216,6 +270,98 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
                 )}
               </button>
             </form>
+
+            {/* Restore from Backup */}
+            <div className="mt-8 pt-6 border-t border-slate-200 dark:border-slate-800">
+              <div className="flex items-center space-x-2 mb-1">
+                <DatabaseBackup size={18} className="text-slate-400" />
+                <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                  Moving to a new device?
+                </h3>
+              </div>
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1 mb-4">
+                Restore your backup file to carry your data and activated license over.
+                The system checks the backup's license expiry date against today's date.
+              </p>
+
+              <button
+                type="button"
+                onClick={handlePickBackup}
+                disabled={loading || restoring}
+                className="w-full h-11 border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-500 text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 font-semibold rounded-xl text-sm transition-all flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RefreshCw size={16} />
+                <span>SELECT BACKUP FILE</span>
+              </button>
+
+              {confirmRestore && selectedBackup && !restoreMsg && (
+                <div className="mt-4 p-4 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 space-y-3">
+                  <div className="flex items-start space-x-2">
+                    <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+                    <span className="font-medium">
+                      This will replace ALL data on this device with the contents of this backup. This cannot be undone
+                      (a safety copy of the current data is saved automatically).
+                      <span className="block mt-1 font-mono break-all text-amber-700 dark:text-amber-400">
+                        {selectedBackup}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      onClick={handleRestoreBackup}
+                      disabled={restoring}
+                      className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold rounded-lg text-xs transition-all flex items-center space-x-2 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      {restoring ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin" />
+                          <span>Restoring...</span>
+                        </>
+                      ) : (
+                        <span>Confirm & Restore</span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedBackup(null); setConfirmRestore(false); }}
+                      disabled={restoring}
+                      className="px-3 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {restoreMsg && (
+                <div
+                  className={`mt-4 flex items-start space-x-2 text-sm p-3 rounded-xl border ${
+                    restoreMsg.type === "success"
+                      ? "text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20"
+                      : "text-red-500 bg-red-50 dark:bg-red-500/10 border-red-100 dark:border-red-500/20"
+                  }`}
+                >
+                  {restoreMsg.type === "success" ? (
+                    <CheckCircle size={16} className="mt-0.5 flex-shrink-0" />
+                  ) : (
+                    <XCircle size={16} className="mt-0.5 flex-shrink-0" />
+                  )}
+                  <span className="font-medium break-all">{restoreMsg.text}</span>
+                </div>
+              )}
+
+              {restoreMsg?.type === "success" && (
+                <button
+                  type="button"
+                  onClick={onActivated}
+                  className="mt-3 w-full h-11 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-emerald-600/25 flex items-center justify-center space-x-2 cursor-pointer"
+                >
+                  <ShieldCheck size={18} />
+                  <span>CONTINUE TO APPLICATION</span>
+                </button>
+              )}
+            </div>
 
             {/* Footer */}
             <div className="mt-6 pt-4 border-t border-slate-200 dark:border-slate-800 text-center">

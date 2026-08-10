@@ -33,12 +33,28 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
     <div className="hidden">
       <div
         ref={ref}
-        className="w-[80mm] min-h-screen bg-white text-black p-4 text-[12px] font-mono mx-auto"
+        className="w-[80mm] bg-white text-black p-2 text-[12px] font-mono mx-auto"
         style={{
           printColorAdjust: 'exact',
           WebkitPrintColorAdjust: 'exact'
         }}
       >
+        <style type="text/css">
+          {`
+            @media print {
+              @page {
+                size: 80mm auto;
+                margin: 0;
+              }
+              html, body {
+                height: max-content !important;
+                min-height: 0 !important;
+                margin: 0;
+                padding: 0;
+              }
+            }
+          `}
+        </style>
         {/* Header */}
         <div className="text-center mb-4">
           <h1 className="text-2xl font-bold uppercase tracking-wider mb-1">{props.restaurantName || "RESTAURANT NAME"}</h1>
@@ -73,22 +89,27 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
 
         <div className="border-b-2 border-dashed border-black my-3"></div>
 
-        {/* Items Header */}
-        <div className="flex justify-between font-bold mb-2 uppercase border-b border-black pb-1">
-          <span className="w-1/2">Item</span>
-          <span className="w-1/6 text-center">Qty</span>
-          <span className="w-1/3 text-right">Total</span>
-        </div>
-
-        {/* Items List */}
-        <div className="space-y-2 mb-3 text-[13px] font-semibold">
-          {props.items.map((item, i) => (
-            <div key={i} className="flex justify-between items-start">
-              <span className="w-1/2 break-words pr-2">{item.name}</span>
-              <span className="w-1/6 text-center">{item.quantity}</span>
-              <span className="w-1/3 text-right">{formatCurrency(item.price * item.quantity)}</span>
-            </div>
-          ))}
+        <div className="border border-slate-200 rounded-sm overflow-hidden mb-4 mt-2">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-100 text-[11px] uppercase tracking-wider text-slate-600">
+                <th className="w-5 px-1 py-1.5 text-center font-bold border-b border-r border-slate-200">#</th>
+                <th className="px-2 py-1.5 font-bold border-b border-r border-slate-200">Item</th>
+                <th className="w-[15%] px-1 py-1.5 font-bold border-b border-r border-slate-200 text-center">Qty</th>
+                <th className="w-[30%] px-2 py-1.5 font-bold border-b border-slate-200 text-right">Total</th>
+              </tr>
+            </thead>
+            <tbody className="text-[12px] font-semibold text-slate-900">
+              {props.items.map((item, i) => (
+                <tr key={i} className="border-b border-slate-200 last:border-b-0">
+                  <td className="px-1 py-2 text-center text-slate-500 border-r border-slate-200 font-normal">{i + 1}</td>
+                  <td className="px-2 py-2 break-words align-top border-r border-slate-200">{item.name}</td>
+                  <td className="px-1 py-2 text-center align-top border-r border-slate-200">{item.quantity}</td>
+                  <td className="px-2 py-2 text-right align-top whitespace-nowrap">{formatCurrency(item.price * item.quantity)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
 
         <div className="border-b-2 border-dashed border-black my-3"></div>

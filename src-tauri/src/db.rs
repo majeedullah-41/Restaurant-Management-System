@@ -1,6 +1,6 @@
 #![allow(dead_code, unused_variables, non_snake_case)]
 
-use rusqlite::{Connection, Result};
+use rusqlite::{Connection, OpenFlags, Result};
 use serde::Serialize;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Mutex, MutexGuard};
@@ -317,6 +317,10 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
 
     // 5. License table: activated_at column
     let _ = conn.execute("ALTER TABLE license ADD COLUMN activated_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE license ADD COLUMN hwid TEXT", []);
+    let _ = conn.execute("ALTER TABLE license ADD COLUMN original_hwid TEXT", []);
+    let _ = conn.execute("ALTER TABLE license ADD COLUMN hwid_restored_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE license ADD COLUMN restore_count INTEGER DEFAULT 0", []);
 
     // 6. Inventory tables
     let _ = conn.execute(
@@ -1876,6 +1880,35 @@ pub fn cancel_active_order(order_id: i32, table_id: i32) -> Result<String, Strin
 
     tx.commit().map_err(|e| e.to_string())?;
     Ok("Order cancelled and table freed".into())
+}
+
+#[tauri::command]
+pub fn delete_order_history(order_id: i32) -> Result<String, String> {
+    let mut conn_guard = get_conn()?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
+
+    // Only allow deleting fully completed orders from history. Open/Placed
+    // orders carry active service and must never be removed this way.
+    let status: String = tx.query_row(
+        "SELECT status FROM orders WHERE id = ?1",
+        [&order_id], |row| row.get(0)
+    ).map_err(|_| "Order not found.".to_string())?;
+
+    if status != "Closed" {
+        return Err("Only completed (Closed) orders can be deleted from history.".into());
+    }
+
+    // 1. Delete associated items first (avoids orphaned rows)
+    tx.execute("DELETE FROM order_items WHERE order_id = ?1", [&order_id]).map_err(|e| e.to_string())?;
+
+    // 2. Delete the order itself
+    let deleted = tx.execute("DELETE FROM orders WHERE id = ?1 AND status = 'Closed'", [&order_id]).map_err(|e| e.to_string())?;
+    if deleted == 0 {
+        return Err("Order not found or is no longer closed.".into());
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok("Order deleted from history".into())
 }
 
 #[tauri::command]
@@ -4662,8 +4695,104 @@ pub fn validate_backup_file(file_path: String) -> Result<String, String> {
     Ok(restaurant_name)
 }
 
+/// Reads the license row embedded in a backup database file without touching
+/// the live database. Returns `(current_key, expiry_date, activated_at,
+/// last_validated_date, hwid)`. The HWID may be absent on backups created
+/// before the HWID column existed.
+pub fn read_backup_license(file_path: &str) -> Result<(String, Option<String>, Option<String>, Option<String>, Option<String>), String> {
+    // Open read-only so the backup is never modified (no -wal/-shm sidecars are
+    // created next to the user's file) and so files on read-only media (USB,
+    // cloud-synced folders) can still be restored.
+    let conn = Connection::open_with_flags(
+        file_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|_| "Failed to open file as a valid SQLite database.".to_string())?;
+
+    let table_exists: i32 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='license'",
+        [],
+        |r| r.get(0)
+    ).unwrap_or(0);
+
+    if table_exists == 0 {
+        return Err("Backup file does not contain a license record.".to_string());
+    }
+
+    let row: Option<(String, Option<String>, Option<String>, Option<String>, Option<String>)> = conn
+        .query_row(
+            "SELECT current_key, expiry_date, activated_at, last_validated_date, COALESCE(hwid, '') FROM license LIMIT 1",
+            [],
+            |row| Ok((
+                row.get(0).unwrap_or_default(),
+                row.get(1).unwrap_or(None),
+                row.get(2).unwrap_or(None),
+                row.get(3).unwrap_or(None),
+                row.get::<_, String>(4).ok().filter(|h| !h.is_empty()),
+            )),
+        )
+        .or_else(|_| {
+            // Older backups may lack the hwid column entirely.
+            conn.query_row(
+                "SELECT current_key, expiry_date, activated_at, last_validated_date FROM license LIMIT 1",
+                [],
+                |row| Ok((
+                    row.get(0).unwrap_or_default(),
+                    row.get(1).unwrap_or(None),
+                    row.get(2).unwrap_or(None),
+                    row.get(3).unwrap_or(None),
+                    None,
+                )),
+            )
+        })
+        .ok();
+
+    match row {
+        Some((key, expiry, act, val, hwid)) if !key.trim().is_empty() => Ok((key, expiry, act, val, hwid)),
+        _ => Err("Backup file does not contain an activated license.".to_string()),
+    }
+}
+
+/// Marks that the current license was adopted from a backup restore. Persists
+/// the adopted HWID (so `get_hwid()` reports the machine the license was issued
+/// for, keeping it valid), records the original (first) HWID so a vendor can
+/// spot when the same license shows up on multiple machines, and increments the
+/// restore count.
+///
+/// `last_validated_date` is cleared because it belonged to the previous machine
+/// and may be in the future relative to the new device's clock — otherwise the
+/// clock-rollback guard would falsely invalidate a perfectly valid license.
+pub fn mark_license_restored(adopted_hwid: &str) -> Result<(), String> {
+    let conn = get_conn()?;
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    conn.execute(
+        "UPDATE license SET \
+            hwid = ?1, \
+            original_hwid = CASE WHEN original_hwid IS NULL OR original_hwid = '' THEN ?1 ELSE original_hwid END, \
+            hwid_restored_at = ?2, \
+            restore_count = COALESCE(restore_count, 0) + 1, \
+            last_validated_date = NULL \
+         WHERE id = 1",
+        rusqlite::params![adopted_hwid, now],
+    )
+    .map_err(|e| format!("Failed to record license restore: {}", e))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn import_backup_file(file_path: String) -> Result<String, String> {
+    import_backup_file_inner(file_path, false)
+}
+
+/// Same as `import_backup_file`, but instead of preserving the current
+/// machine's license it keeps the license embedded in the backup file. Used by
+/// the "Restore from Backup" flow on the License Activation screen when moving
+/// to a new device.
+pub fn import_backup_adopting_license(file_path: String) -> Result<String, String> {
+    import_backup_file_inner(file_path, true)
+}
+
+fn import_backup_file_inner(file_path: String, adopt_backup_license: bool) -> Result<String, String> {
     validate_backup_file(file_path.clone())?;
 
     // Hold the DB mutex for the entire swap so no other thread can be served by
@@ -4686,8 +4815,10 @@ pub fn import_backup_file(file_path: String) -> Result<String, String> {
     };
     let safety_file = backups_dir.join(format!("pre-import-{}.db", timestamp));
 
-    // Save existing license before overwriting
-    let mut current_license: Option<(String, String, Option<String>, Option<String>)> = None;
+    // Always snapshot the current database before overwriting it, so a failed or
+    // mistaken import can be rolled back. Only the license read is conditional:
+    // the restore flow adopts the backup's license instead of the current one.
+    let mut current_license: Option<(String, String, Option<String>, Option<String>, Option<String>)> = None;
     if db_path.exists() {
         // Flush any un-checkpointed WAL frames so the safety copy is complete
         // and matches what the running connection sees.
@@ -4698,15 +4829,18 @@ pub fn import_backup_file(file_path: String) -> Result<String, String> {
         std::fs::copy(db_path, &safety_file)
             .map_err(|e| format!("Failed to create safety backup of current database: {}", e))?;
 
-        if let Ok(old_conn) = Connection::open(db_path) {
-            // Include activated_at and last_validated_date so they are preserved
-            if let Ok(mut stmt) = old_conn.prepare("SELECT current_key, expiry_date, activated_at, last_validated_date FROM license LIMIT 1") {
-                if let Ok(mut rows) = stmt.query([]) {
-                    if let Ok(Some(row)) = rows.next() {
-                        if let (Ok(k), Ok(e)) = (row.get::<_, String>(0), row.get::<_, String>(1)) {
-                            let act: Option<String> = row.get(2).unwrap_or(None);
-                            let val: Option<String> = row.get(3).unwrap_or(None);
-                            current_license = Some((k, e, act, val));
+        if !adopt_backup_license {
+            if let Ok(old_conn) = Connection::open(db_path) {
+                // Include activated_at, last_validated_date and hwid so they are preserved
+                if let Ok(mut stmt) = old_conn.prepare("SELECT current_key, expiry_date, activated_at, last_validated_date, hwid FROM license LIMIT 1") {
+                    if let Ok(mut rows) = stmt.query([]) {
+                        if let Ok(Some(row)) = rows.next() {
+                            if let (Ok(k), Ok(e)) = (row.get::<_, String>(0), row.get::<_, String>(1)) {
+                                let act: Option<String> = row.get(2).unwrap_or(None);
+                                let val: Option<String> = row.get(3).unwrap_or(None);
+                                let hwid: Option<String> = row.get(4).unwrap_or(None);
+                                current_license = Some((k, e, act, val, hwid));
+                            }
                         }
                     }
                 }
@@ -4726,10 +4860,10 @@ pub fn import_backup_file(file_path: String) -> Result<String, String> {
     let conn = slot.as_ref().expect("Database connection not initialized");
 
     // Restore the license to the newly imported database
-    if let Some((key, expiry, activated, validated)) = current_license {
-        let _ = conn.execute("CREATE TABLE IF NOT EXISTS license (id INTEGER PRIMARY KEY, current_key TEXT, expiry_date TEXT, activated_at TEXT, last_validated_date TEXT)", []);
+    if let Some((key, expiry, activated, validated, hwid)) = current_license {
+        let _ = conn.execute("CREATE TABLE IF NOT EXISTS license (id INTEGER PRIMARY KEY, current_key TEXT, expiry_date TEXT, activated_at TEXT, last_validated_date TEXT, hwid TEXT)", []);
         let _ = conn.execute("DELETE FROM license", []);
-        let _ = conn.execute("INSERT INTO license (current_key, expiry_date, activated_at, last_validated_date) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![key, expiry, activated, validated]);
+        let _ = conn.execute("INSERT INTO license (current_key, expiry_date, activated_at, last_validated_date, hwid) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![key, expiry, activated, validated, hwid]);
     }
 
     run_migrations(conn)?;
@@ -4752,6 +4886,26 @@ pub fn verify_admin_password(password: String) -> Result<bool, String> {
         }
     }
     
+    Ok(false)
+}
+
+#[tauri::command]
+pub fn verify_operator_password(password: String) -> Result<bool, String> {
+    let conn = get_conn()?;
+
+    let mut stmt = conn.prepare(
+        "SELECT password_hash FROM users u JOIN roles r ON u.role_id = r.id WHERE r.name IN ('Admin', 'Cashier')"
+    ).map_err(|e| e.to_string())?;
+    let hashes = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
+
+    for hash_result in hashes {
+        if let Ok(hash) = hash_result {
+            if let Ok(true) = bcrypt::verify(&password, &hash) {
+                return Ok(true);
+            }
+        }
+    }
+
     Ok(false)
 }
 
