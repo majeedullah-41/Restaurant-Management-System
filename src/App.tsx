@@ -207,7 +207,8 @@ function App() {
         <Route path="/admin/payroll/process" element={<ProtectedRoute adminOnly><ProcessPayroll /></ProtectedRoute>} />
         <Route path="/admin/payroll/history" element={<ProtectedRoute adminOnly><PayrollHistory /></ProtectedRoute>} />
         <Route path="/admin/payroll/advance" element={<ProtectedRoute adminOnly><AdvanceHistory /></ProtectedRoute>} />
-        <Route path="/admin/profile" element={<ProtectedRoute><UserProfile /></ProtectedRoute>} />
+        <Route path="/admin/profile" element={<ProtectedRoute adminOnly><UserProfile /></ProtectedRoute>} />
+        <Route path="/cashier/profile" element={<ProtectedRoute><UserProfile /></ProtectedRoute>} />
         <Route path="/admin/reports" element={<ProtectedRoute adminOnly><Reports /></ProtectedRoute>} />
         
         {/* Wildcard catch-all route should usually be at the very bottom */}

@@ -2,6 +2,12 @@
 #![windows_subsystem = "windows"]
 
 fn main() {
+    for arg in std::env::args() {
+        if arg.starts_with("--remote-debugging-port") {
+            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", &arg);
+        }
+    }
+
     rms_lib::db::init_shared_connection();
     rms_lib::db::init_db().expect("Failed to initialize database");
     rms_lib::run()

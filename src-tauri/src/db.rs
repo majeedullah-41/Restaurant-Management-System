@@ -7,25 +7,36 @@ use std::sync::{Mutex, MutexGuard};
 
 static DB_CONN: Mutex<Option<Connection>> = Mutex::new(None);
 
-pub fn get_default_db_path() -> String {
+/// Rounds a monetary value to two decimal places (round half away from zero,
+/// matching how money is displayed). Applied to every financial component at
+/// checkout so the stored subtotal/tax/service charge/discount always sum
+/// exactly to the stored total.
+fn round2(v: f64) -> f64 {
+    (v * 100.0).round() / 100.0
+}
+
+/// Resolves the live database path. Order: explicit `DB_PATH` env override
+/// (used by tests), then `%LOCALAPPDATA%\RMS\local.db`. There is deliberately
+/// NO fallback to the current working directory — a CWD-relative path would
+/// silently scatter data across directories depending on where the app is
+/// launched from.
+pub fn get_default_db_path() -> Result<String, String> {
     if let Ok(p) = std::env::var("DB_PATH") {
         if !p.trim().is_empty() {
-            return p;
+            return Ok(p);
         }
     }
 
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let app_dir = std::path::Path::new(&local_app_data).join("RMS");
-        if std::fs::create_dir_all(&app_dir).is_ok() {
-            return app_dir.join("local.db").to_string_lossy().to_string();
-        }
-    }
-
-    "local.db".to_string()
+    let local_app_data = std::env::var("LOCALAPPDATA")
+        .map_err(|_| "LOCALAPPDATA is not set; cannot resolve the application data directory.".to_string())?;
+    let app_dir = std::path::Path::new(&local_app_data).join("RMS");
+    std::fs::create_dir_all(&app_dir)
+        .map_err(|e| format!("Failed to create application data directory '{}': {}", app_dir.display(), e))?;
+    Ok(app_dir.join("local.db").to_string_lossy().to_string())
 }
 
 pub fn init_shared_connection() {
-    let db_path = get_default_db_path();
+    let db_path = get_default_db_path().expect("Failed to resolve the database path");
     let conn = Connection::open(&db_path).expect("Failed to open global database connection");
     
     // Enable WAL mode & performance PRAGMAs to eliminate SQLite locks and lag
@@ -93,33 +104,65 @@ pub fn reopen_connection() -> std::result::Result<(), String> {
     let mut slot = DB_CONN
         .lock()
         .map_err(|e| format!("Failed to lock DB connection: {}", e))?;
-    reopen_connection_locked(&mut slot)
+    reopen_connection_locked(&mut slot, None)
 }
 
 /// The shared, lock-free core of [`reopen_connection`]. Callers must already
 /// hold the `DB_CONN` mutex; `import_backup_file` uses this so the connection
 /// stays locked across the whole file-swap window, preventing a concurrent
 /// writer from being served by the pre-import connection.
-fn reopen_connection_locked(slot: &mut Option<Connection>) -> std::result::Result<(), String> {
+///
+/// If reopening fails, `rollback_path` (when given) is copied back over the
+/// live database and the connection is reopened against it. This guarantees the
+/// app never ends up with an uninitialized connection after a swap.
+fn reopen_connection_locked(
+    slot: &mut Option<Connection>,
+    rollback_path: Option<&std::path::Path>,
+) -> std::result::Result<(), String> {
     // Close the old connection and release its file handles before touching
     // the -wal/-shm sidecars (required on Windows to delete them).
     drop(slot.take());
 
-    let db_path = get_default_db_path();
-    let _ = std::fs::remove_file(format!("{}-wal", db_path));
-    let _ = std::fs::remove_file(format!("{}-shm", db_path));
+    let db_path = get_default_db_path()?;
+    let reopen = |path: &str| -> std::result::Result<Connection, String> {
+        let conn = Connection::open(path)
+            .map_err(|e| format!("Failed to reopen database connection: {}", e))?;
+        let _ = conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA foreign_keys = ON;
+             PRAGMA busy_timeout = 5000;"
+        );
+        Ok(conn)
+    };
 
-    let conn = Connection::open(&db_path)
-        .map_err(|e| format!("Failed to reopen database connection: {}", e))?;
-    let _ = conn.execute_batch(
-        "PRAGMA journal_mode = WAL;
-         PRAGMA synchronous = NORMAL;
-         PRAGMA foreign_keys = ON;
-         PRAGMA busy_timeout = 5000;"
-    );
-
-    *slot = Some(conn);
-    Ok(())
+    match reopen(&db_path) {
+        Ok(conn) => {
+            *slot = Some(conn);
+            Ok(())
+        }
+        Err(e) => {
+            // Attempt to roll back to the safety copy so the app stays usable.
+            if let Some(rollback) = rollback_path {
+                if rollback.exists() {
+                    let _ = std::fs::remove_file(format!("{}-wal", db_path));
+                    let _ = std::fs::remove_file(format!("{}-shm", db_path));
+                    let _ = std::fs::copy(rollback, &db_path);
+                    if let Ok(conn) = reopen(&db_path) {
+                        *slot = Some(conn);
+                        return Err(format!(
+                            "Import failed ({}). The previous database was restored.",
+                            e
+                        ));
+                    }
+                }
+            }
+            Err(format!(
+                "Failed to reopen database connection and no usable rollback was found: {}",
+                e
+            ))
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -169,7 +212,24 @@ pub fn init_db() -> Result<()> {
     Ok(())
 }
 
+/// Bump this only when the migration suite below changes. The suite is a
+/// monotonic, idempotent migration sequence: it runs exactly once per database
+/// (`PRAGMA user_version`), so the expensive per-row backfills no longer re-run
+/// on every app start or backup command.
+const SCHEMA_VERSION: i32 = 1;
+
 pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
+    // Only run the migration suite once per database. `user_version` starts at
+    // 0 for existing and freshly-created databases, so legacy schema always gets
+    // migrated on first run after this guard is introduced. The version is only
+    // persisted after the whole suite succeeds, so a partial failure retries.
+    let current_version: i32 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap_or(0);
+    if current_version >= SCHEMA_VERSION {
+        return Ok(());
+    }
+
     // 0. Ensure core tables exist before ALTER TABLE migrations run
     let _ = conn.execute(
         "CREATE TABLE IF NOT EXISTS orders (
@@ -625,6 +685,10 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
         }
     }
 
+    // Persist the completed migration state so the suite does not re-run.
+    conn.pragma_update(None, "user_version", SCHEMA_VERSION)
+        .map_err(|e| format!("Failed to record schema version: {}", e))?;
+
     Ok(())
 }
 
@@ -960,6 +1024,11 @@ pub fn login(email: String, password: String) -> LoginResponse {
 
     if matches.is_empty() {
         crate::auth::record_login_attempt(&email_lower);
+        // Run a dummy bcrypt verification against a fixed cost-12 hash so the
+        // response time matches that of an existing account's password check.
+        // Otherwise the timing delta reveals whether a username exists.
+        const DUMMY_BCRYPT: &str = "$2b$12$t4tRmi8mDwTY4Q.geBvBwuQAaxhRXkygoD2DFGF9NLJzVnHatetZ.";
+        let _ = bcrypt::verify(&password, DUMMY_BCRYPT);
         return fail("Invalid email or password");
     }
 
@@ -1523,16 +1592,16 @@ pub fn checkout_order(
         [&order_id], |row| Ok((row.get(0)?, row.get(1)?))
     ).map_err(|e| e.to_string())?;
 
-    let server_tax = server_subtotal * tax_rate / 100.0;
+    let server_tax = round2(server_subtotal * tax_rate / 100.0);
     let sc_applies = sc_types.split(',').any(|t| t.trim() == order_type);
-    let server_sc = if sc_applies { server_subtotal * sc_rate / 100.0 } else { 0.0 };
-    let gross = server_subtotal + server_tax + server_sc;
+    let server_sc = if sc_applies { round2(server_subtotal * sc_rate / 100.0) } else { 0.0 };
+    let gross = round2(server_subtotal) + server_tax + server_sc;
     // Prefer the client-supplied discount when present; otherwise fall back to
     // the discount already persisted on the open order (via update_order_discount)
     // so a checkout that omits it cannot silently drop the discount.
     let requested_discount = if discount_amount.is_finite() && discount_amount > 0.0 { discount_amount } else { stored_discount };
-    let discount = requested_discount.min(gross);
-    let server_total = gross + delivery_fee - discount;
+    let discount = round2(requested_discount.min(gross));
+    let server_total = round2(gross + delivery_fee - discount);
 
     if server_total <= 0.0 {
         return Err("Order total cannot be zero or negative. Please check the discount.".to_string());
@@ -1559,7 +1628,7 @@ pub fn checkout_order(
         amount_received = ?6, change_due = ?7, customer_id = ?8, cashier_name = ?9, order_note = ?10, service_charge_amount = ?11 
         WHERE id = ?1 AND status = 'Open'", 
         rusqlite::params![
-            order_id, order_type, server_subtotal, server_tax, discount, 
+            order_id, order_type, round2(server_subtotal), server_tax, discount, 
             amount_received, change_due, customer_id, cashier_name, order_note, server_sc,
             new_status
         ]
@@ -4579,7 +4648,7 @@ pub fn perform_backup(destination: Option<String>) -> Result<String, String> {
         std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create folder: {}", e))?;
     }
 
-    let current_db_path = get_default_db_path();
+    let current_db_path = get_default_db_path()?;
     // Flush pending WAL frames into the main file so the copied backup is a
     // complete snapshot (the app writes in WAL mode while running).
     let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
@@ -4673,8 +4742,21 @@ pub fn validate_backup_file(file_path: String) -> Result<String, String> {
         return Err("Selected file does not exist or is invalid.".to_string());
     }
 
-    let conn = Connection::open(&file_path)
-        .map_err(|_| "Failed to open file as a valid SQLite database.".to_string())?;
+    // Open read-only so the backup is never modified and no -wal/-shm sidecars
+    // are created next to the user's file (read-only media stays importable).
+    let conn = Connection::open_with_flags(
+        &file_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|_| "Failed to open file as a valid SQLite database.".to_string())?;
+
+    // Refuse to import a corrupt database.
+    let integrity: String = conn
+        .query_row("PRAGMA quick_check", [], |r| r.get(0))
+        .unwrap_or_else(|_| "error".to_string());
+    if !integrity.eq_ignore_ascii_case("ok") {
+        return Err("Backup file failed integrity checks and cannot be imported.".to_string());
+    }
 
     let table_exists: i32 = conn.query_row(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='restaurant_settings'",
@@ -4753,6 +4835,50 @@ pub fn read_backup_license(file_path: &str) -> Result<(String, Option<String>, O
     }
 }
 
+/// Verifies a password against the admin user(s) stored inside a backup
+/// database file, opened read-only. Prevents a local attacker from importing an
+/// arbitrary database over a live install: the person restoring a backup must
+/// prove they control that backup by knowing its admin password.
+pub fn verify_backup_admin_password(file_path: &str, password: &str) -> Result<bool, String> {
+    let conn = Connection::open_with_flags(
+        file_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|_| "Failed to open file as a valid SQLite database.".to_string())?;
+
+    let table_exists: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='users'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    if table_exists == 0 {
+        return Err("Backup file does not contain a users table.".to_string());
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT u.password_hash FROM users u JOIN roles r ON u.role_id = r.id WHERE r.name = 'Admin'",
+        )
+        .map_err(|_| "Backup file is not a valid RMS database.".to_string())?;
+
+    let hashes = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|_| "Backup file is not a valid RMS database.".to_string())?;
+
+    for hash_result in hashes {
+        if let Ok(hash) = hash_result {
+            if let Ok(true) = bcrypt::verify(password, &hash) {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
 /// Marks that the current license was adopted from a backup restore. Persists
 /// the adopted HWID (so `get_hwid()` reports the machine the license was issued
 /// for, keeping it valid), records the original (first) HWID so a vendor can
@@ -4801,7 +4927,7 @@ fn import_backup_file_inner(file_path: String, adopt_backup_license: bool) -> Re
         .lock()
         .map_err(|e| format!("Failed to lock DB connection: {}", e))?;
 
-    let db_path_str = get_default_db_path();
+    let db_path_str = get_default_db_path()?;
     let db_path = std::path::Path::new(&db_path_str);
     
     let backups_dir = db_path.parent().unwrap_or_else(|| std::path::Path::new(".")).join("backups");
@@ -4855,9 +4981,13 @@ fn import_backup_file_inner(file_path: String, adopt_backup_license: bool) -> Re
     // the stale -wal/-shm from the previous database; leaving them in place
     // would let the OLD data be replayed over the imported file, which is why
     // an import previously appeared to "succeed" without the data appearing.
-    reopen_connection_locked(&mut slot)?;
+    // If the imported file cannot be opened, the pre-import safety copy is
+    // restored automatically so the connection is never left uninitialized.
+    reopen_connection_locked(&mut slot, Some(&safety_file))?;
 
-    let conn = slot.as_ref().expect("Database connection not initialized");
+    let conn = slot
+        .as_ref()
+        .ok_or_else(|| "Database connection not initialized after import.".to_string())?;
 
     // Restore the license to the newly imported database
     if let Some((key, expiry, activated, validated, hwid)) = current_license {
@@ -4872,25 +5002,48 @@ fn import_backup_file_inner(file_path: String, adopt_backup_license: bool) -> Re
 }
 
 #[tauri::command]
-pub fn verify_admin_password(password: String) -> Result<bool, String> {
+pub fn verify_admin_password(password: String, session_token: String) -> Result<bool, String> {
+    let session = crate::auth::validate(&session_token).map_err(|e| e.to_string())?;
+    if session.role != "Admin" {
+        return Err("Admin access required for this action.".to_string());
+    }
+    if crate::auth::is_verify_locked(&session.username) {
+        return Err("Too many failed attempts. Please try again in a few minutes.".to_string());
+    }
+
     let conn = get_conn()?;
     
     let mut stmt = conn.prepare("SELECT password_hash FROM users u JOIN roles r ON u.role_id = r.id WHERE r.name = 'Admin'").map_err(|e| e.to_string())?;
     let admin_hashes = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
 
+    let mut verified = false;
     for hash_result in admin_hashes {
         if let Ok(hash) = hash_result {
             if let Ok(true) = bcrypt::verify(&password, &hash) {
-                return Ok(true);
+                verified = true;
+                break;
             }
         }
     }
-    
-    Ok(false)
+
+    if verified {
+        crate::auth::clear_verify_attempts(&session.username);
+    } else {
+        crate::auth::record_verify_attempt(&session.username);
+    }
+    Ok(verified)
 }
 
 #[tauri::command]
-pub fn verify_operator_password(password: String) -> Result<bool, String> {
+pub fn verify_operator_password(password: String, session_token: String) -> Result<bool, String> {
+    let session = crate::auth::validate(&session_token).map_err(|e| e.to_string())?;
+    if session.role != "Admin" && session.role != "Cashier" {
+        return Err("Operator access required for this action.".to_string());
+    }
+    if crate::auth::is_verify_locked(&session.username) {
+        return Err("Too many failed attempts. Please try again in a few minutes.".to_string());
+    }
+
     let conn = get_conn()?;
 
     let mut stmt = conn.prepare(
@@ -4898,15 +5051,22 @@ pub fn verify_operator_password(password: String) -> Result<bool, String> {
     ).map_err(|e| e.to_string())?;
     let hashes = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
 
+    let mut verified = false;
     for hash_result in hashes {
         if let Ok(hash) = hash_result {
             if let Ok(true) = bcrypt::verify(&password, &hash) {
-                return Ok(true);
+                verified = true;
+                break;
             }
         }
     }
 
-    Ok(false)
+    if verified {
+        crate::auth::clear_verify_attempts(&session.username);
+    } else {
+        crate::auth::record_verify_attempt(&session.username);
+    }
+    Ok(verified)
 }
 
 #[derive(Serialize)]
@@ -5376,12 +5536,12 @@ pub fn place_delivery_order(
         [], |row| Ok((row.get(0).unwrap_or(0.0), row.get(1).unwrap_or(0.0), row.get(2).unwrap_or("Dine-in".to_string())))
     ).map_err(|e| e.to_string())?;
 
-    let server_tax = server_subtotal * tax_rate / 100.0;
+    let server_tax = round2(server_subtotal * tax_rate / 100.0);
     let sc_applies = sc_types.split(',').any(|t| t.trim() == "Delivery");
-    let server_sc = if sc_applies { server_subtotal * sc_rate / 100.0 } else { 0.0 };
-    let gross = server_subtotal + server_tax + server_sc;
-    let discount = discount_amount.min(gross);
-    let server_total = gross + delivery_fee - discount;
+    let server_sc = if sc_applies { round2(server_subtotal * sc_rate / 100.0) } else { 0.0 };
+    let gross = round2(server_subtotal) + server_tax + server_sc;
+    let discount = round2(discount_amount.min(gross));
+    let server_total = round2(gross + delivery_fee - discount);
 
     if server_total <= 0.0 {
         return Err("Order total cannot be zero or negative. Please check the discount.".to_string());
@@ -5444,7 +5604,7 @@ pub fn place_delivery_order(
         delivery_address = ?8, delivery_fee = ?9, service_charge_amount = ?10
         WHERE id = ?1", 
         rusqlite::params![
-            order_id, server_subtotal, server_tax, discount, 
+            order_id, round2(server_subtotal), server_tax, discount, 
             final_customer_id, cashier_name, order_note, delivery_address, delivery_fee, server_sc
         ]
     ).map_err(|e| e.to_string())?;
@@ -5818,6 +5978,11 @@ pub fn add_tables(category_id: i32, numbers: String) -> Result<String, String> {
             let bounds: Vec<&str> = part.split('-').collect();
             if bounds.len() == 2 {
                 if let (Ok(start), Ok(end)) = (bounds[0].trim().parse::<i32>(), bounds[1].trim().parse::<i32>()) {
+                    // Reject unbounded/inverted ranges that could hang the main
+                    // thread with billions of inserts.
+                    if end < start || end - start > 499 {
+                        return Err("Table range is too large. Add at most 500 tables at a time.".into());
+                    }
                     for i in start..=end {
                         to_add.push(i);
                     }
@@ -5829,6 +5994,9 @@ pub fn add_tables(category_id: i32, numbers: String) -> Result<String, String> {
     }
     if to_add.is_empty() {
         return Err("No valid table numbers provided.".into());
+    }
+    if to_add.len() > 500 {
+        return Err("Too many tables in a single request. Add at most 500 tables at a time.".into());
     }
 
     // All-or-nothing so a partial failure cannot leave the batch half-added.

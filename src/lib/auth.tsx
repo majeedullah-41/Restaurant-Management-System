@@ -57,6 +57,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refresh();
   }, [refresh]);
 
+  // Centralized session-expiry handling: any IPC call that gets rejected with
+  // an expired/invalid token clears the local session and returns the user to
+  // the login screen (see lib/api.ts).
+  useEffect(() => {
+    const onSessionExpired = () => {
+      setUser(null);
+      setLoading(false);
+      if (window.location.hash !== "#/login") {
+        window.location.hash = "#/login";
+      }
+    };
+    window.addEventListener("session-expired", onSessionExpired);
+    return () => window.removeEventListener("session-expired", onSessionExpired);
+  }, []);
+
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
     const res = await invoke<{
       success: boolean;

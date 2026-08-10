@@ -1,5 +1,5 @@
 import { invoke as coreInvoke } from "@tauri-apps/api/core";
-import { getSessionToken } from "./session";
+import { getSessionToken, clearSessionStorage } from "./session";
 
 /**
  * Invoke wrapper that automatically attaches the current session token to every
@@ -10,5 +10,22 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
   return coreInvoke<T>(cmd, {
     sessionToken: getSessionToken() ?? "",
     ...(args ?? {}),
+  }).catch((err: unknown) => {
+    if (isSessionInvalidError(err) && cmd !== "login") {
+      // The backend refused an expired/invalid token. Drop all local session
+      // state and let the auth provider redirect to the login screen instead of
+      // leaving the UI stuck on a dead session.
+      clearSessionStorage();
+      window.dispatchEvent(new Event("session-expired"));
+    }
+    throw err;
   });
+}
+
+function isSessionInvalidError(err: unknown): boolean {
+  const msg = typeof err === "string" ? err : err instanceof Error ? err.message : "";
+  return (
+    msg.includes("Session expired. Please log in again.") ||
+    msg.includes("Not authenticated. Please log in.")
+  );
 }

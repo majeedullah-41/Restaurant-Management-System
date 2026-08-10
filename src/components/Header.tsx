@@ -14,6 +14,7 @@ export default function Header({ title, subtitle, children }: HeaderProps) {
   const { user } = useAuth();
   const role = user?.role || "Admin";
   const displayName = user?.display_name || role;
+  const profilePath = role === "Admin" ? "/admin/profile" : "/cashier/profile";
 
   return (
     <header className="h-[72px] px-4 md:px-8 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 shrink-0 bg-white dark:bg-[#0B1120] transition-colors">
@@ -57,7 +58,7 @@ export default function Header({ title, subtitle, children }: HeaderProps) {
         </div>
 
         {/* Profile */}
-        <Link to="/admin/profile" className="flex items-center space-x-3 border-l border-slate-200 dark:border-slate-800 pl-6 cursor-pointer group">
+        <Link to={profilePath} className="flex items-center space-x-3 border-l border-slate-200 dark:border-slate-800 pl-6 cursor-pointer group">
           <div className="hidden md:block text-right">
             <p className="text-[15px] font-bold text-slate-900 dark:text-white leading-tight group-hover:text-blue-600 transition-colors">{displayName}</p>
             <p className="text-[13px] text-slate-500 dark:text-slate-400 font-medium">{role === "Admin" ? "Administrator" : "Staff Member"}</p>

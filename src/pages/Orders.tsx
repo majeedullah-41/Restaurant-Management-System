@@ -370,17 +370,19 @@ export default function Orders() {
                                       <Printer size={16} />
                                       <span>Print Receipt</span>
                                     </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setDeleteOrderId(order.id);
-                                        setShowDeletePassword(true);
-                                      }}
-                                      className="inline-flex items-center space-x-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm shadow-red-600/20"
-                                    >
-                                      <Trash2 size={16} />
-                                      <span>Delete Order</span>
-                                    </button>
+                                    {role === "Admin" && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setDeleteOrderId(order.id);
+                                          setShowDeletePassword(true);
+                                        }}
+                                        className="inline-flex items-center space-x-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm shadow-red-600/20"
+                                      >
+                                        <Trash2 size={16} />
+                                        <span>Delete Order</span>
+                                      </button>
+                                    )}
                                   </div>
                                 )}
                                 <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3 flex items-center"><PackageOpen size={16} className="mr-2"/> Order Items</h4>

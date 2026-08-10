@@ -60,6 +60,47 @@ pub fn clear_login_attempts(username: &str) {
     }
 }
 
+// Password-verification throttling (verify_admin_password / verify_operator_password).
+// Same window/threshold as login so these confirmation prompts cannot be used as
+// an unthrottled oracle to brute-force an admin or cashier password.
+
+const VERIFY_MAX_ATTEMPTS: usize = 5;
+const VERIFY_WINDOW_SECS: u64 = 300; // 5 minutes
+
+static VERIFY_ATTEMPTS: OnceLock<Mutex<HashMap<String, Vec<Instant>>>> = OnceLock::new();
+
+fn verify_attempts() -> &'static Mutex<HashMap<String, Vec<Instant>>> {
+    VERIFY_ATTEMPTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Returns true when the session user has exceeded the allowed number of failed
+/// password-verification attempts within the window.
+pub fn is_verify_locked(username: &str) -> bool {
+    let now = Instant::now();
+    let cutoff = now - std::time::Duration::from_secs(VERIFY_WINDOW_SECS);
+    let mut map = verify_attempts().lock().unwrap();
+    let attempts = map.entry(username.to_string()).or_insert_with(Vec::new);
+    attempts.retain(|t| *t > cutoff);
+    attempts.len() >= VERIFY_MAX_ATTEMPTS
+}
+
+/// Records a failed password-verification attempt for the session user.
+pub fn record_verify_attempt(username: &str) {
+    let now = Instant::now();
+    let cutoff = now - std::time::Duration::from_secs(VERIFY_WINDOW_SECS);
+    let mut map = verify_attempts().lock().unwrap();
+    let attempts = map.entry(username.to_string()).or_insert_with(Vec::new);
+    attempts.retain(|t| *t > cutoff);
+    attempts.push(now);
+}
+
+/// Clears recorded verification attempts for the session user (successful verification).
+pub fn clear_verify_attempts(username: &str) {
+    if let Ok(mut map) = verify_attempts().lock() {
+        map.remove(username);
+    }
+}
+
 // Password-reset throttling is stored in the `reset_attempts` table so the
 // counter survives an app restart and a local attacker cannot trivially reset
 // it by relaunching the process.
@@ -256,6 +297,8 @@ pub const ADMIN_COMMANDS: &[&str] = &[
     "get_attendance",
     // Admin password confirmation (backup / restore gates)
     "verify_admin_password",
+    // Deleting closed orders destroys the financial audit trail
+    "delete_order_history",
     // License metadata (used on the admin Settings page)
     "get_license_info",
     // User management

@@ -633,7 +633,7 @@ fn hwid_from_key_payload(key_string: &str) -> Option<String> {
 ///   machine. Restores are tracked (original HWID + restore count) so a vendor
 ///   can detect license sharing across machines.
 #[tauri::command]
-pub fn restore_license_from_backup(file_path: String) -> Result<LicenseStatus, String> {
+pub fn restore_license_from_backup(file_path: String, password: String) -> Result<LicenseStatus, String> {
     // Defense in depth: this command is reachable without a session (it is
     // PUBLIC so the pre-login License screen can use it), so it must not be able
     // to silently overwrite an installation that already has a valid license.
@@ -644,8 +644,23 @@ pub fn restore_license_from_backup(file_path: String) -> Result<LicenseStatus, S
         );
     }
 
+    // Global throttle so this public command cannot be used as an offline
+    // brute-force oracle against the backup's admin password.
+    if crate::auth::is_verify_locked("__backup_restore__") {
+        return Err("Too many restore attempts. Please try again in a few minutes.".to_string());
+    }
+
     let (key, _expiry, _activated, _validated, backup_hwid) =
         crate::db::read_backup_license(&file_path)?;
+
+    // Proof of ownership: the person restoring the backup must know its admin
+    // password. An arbitrary .db cannot be imported over a live installation.
+    let admin_ok = crate::db::verify_backup_admin_password(&file_path, &password)?;
+    if !admin_ok {
+        crate::auth::record_verify_attempt("__backup_restore__");
+        return Err("The admin password for this backup is incorrect.".to_string());
+    }
+    crate::auth::clear_verify_attempts("__backup_restore__");
 
     let hwid = backup_hwid
         .or_else(|| hwid_from_key_payload(&key))

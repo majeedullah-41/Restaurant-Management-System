@@ -25,6 +25,7 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
   const [restoring, setRestoring] = useState(false);
   const [selectedBackup, setSelectedBackup] = useState<string | null>(null);
   const [confirmRestore, setConfirmRestore] = useState(false);
+  const [backupPassword, setBackupPassword] = useState("");
   const [restoreMsg, setRestoreMsg] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
   const handleCopyHwid = async () => {
@@ -88,7 +89,6 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
         title: "Select Your Backup File",
         filters: [
           { name: "RMS Database Backup", extensions: ["db"] },
-          { name: "All Files", extensions: ["*"] },
         ],
       });
       if (!selected || typeof selected !== "string") return;
@@ -101,12 +101,16 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
 
   const handleRestoreBackup = async () => {
     if (!selectedBackup || loading || restoring) return;
+    if (!backupPassword.trim()) {
+      setRestoreMsg({ text: "Enter the admin password for this backup to continue.", type: "error" });
+      return;
+    }
     setRestoring(true);
     setRestoreMsg(null);
     setError("");
     setConfirmRestore(false);
     try {
-      const res: LicenseStatus = await invoke("restore_license_from_backup", { filePath: selectedBackup });
+      const res: LicenseStatus = await invoke("restore_license_from_backup", { filePath: selectedBackup, password: backupPassword });
       if (res.valid) {
         setRestoreMsg({ text: "Backup restored. Your license is active on this device.", type: "success" });
       } else {
@@ -306,6 +310,13 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
                       </span>
                     </span>
                   </div>
+                  <input
+                    type="password"
+                    value={backupPassword}
+                    onChange={(e) => setBackupPassword(e.target.value)}
+                    placeholder="Admin password for this backup"
+                    className="w-full h-10 bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-500/30 rounded-lg px-3 text-xs font-medium text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
                   <div className="flex items-center space-x-2">
                     <button
                       type="button"
