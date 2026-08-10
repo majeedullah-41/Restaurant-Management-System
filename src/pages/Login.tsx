@@ -33,7 +33,7 @@ export default function Login() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(""); 
+    setError("");
 
     try {
       const res = await login(email, password);
@@ -58,17 +58,17 @@ export default function Login() {
   return (
     <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 transition-colors p-4 md:p-8 lg:p-12">
       <div className="flex flex-col md:flex-row w-full h-full bg-white dark:bg-[#0B1120] rounded-3xl overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 transition-colors">
-        
+
         {/* LEFT SIDE: The Restaurant Image Area */}
         <div className="hidden md:flex flex-col w-1/2 bg-black relative">
           <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-black/20 z-10"></div>
-          
-          <img 
-            src="https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?q=80&w=2070&auto=format&fit=crop" 
+
+          <img
+            src="https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?q=80&w=2070&auto=format&fit=crop"
             alt="Restaurant Interior"
             className="absolute inset-0 w-full h-full object-cover opacity-80"
           />
-          
+
           <div className="relative z-20 flex flex-col items-center justify-center h-full p-12 text-center">
             {restaurantLogo ? (
               <div className="w-24 h-24 bg-white/10 backdrop-blur-md rounded-3xl p-3 mb-8 shadow-2xl shadow-black/50 border border-white/20 flex items-center justify-center">
@@ -115,7 +115,7 @@ export default function Login() {
                 <Label htmlFor="email" className="text-slate-700 dark:text-slate-300 font-semibold">Email Address</Label>
                 <div className="relative">
                   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="absolute left-3 top-3 text-slate-400"><rect width="20" height="16" x="2" y="4" rx="2"></rect><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path></svg>
-                  <Input 
+                  <Input
                     id="email" type="email" placeholder="Enter your email"
                     className="pl-10 h-12 bg-slate-50 dark:bg-[#0B1120] border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus-visible:ring-blue-500 rounded-xl"
                     value={email} onChange={(e) => setEmail(e.target.value)}
@@ -127,7 +127,7 @@ export default function Login() {
                 <Label htmlFor="password" className="text-slate-700 dark:text-slate-300 font-semibold">Password</Label>
                 <div className="relative">
                   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="absolute left-3 top-3 text-slate-400"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                  <Input 
+                  <Input
                     id="password" type="password" placeholder="Enter your password"
                     className="pl-10 h-12 bg-slate-50 dark:bg-[#0B1120] border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus-visible:ring-blue-500 rounded-xl"
                     value={password} onChange={(e) => setPassword(e.target.value)}
@@ -140,8 +140,8 @@ export default function Login() {
                   <input type="checkbox" id="remember" className="w-4 h-4 rounded border-slate-300 dark:border-slate-700 text-blue-600 focus:ring-blue-600" />
                   <label htmlFor="remember" className="text-sm font-medium text-slate-600 dark:text-slate-400 cursor-pointer">Remember Me</label>
                 </div>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   onClick={() => setIsForgotPasswordOpen(true)}
                   className="text-sm font-semibold text-blue-600 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
                 >
@@ -162,21 +162,17 @@ export default function Login() {
               <div className="flex items-center space-x-1.5 whitespace-nowrap"><Settings2 size={16} /><span>Built for Restaurants</span></div>
             </div>
           </div>
-          
+
           {/* Bottom Footer Info */}
-          <div className="mt-8 flex flex-col md:flex-row justify-between items-center gap-2 text-xs text-slate-400 dark:text-slate-500 max-w-full">
-            <span className="whitespace-nowrap">Version 1.0.0</span>
-            <div className="flex items-center space-x-1.5 whitespace-nowrap">
-               <ShieldCheck size={14} className="text-blue-500" />
-               <span>Your data is safe and secure</span>
-            </div>
-            <span className="whitespace-nowrap truncate">© {new Date().getFullYear()} {restaurantName}</span>
+          <div className="mt-8 flex flex-col justify-center items-center gap-2 text-xs text-slate-400 dark:text-slate-500 max-w-full text-center">
+            <span className="whitespace-nowrap">Software provided by EagleNest Creations (0346-4451505)</span>
+
           </div>
         </div>
       </div>
-      <ForgotPasswordModal 
-        isOpen={isForgotPasswordOpen} 
-        onClose={() => setIsForgotPasswordOpen(false)} 
+      <ForgotPasswordModal
+        isOpen={isForgotPasswordOpen}
+        onClose={() => setIsForgotPasswordOpen(false)}
       />
     </div>
   );

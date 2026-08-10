@@ -361,8 +361,8 @@ export default function TableManagement() {
       {/* MANAGE CATEGORIES LIST MODAL */}
       {isManageCategoriesOpen && (
         <div className="absolute inset-0 bg-black/60 z-50 flex items-center justify-center backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-96 shadow-2xl">
-            <div className="flex justify-between items-center mb-6">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-96 shadow-2xl max-h-[85vh] flex flex-col">
+            <div className="flex justify-between items-center mb-6 shrink-0">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">Table Categories</h3>
               <button onClick={() => setIsManageCategoriesOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"><X size={20}/></button>
             </div>
@@ -370,7 +370,7 @@ export default function TableManagement() {
             {categories.length === 0 ? (
               <p className="text-sm text-slate-500 dark:text-slate-400">No categories yet. Add one to group your tables.</p>
             ) : (
-              <div className="space-y-1.5">
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1 -mr-1">
                 {categories.map((cat) => {
                   const tableCount = tables.filter(t => t.category_id === cat.id).length;
                   return (
@@ -391,7 +391,7 @@ export default function TableManagement() {
 
             <button
               onClick={() => { setIsManageCategoriesOpen(false); setEditingCat(null); setCatName(""); setCatError(null); setIsCatModalOpen(true); }}
-              className="w-full h-10 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-semibold rounded-lg flex items-center justify-center space-x-2 transition-colors mt-4"
+              className="w-full h-10 shrink-0 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-semibold rounded-lg flex items-center justify-center space-x-2 transition-colors mt-4"
             >
               <Plus size={16} />
               <span>Add Category</span>
@@ -442,7 +442,7 @@ export default function TableManagement() {
             <div className="flex-1 flex items-center justify-center text-slate-500">Loading floor plan...</div>
           ) : (
             <div className="space-y-8">
-              {groupedSections.map((section) => (
+              {groupedSections.filter((section) => section.tables.length > 0).map((section) => (
                 <div key={section.key}>
                   <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-3">{section.label}</h2>
                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">

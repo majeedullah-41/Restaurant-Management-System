@@ -16,7 +16,9 @@ import TableManagement from "./pages/TableManagement";
 import StaffManagement from "./pages/StaffManagement";
 import Customers from "./pages/Customers";
 import Expenses from "./pages/Expenses";
-import Payroll from "./pages/Payroll";
+import ProcessPayroll from "./pages/payroll/ProcessPayroll";
+import PayrollHistory from "./pages/payroll/PayrollHistory";
+import AdvanceHistory from "./pages/payroll/AdvanceHistory";
 import UserProfile from "./pages/UserProfile";
 import Reports from "./pages/Reports";
 import DeliveryManagement from "./pages/DeliveryManagement";
@@ -191,7 +193,10 @@ function App() {
         <Route path="/admin/customers" element={<ProtectedRoute adminOnly><Customers /></ProtectedRoute>} />
         <Route path="/admin/expenses" element={<ProtectedRoute adminOnly><Expenses /></ProtectedRoute>} />
         <Route path="/admin/inventory" element={<ProtectedRoute adminOnly><Inventory /></ProtectedRoute>} />
-        <Route path="/admin/payroll" element={<ProtectedRoute adminOnly><Payroll /></ProtectedRoute>} />
+        <Route path="/admin/payroll" element={<Navigate to="/admin/payroll/process" replace />} />
+        <Route path="/admin/payroll/process" element={<ProtectedRoute adminOnly><ProcessPayroll /></ProtectedRoute>} />
+        <Route path="/admin/payroll/history" element={<ProtectedRoute adminOnly><PayrollHistory /></ProtectedRoute>} />
+        <Route path="/admin/payroll/advance" element={<ProtectedRoute adminOnly><AdvanceHistory /></ProtectedRoute>} />
         <Route path="/admin/profile" element={<ProtectedRoute><UserProfile /></ProtectedRoute>} />
         <Route path="/admin/reports" element={<ProtectedRoute adminOnly><Reports /></ProtectedRoute>} />
         

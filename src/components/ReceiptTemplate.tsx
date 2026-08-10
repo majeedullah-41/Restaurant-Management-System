@@ -14,6 +14,7 @@ interface ReceiptProps {
   orderId: string;
   orderType: string;
   tableNumber: string;
+  tableCategoryName?: string;
   date: string;
   items: ReceiptItem[];
   subtotal: number;
@@ -62,7 +63,7 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
           </div>
           <div className="flex justify-between">
             <span className="font-bold uppercase">Table:</span>
-            <span className="uppercase">{props.tableNumber === "0" ? "Walk-in" : `Table ${props.tableNumber.padStart(2, '0')}`}</span>
+            <span className="uppercase">{props.tableNumber === "0" ? "Walk-in" : (props.tableCategoryName ? `${props.tableCategoryName.trim()} ${props.tableNumber.padStart(2, '0')}` : `Table ${props.tableNumber.padStart(2, '0')}`)}</span>
           </div>
           <div className="flex justify-between">
             <span className="font-bold uppercase">Cashier:</span>

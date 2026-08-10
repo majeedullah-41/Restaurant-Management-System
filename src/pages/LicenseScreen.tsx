@@ -68,7 +68,7 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
   const isExpired = status && !status.valid && status.days_remaining !== null && status.days_remaining < 0;
 
   return (
-    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 transition-colors p-4 md:p-8 lg:p-12">
+    <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 transition-colors p-4 md:p-6 lg:p-8">
       <div className="flex flex-col md:flex-row w-full h-full bg-white dark:bg-[#0B1120] rounded-3xl overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 transition-colors">
         
         {/* LEFT SIDE: Shield Branding */}
@@ -97,7 +97,7 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
 
             <div className="max-w-sm text-slate-400 text-sm leading-relaxed">
               Your software requires a valid license to operate. Contact your vendor
-              with the Hardware ID displayed on this screen to receive your unique activation key.
+              with the Hardware ID displayed on this screen to receive your unique activation key. (0347-9366948)
             </div>
 
             <div className="flex items-center space-x-3 text-slate-400 font-medium mt-10">
@@ -111,8 +111,8 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
         </div>
 
         {/* RIGHT SIDE: Activation Form */}
-        <div className="flex w-full md:w-1/2 flex-col justify-center px-8 lg:px-20 bg-white dark:bg-[#1E293B] relative transition-colors">
-          <div className="w-full max-w-md mx-auto">
+        <div className="flex w-full md:w-1/2 flex-col overflow-y-auto custom-scrollbar px-6 lg:px-12 py-6 bg-white dark:bg-[#1E293B] relative transition-colors">
+          <div className="flex-1 flex flex-col justify-center w-full max-w-md mx-auto min-h-max">
             
             {/* Status Banner */}
             {isExpired && (
@@ -140,7 +140,7 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
             )}
 
             {/* Header */}
-            <div className="flex items-center space-x-4 mb-8">
+            <div className="flex items-center space-x-4 mb-6">
               <div className="w-12 h-12 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center border border-blue-100 dark:border-blue-800">
                 <Key size={24} className="text-blue-600 dark:text-blue-500" />
               </div>
@@ -151,7 +151,7 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
             </div>
 
             {/* HWID Display */}
-            <div className="mb-8">
+            <div className="mb-6">
               <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider">
                 Your Hardware ID
               </label>
@@ -186,7 +186,7 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
                   value={licenseKey}
                   onChange={(e) => setLicenseKey(e.target.value)}
                   placeholder="Paste your license key here..."
-                  rows={4}
+                  rows={2}
                   className="w-full bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-mono resize-none transition-colors"
                 />
               </div>
@@ -218,19 +218,22 @@ export default function LicenseScreen({ hwid, status, onActivated }: LicenseScre
             </form>
 
             {/* Footer */}
-            <div className="mt-10 pt-6 border-t border-slate-200 dark:border-slate-800 text-center">
+            <div className="mt-6 pt-4 border-t border-slate-200 dark:border-slate-800 text-center">
               <p className="text-xs text-slate-400 dark:text-slate-500">
-                Need help? Contact your software vendor for license support.
+                Need help? Contact your software vendor for license support. (0347-9366948)
               </p>
             </div>
           </div>
 
           {/* Bottom Footer */}
-          <div className="absolute bottom-8 left-0 right-0 px-8 lg:px-20 flex justify-between items-center text-xs text-slate-400 dark:text-slate-500">
-            <span>Version 1.0.0</span>
-            <div className="flex items-center space-x-1.5">
-              <ShieldCheck size={14} className="text-blue-500" />
-              <span>Hardware-Locked Protection</span>
+          <div className="mt-4 pt-2 w-full max-w-md mx-auto flex flex-col items-center gap-2 text-xs text-slate-400 dark:text-slate-500 shrink-0">
+            <span className="text-center">Software provided by EagleNest Creations (0346-4451505)</span>
+            <div className="w-full flex justify-between items-center flex-wrap gap-2">
+              <span>Version 1.0.0</span>
+              <div className="flex items-center space-x-1.5 shrink-0">
+                <ShieldCheck size={14} className="text-blue-500" />
+                <span className="whitespace-nowrap">Hardware-Locked Protection</span>
+              </div>
             </div>
           </div>
         </div>

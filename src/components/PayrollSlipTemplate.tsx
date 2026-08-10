@@ -1,22 +1,21 @@
 import { forwardRef } from 'react';
 import { formatCurrency } from '../lib/utils';
-
-import { SalaryPayout } from '../pages/Payroll';
-
+import { SalaryPayout } from '../pages/payroll/types';
 interface PayrollSlipProps {
   payout: SalaryPayout;
   restaurantName: string;
   adminName: string;
+  visible?: boolean;
 }
 
-const PayrollSlipTemplate = forwardRef<HTMLDivElement, PayrollSlipProps>(({ payout, restaurantName, adminName }, ref) => {
+const PayrollSlipTemplate = forwardRef<HTMLDivElement, PayrollSlipProps>(({ payout, restaurantName, adminName, visible }, ref) => {
   const isAdvance = payout.payout_type === 'Advance';
 
   return (
-    <div className="hidden">
+    <div className={visible ? "bg-white rounded-lg p-2" : "hidden"}>
       <div
         ref={ref}
-        className="w-[80mm] min-h-screen bg-white text-black p-4 text-[14px] font-mono mx-auto"
+        className={visible ? "w-[80mm] bg-white text-black p-4 text-[14px] font-mono mx-auto" : "w-[80mm] min-h-screen bg-white text-black p-4 text-[14px] font-mono mx-auto"}
         style={{
           printColorAdjust: 'exact',
           WebkitPrintColorAdjust: 'exact'

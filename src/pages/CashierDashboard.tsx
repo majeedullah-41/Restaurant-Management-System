@@ -21,6 +21,7 @@ interface CashierStats {
 
 interface TodaySale {
   id: string;
+  order_id: number;
   table: string;
   customer: string;
   time: string;
@@ -128,12 +129,12 @@ export default function CashierDashboard() {
 
   const getTableColor = (status: string) => {
     switch (status) {
-      case 'Available': return 'border-emerald-900/50 bg-emerald-950/20 text-emerald-500 hover:border-emerald-500/50';
-      case 'Occupied': return 'border-red-900/50 bg-red-950/20 text-red-500 hover:border-red-500/50';
-      case 'Reserved': return 'border-orange-900/50 bg-orange-950/20 text-orange-500 hover:border-orange-500/50';
-      case 'Cleaning': return 'border-blue-900/50 bg-blue-950/20 text-blue-500 hover:border-blue-500/50';
-      case 'Maintenance': return 'border-slate-200 dark:border-slate-800 bg-slate-900 text-slate-500';
-      default: return 'border-slate-200 dark:border-slate-800 bg-slate-900 text-slate-500';
+      case 'Available': return 'border-emerald-200 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-500 hover:border-emerald-300 dark:hover:border-emerald-500/50';
+      case 'Occupied': return 'border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/20 text-red-700 dark:text-red-500 hover:border-red-300 dark:hover:border-red-500/50';
+      case 'Reserved': return 'border-orange-200 dark:border-orange-900/50 bg-orange-50 dark:bg-orange-950/20 text-orange-700 dark:text-orange-500 hover:border-orange-300 dark:hover:border-orange-500/50';
+      case 'Cleaning': return 'border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/20 text-blue-700 dark:text-blue-500 hover:border-blue-300 dark:hover:border-blue-500/50';
+      case 'Maintenance': return 'border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 text-slate-500 dark:text-slate-500';
+      default: return 'border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 text-slate-500 dark:text-slate-500';
     }
   };
 
@@ -328,7 +329,7 @@ export default function CashierDashboard() {
                   <div className="text-center text-slate-500 text-xs mt-4">No orders today.</div>
                 ) : (
                   recentOrders.map(order => {
-                    const parsedOrderId = parseInt(order.id.replace('#ORD-', '')) || 0;
+                    const parsedOrderId = order.order_id || parseInt(order.id.replace('#ORD-', '')) || 0;
                     const parsedTableId = order.table === 'Walk-in' ? '0' : (order.table.replace('Table ', '').trim() || '0');
                     return (
                       <div 
@@ -358,26 +359,26 @@ export default function CashierDashboard() {
             <div className="shrink-0">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-3">Quick Actions</h3>
               <div className="grid grid-cols-4 gap-2">
-                <button onClick={() => navigate('/cashier/pos/0/new?return=/cashier/dashboard')} className="bg-blue-900/30 border border-blue-800/50 hover:bg-blue-800/50 rounded-xl p-3 flex flex-col items-center justify-center transition-colors text-blue-400 group">
-                  <div className="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center mb-1 group-hover:bg-blue-500/40 transition-colors">
+                <button onClick={() => navigate('/cashier/pos/0/new?return=/cashier/dashboard')} className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800/50 hover:bg-blue-100 dark:hover:bg-blue-800/50 rounded-xl p-3 flex flex-col items-center justify-center transition-colors text-blue-700 dark:text-blue-400 group">
+                  <div className="w-8 h-8 bg-blue-100 dark:bg-blue-500/20 rounded-lg flex items-center justify-center mb-1 group-hover:bg-blue-200 dark:group-hover:bg-blue-500/40 transition-colors">
                     <Plus size={16} />
                   </div>
                   <span className="text-[9px] font-medium text-center leading-tight">POS /<br/>New Order</span>
                 </button>
-                <button onClick={() => navigate('/cashier/orders')} className="bg-purple-900/30 border border-purple-800/50 hover:bg-purple-800/50 rounded-xl p-3 flex flex-col items-center justify-center transition-colors text-purple-400 group">
-                  <div className="w-8 h-8 bg-purple-500/20 rounded-lg flex items-center justify-center mb-1 group-hover:bg-purple-500/40 transition-colors">
+                <button onClick={() => navigate('/cashier/orders')} className="bg-purple-50 dark:bg-purple-900/30 border border-purple-200 dark:border-purple-800/50 hover:bg-purple-100 dark:hover:bg-purple-800/50 rounded-xl p-3 flex flex-col items-center justify-center transition-colors text-purple-700 dark:text-purple-400 group">
+                  <div className="w-8 h-8 bg-purple-100 dark:bg-purple-500/20 rounded-lg flex items-center justify-center mb-1 group-hover:bg-purple-200 dark:group-hover:bg-purple-500/40 transition-colors">
                     <List size={16} />
                   </div>
                   <span className="text-[9px] font-medium text-center leading-tight">Order<br/>History</span>
                 </button>
-                <button onClick={() => navigate('/cashier/tables')} className="bg-orange-900/30 border border-orange-800/50 hover:bg-orange-800/50 rounded-xl p-3 flex flex-col items-center justify-center transition-colors text-orange-400 group">
-                  <div className="w-8 h-8 bg-orange-500/20 rounded-lg flex items-center justify-center mb-1 group-hover:bg-orange-500/40 transition-colors">
+                <button onClick={() => navigate('/cashier/tables')} className="bg-orange-50 dark:bg-orange-900/30 border border-orange-200 dark:border-orange-800/50 hover:bg-orange-100 dark:hover:bg-orange-800/50 rounded-xl p-3 flex flex-col items-center justify-center transition-colors text-orange-700 dark:text-orange-400 group">
+                  <div className="w-8 h-8 bg-orange-100 dark:bg-orange-500/20 rounded-lg flex items-center justify-center mb-1 group-hover:bg-orange-200 dark:group-hover:bg-orange-500/40 transition-colors">
                     <CalendarDays size={16} />
                   </div>
                   <span className="text-[9px] font-medium text-center leading-tight">Table<br/>Reservation</span>
                 </button>
-                <button onClick={() => navigate('/cashier/customers')} className="bg-emerald-900/30 border border-emerald-800/50 hover:bg-emerald-800/50 rounded-xl p-3 flex flex-col items-center justify-center transition-colors text-emerald-400 group">
-                  <div className="w-8 h-8 bg-emerald-500/20 rounded-lg flex items-center justify-center mb-1 group-hover:bg-emerald-500/40 transition-colors">
+                <button onClick={() => navigate('/cashier/customers')} className="bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-800/50 hover:bg-emerald-100 dark:hover:bg-emerald-800/50 rounded-xl p-3 flex flex-col items-center justify-center transition-colors text-emerald-700 dark:text-emerald-400 group">
+                  <div className="w-8 h-8 bg-emerald-100 dark:bg-emerald-500/20 rounded-lg flex items-center justify-center mb-1 group-hover:bg-emerald-200 dark:group-hover:bg-emerald-500/40 transition-colors">
                     <Search size={16} />
                   </div>
                   <span className="text-[9px] font-medium text-center leading-tight">Customers</span>
@@ -389,7 +390,7 @@ export default function CashierDashboard() {
             <div className="shrink-0 space-y-3">
               <button 
                 onClick={() => navigate('/cashier/pos/0/new?return=/cashier/dashboard')}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-slate-900 dark:text-white rounded-xl p-4 flex items-center space-x-4 transition-colors text-left shadow-sm"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl p-4 flex items-center space-x-4 transition-colors text-left shadow-sm"
               >
                 <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center shrink-0">
                   <Plus size={20} />

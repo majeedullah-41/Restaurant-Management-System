@@ -557,6 +557,70 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
         [],
     ).map_err(|e| e.to_string())?;
 
+    // 11. An order must never be placed (or left open) with zero items. Clean
+    //     up orphaned empty orders a prior bug may have left behind, and free
+    //     any physical table they still mark as Occupied. Closed orders are
+    //     untouched so revenue history is never altered. Idempotent and safe to
+    //     re-run on every startup.
+    conn.execute(
+        "UPDATE table_status SET status = 'Available'
+         WHERE id IN (
+             SELECT o.table_id FROM orders o
+             LEFT JOIN order_items oi ON oi.order_id = o.id
+             WHERE o.status IN ('Open', 'Placed', 'Delivery Pending')
+               AND o.table_id > 0
+               AND oi.id IS NULL
+         )",
+        [],
+    ).ok();
+    conn.execute(
+        "DELETE FROM orders
+         WHERE status IN ('Open', 'Placed', 'Delivery Pending')
+           AND id NOT IN (SELECT DISTINCT order_id FROM order_items)",
+        [],
+    ).ok();
+
+    // 12. Per-period sequential order numbers. An order gets a stable
+    //     order_number that resets each period (day/week/month/year) so a
+    //     cancelled order's number is never reused mid-period. Idempotent.
+    conn.execute("ALTER TABLE orders ADD COLUMN order_number INTEGER", []).ok();
+    conn.execute("ALTER TABLE orders ADD COLUMN order_period_key TEXT", []).ok();
+    conn.execute(
+        "ALTER TABLE restaurant_settings ADD COLUMN order_reset_frequency TEXT NOT NULL DEFAULT 'Daily'",
+        [],
+    ).ok();
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_orders_period_key ON orders (order_period_key)",
+        [],
+    ).ok();
+    let reset_frequency: String = conn
+        .query_row(
+            "SELECT COALESCE(order_reset_frequency, 'Daily') FROM restaurant_settings WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|_| "Daily".to_string());
+    {
+        let mut stmt = conn
+            .prepare("SELECT id, created_at FROM orders ORDER BY id")
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<(i32, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .collect();
+        drop(stmt);
+        for (id, created_at) in rows {
+            let key = order_period_key(&created_at, &reset_frequency);
+            conn.execute(
+                "UPDATE orders SET order_period_key = ?2,
+                    order_number = COALESCE(order_number, (SELECT COALESCE(MAX(o2.order_number), 0) + 1 FROM orders o2 WHERE o2.order_period_key = ?2 AND o2.id < ?1))
+                 WHERE id = ?1",
+                rusqlite::params![id, key],
+            ).ok();
+        }
+    }
+
     Ok(())
 }
 
@@ -1100,12 +1164,13 @@ pub struct RestaurantSettings {
     pub service_charge_rate: f64,
     pub service_charge_types: String,
     pub contact_number: Option<String>,
+    pub order_reset_frequency: String,
 }
 
 #[tauri::command]
 pub fn get_settings() -> Result<RestaurantSettings, String> {
     let conn = get_conn()?;
-    let mut stmt = conn.prepare("SELECT restaurant_name, logo_path, tax_rate, total_tables, address, COALESCE(service_charge_rate, 0.0), COALESCE(service_charge_types, 'Dine-in'), contact_number FROM restaurant_settings WHERE id = 1").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT restaurant_name, logo_path, tax_rate, total_tables, address, COALESCE(service_charge_rate, 0.0), COALESCE(service_charge_types, 'Dine-in'), contact_number, COALESCE(order_reset_frequency, 'Daily') FROM restaurant_settings WHERE id = 1").map_err(|e| e.to_string())?;
     
     let settings = stmt.query_row([], |row| {
         Ok(RestaurantSettings {
@@ -1117,6 +1182,7 @@ pub fn get_settings() -> Result<RestaurantSettings, String> {
             service_charge_rate: row.get(5).unwrap_or(0.0),
             service_charge_types: row.get(6).unwrap_or("Dine-in".to_string()),
             contact_number: row.get(7).unwrap_or(None),
+            order_reset_frequency: row.get(8).unwrap_or("Daily".to_string()),
         })
     }).map_err(|e| e.to_string())?;
 
@@ -1124,7 +1190,7 @@ pub fn get_settings() -> Result<RestaurantSettings, String> {
 }
 
 #[tauri::command]
-pub fn update_settings(name: String, address: Option<String>, logo_path: Option<String>, tax_rate: f64, total_tables: Option<i32>, service_charge_rate: f64, service_charge_types: String, contact_number: Option<String>) -> Result<String, String> {
+pub fn update_settings(name: String, address: Option<String>, logo_path: Option<String>, tax_rate: f64, total_tables: Option<i32>, service_charge_rate: f64, service_charge_types: String, contact_number: Option<String>, order_reset_frequency: Option<String>) -> Result<String, String> {
     let conn = get_conn()?;
 
     // NOTE: Physical tables are managed exclusively through Table Management
@@ -1133,9 +1199,14 @@ pub fn update_settings(name: String, address: Option<String>, logo_path: Option<
     // whenever total_tables changed, which wiped category-assigned tables.
     // Keep the persisted total_tables value when the caller does not supply one.
 
+    let frequency = order_reset_frequency.as_deref().unwrap_or("Daily").to_string();
+    if !["Daily", "Weekly", "Monthly", "Yearly", "Never"].contains(&frequency.as_str()) {
+        return Err("Invalid order reset frequency.".into());
+    }
+
     conn.execute(
-        "UPDATE restaurant_settings SET restaurant_name = ?1, address = ?2, logo_path = ?3, tax_rate = ?4, total_tables = COALESCE(?5, total_tables), service_charge_rate = ?6, service_charge_types = ?7, contact_number = ?8 WHERE id = 1",
-        rusqlite::params![name, address, logo_path, tax_rate, total_tables, service_charge_rate, service_charge_types, contact_number],
+        "UPDATE restaurant_settings SET restaurant_name = ?1, address = ?2, logo_path = ?3, tax_rate = ?4, total_tables = COALESCE(?5, total_tables), service_charge_rate = ?6, service_charge_types = ?7, contact_number = ?8, order_reset_frequency = COALESCE(?9, order_reset_frequency) WHERE id = 1",
+        rusqlite::params![name, address, logo_path, tax_rate, total_tables, service_charge_rate, service_charge_types, contact_number, order_reset_frequency],
     ).map_err(|e| e.to_string())?;
     
     Ok("Settings updated successfully".into())
@@ -1145,6 +1216,8 @@ pub struct TableStatus {
     pub id: i32,
     pub table_number: i32,
     pub status: String,
+    pub category_id: Option<i32>,
+    pub category_name: Option<String>,
 }
 
 #[tauri::command]
@@ -1193,13 +1266,20 @@ pub fn init_tables_if_needed() -> Result<String, String> {
 #[tauri::command]
 pub fn get_table_statuses() -> Result<Vec<TableStatus>, String> {
     let conn = get_conn()?;
-    let mut stmt = conn.prepare("SELECT id, table_number, status FROM table_status ORDER BY table_number").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.table_number, t.status, t.category_id, c.name
+         FROM table_status t
+         LEFT JOIN table_categories c ON t.category_id = c.id
+         ORDER BY t.category_id, t.table_number"
+    ).map_err(|e| e.to_string())?;
     
     let tables = stmt.query_map([], |row| {
         Ok(TableStatus {
             id: row.get(0)?,
             table_number: row.get(1)?,
             status: row.get(2)?,
+            category_id: row.get(3).unwrap_or(None),
+            category_name: row.get(4).unwrap_or(None),
         })
     }).map_err(|e| e.to_string())?
     .filter_map(Result::ok)
@@ -1259,6 +1339,7 @@ pub fn delete_table(id: i32) -> Result<String, String> {
 #[derive(serde::Serialize)]
 pub struct ActiveOrder {
     pub id: i32,
+    pub order_number: i32,
     pub table_number: i32,
     pub table_category_name: Option<String>,
     pub status: String,
@@ -1417,6 +1498,16 @@ pub fn checkout_order(
         "SELECT COALESCE(SUM(price * quantity), 0.0) FROM order_items WHERE order_id = ?1",
         [&order_id], |row| row.get(0)
     ).map_err(|e| e.to_string())?;
+
+    // Never finalize an order that has no items. An empty cart must not be
+    // placed even if a delivery fee or discount would make its total positive.
+    let item_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM order_items WHERE order_id = ?1",
+        [&order_id], |row| row.get(0)
+    ).map_err(|e| e.to_string())?;
+    if item_count == 0 {
+        return Err("Cannot checkout an empty order. Please add at least one item first.".into());
+    }
 
     let (tax_rate, sc_rate, sc_types): (f64, f64, String) = conn.query_row(
         "SELECT COALESCE(tax_rate, 0.0), COALESCE(service_charge_rate, 0.0), COALESCE(service_charge_types, 'Dine-in') FROM restaurant_settings WHERE id = 1",
@@ -1646,6 +1737,7 @@ pub async fn print_receipt_text(text: String) -> Result<String, String> {
 #[derive(serde::Serialize)]
 pub struct OrderHistory {
     pub id: i32,
+    pub order_number: i32,
     pub table_id: i32,
     pub table_number: i32,
     pub table_category_name: Option<String>,
@@ -1685,7 +1777,7 @@ pub fn get_order_history() -> Result<Vec<OrderHistory>, String> {
                 COALESCE(SUM(oi.price * oi.quantity), 0) + COALESCE(o.delivery_fee, 0.0) + COALESCE(o.service_charge_amount, 0.0) + COALESCE(o.tax_amount, 0.0) - COALESCE(o.discount_amount, 0.0) as total_price,
                 o.subtotal, o.tax_amount, o.discount_amount, o.amount_received, o.change_due,
                 c.name as customer_name, o.cashier_name, o.order_note, o.order_type, o.created_at, o.closed_at, o.delivery_fee,
-                o.customer_phone, o.delivery_address, o.service_charge_amount, o.order_taker_id, o.order_taker_name, tc.name
+                o.customer_phone, o.delivery_address, o.service_charge_amount, o.order_taker_id, o.order_taker_name, tc.name, COALESCE(o.order_number, 0)
          FROM orders o 
          LEFT JOIN order_items oi ON o.id = oi.order_id 
          LEFT JOIN customers c ON o.customer_id = c.id
@@ -1721,6 +1813,7 @@ pub fn get_order_history() -> Result<Vec<OrderHistory>, String> {
             order_taker_id: row.get(21).unwrap_or(None),
             order_taker_name: row.get(22).unwrap_or(None),
             table_category_name: row.get(23).unwrap_or(None),
+            order_number: row.get(24).unwrap_or(0),
         })
     }).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
 
@@ -1831,10 +1924,56 @@ pub fn reassign_order_table(order_id: i32, old_table_id: i32, new_table_id: i32)
     Ok("Table reassigned".into())
 }
 
+// Per-period sequential order numbers. The reset frequency drives which
+// calendar period the counter restarts in (Daily/Weekly/Monthly/Yearly/Never).
+fn order_period_key(created_at: &str, frequency: &str) -> String {
+    let date = created_at.split(' ').next().unwrap_or(created_at);
+    match frequency {
+        "Weekly" => {
+            let mut parts = date.split('-');
+            let y = parts.next().unwrap_or("0000").parse::<i32>().unwrap_or(0);
+            let m = parts.next().unwrap_or("1").parse::<u32>().unwrap_or(1);
+            let d = parts.next().unwrap_or("1").parse::<u32>().unwrap_or(1);
+            if let Some(dt) = chrono::NaiveDate::from_ymd_opt(y, m, d) {
+                let week = chrono::Datelike::iso_week(&dt);
+                let oy = week.year();
+                let ow = week.week();
+                format!("{}-W{:02}", oy, ow)
+            } else {
+                date.to_string()
+            }
+        }
+        "Monthly" => {
+            if date.len() >= 7 { date[..7].to_string() } else { date.to_string() }
+        }
+        "Yearly" => date.split('-').next().unwrap_or("").to_string(),
+        "Never" => "0".to_string(),
+        _ => date.to_string(), // Daily
+    }
+}
+
+// Allocate the next order_number for the current period. SQLite is single
+// writer here, so a MAX-based pick is safe. A cancelled order's number is
+// intentionally reused within the period (matches paper receipt style).
+fn get_next_order_number(conn: &rusqlite::Connection, frequency: &str) -> Result<(i32, String), String> {
+    let now: String = conn
+        .query_row("SELECT datetime('now', 'localtime')", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let key = order_period_key(&now, frequency);
+    let next: i32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(order_number), 0) + 1 FROM orders WHERE order_period_key = ?1",
+            [&key],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok((next, key))
+}
+
 #[tauri::command]
 pub fn get_or_create_order(table_id: i32) -> Result<ActiveOrder, String> {
     let conn = get_conn()?;
-    
+
     // 1. Ensure the order tables exist
     conn.execute(
         "CREATE TABLE IF NOT EXISTS orders (
@@ -1869,20 +2008,21 @@ pub fn get_or_create_order(table_id: i32) -> Result<ActiveOrder, String> {
     }
 
     // 3. Check if this table already has an 'Open' order
-    let mut stmt = conn.prepare("SELECT o.id, o.table_number, o.status, COALESCE(o.discount_amount, 0.0), o.order_type, o.customer_id, o.customer_phone, o.delivery_address, o.order_taker_id, o.order_taker_name, c.name FROM orders o LEFT JOIN table_status ts ON o.table_id = ts.id LEFT JOIN table_categories c ON ts.category_id = c.id WHERE o.table_id = ?1 AND o.status = 'Open' LIMIT 1").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT o.id, COALESCE(o.order_number, 0), o.table_number, o.status, COALESCE(o.discount_amount, 0.0), o.order_type, o.customer_id, o.customer_phone, o.delivery_address, o.order_taker_id, o.order_taker_name, c.name FROM orders o LEFT JOIN table_status ts ON o.table_id = ts.id LEFT JOIN table_categories c ON ts.category_id = c.id WHERE o.table_id = ?1 AND o.status = 'Open' LIMIT 1").map_err(|e| e.to_string())?;
     let existing_order = stmt.query_row([&table_id], |row| {
         Ok(ActiveOrder {
             id: row.get(0)?,
-            table_number: row.get(1)?,
-            status: row.get(2)?,
-            discount_amount: row.get(3)?,
-            order_type: row.get(4).unwrap_or(None),
-            customer_id: row.get(5).unwrap_or(None),
-            customer_phone: row.get(6).unwrap_or(None),
-            delivery_address: row.get(7).unwrap_or(None),
-            order_taker_id: row.get(8).unwrap_or(None),
-            order_taker_name: row.get(9).unwrap_or(None),
-            table_category_name: row.get(10).unwrap_or(None),
+            order_number: row.get(1)?,
+            table_number: row.get(2)?,
+            status: row.get(3)?,
+            discount_amount: row.get(4)?,
+            order_type: row.get(5).unwrap_or(None),
+            customer_id: row.get(6).unwrap_or(None),
+            customer_phone: row.get(7).unwrap_or(None),
+            delivery_address: row.get(8).unwrap_or(None),
+            order_taker_id: row.get(9).unwrap_or(None),
+            order_taker_name: row.get(10).unwrap_or(None),
+            table_category_name: row.get(11).unwrap_or(None),
         })
     });
 
@@ -1899,9 +2039,18 @@ pub fn get_or_create_order(table_id: i32) -> Result<ActiveOrder, String> {
     let mut tn_stmt = conn.prepare("SELECT table_number FROM table_status WHERE id = ?1").unwrap();
     let table_number: i32 = tn_stmt.query_row([&table_id], |row| row.get(0)).unwrap_or(0);
 
+    let frequency: String = conn
+        .query_row(
+            "SELECT COALESCE(order_reset_frequency, 'Daily') FROM restaurant_settings WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let (order_number, period_key) = get_next_order_number(&conn, &frequency)?;
+
     conn.execute(
-        "INSERT INTO orders (table_id, table_number, status, created_at, order_type) VALUES (?1, ?2, 'Open', datetime('now', 'localtime'), ?3)", 
-        rusqlite::params![&table_id, &table_number, &initial_type]
+        "INSERT INTO orders (table_id, table_number, status, created_at, order_type, order_number, order_period_key) VALUES (?1, ?2, 'Open', datetime('now', 'localtime'), ?3, ?4, ?5)", 
+        rusqlite::params![&table_id, &table_number, &initial_type, order_number, period_key]
     ).map_err(|e| e.to_string())?;
     let new_id = conn.last_insert_rowid() as i32;
     
@@ -1912,6 +2061,7 @@ pub fn get_or_create_order(table_id: i32) -> Result<ActiveOrder, String> {
 
     Ok(ActiveOrder {
         id: new_id,
+        order_number,
         table_number,
         table_category_name: cat_name,
         status: "Open".to_string(),
@@ -1929,20 +2079,21 @@ pub fn get_or_create_order(table_id: i32) -> Result<ActiveOrder, String> {
 pub fn get_active_order(table_id: i32) -> Result<Option<ActiveOrder>, String> {
     let conn = get_conn()?;
     
-    let mut stmt = conn.prepare("SELECT o.id, o.table_number, o.status, COALESCE(o.discount_amount, 0.0), o.order_type, o.customer_id, o.customer_phone, o.delivery_address, o.order_taker_id, o.order_taker_name, c.name FROM orders o LEFT JOIN table_status ts ON o.table_id = ts.id LEFT JOIN table_categories c ON ts.category_id = c.id WHERE o.table_id = ?1 AND o.status = 'Open' LIMIT 1").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT o.id, COALESCE(o.order_number, 0), o.table_number, o.status, COALESCE(o.discount_amount, 0.0), o.order_type, o.customer_id, o.customer_phone, o.delivery_address, o.order_taker_id, o.order_taker_name, c.name FROM orders o LEFT JOIN table_status ts ON o.table_id = ts.id LEFT JOIN table_categories c ON ts.category_id = c.id WHERE o.table_id = ?1 AND o.status = 'Open' LIMIT 1").map_err(|e| e.to_string())?;
     let existing_order = stmt.query_row([&table_id], |row| {
         Ok(ActiveOrder {
             id: row.get(0)?,
-            table_number: row.get(1)?,
-            status: row.get(2)?,
-            discount_amount: row.get(3)?,
-            order_type: row.get(4).unwrap_or(None),
-            customer_id: row.get(5).unwrap_or(None),
-            customer_phone: row.get(6).unwrap_or(None),
-            delivery_address: row.get(7).unwrap_or(None),
-            order_taker_id: row.get(8).unwrap_or(None),
-            order_taker_name: row.get(9).unwrap_or(None),
-            table_category_name: row.get(10).unwrap_or(None),
+            order_number: row.get(1)?,
+            table_number: row.get(2)?,
+            status: row.get(3)?,
+            discount_amount: row.get(4)?,
+            order_type: row.get(5).unwrap_or(None),
+            customer_id: row.get(6).unwrap_or(None),
+            customer_phone: row.get(7).unwrap_or(None),
+            delivery_address: row.get(8).unwrap_or(None),
+            order_taker_id: row.get(9).unwrap_or(None),
+            order_taker_name: row.get(10).unwrap_or(None),
+            table_category_name: row.get(11).unwrap_or(None),
         })
     });
 
@@ -1957,20 +2108,21 @@ pub fn get_active_order(table_id: i32) -> Result<Option<ActiveOrder>, String> {
 pub fn get_order_by_id(order_id: i32) -> Result<ActiveOrder, String> {
     let conn = get_conn()?;
     
-    let mut stmt = conn.prepare("SELECT o.id, o.table_number, o.status, COALESCE(o.discount_amount, 0.0), o.order_type, o.customer_id, o.customer_phone, o.delivery_address, o.order_taker_id, o.order_taker_name, c.name FROM orders o LEFT JOIN table_status ts ON o.table_id = ts.id LEFT JOIN table_categories c ON ts.category_id = c.id WHERE o.id = ?1").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT o.id, COALESCE(o.order_number, 0), o.table_number, o.status, COALESCE(o.discount_amount, 0.0), o.order_type, o.customer_id, o.customer_phone, o.delivery_address, o.order_taker_id, o.order_taker_name, c.name FROM orders o LEFT JOIN table_status ts ON o.table_id = ts.id LEFT JOIN table_categories c ON ts.category_id = c.id WHERE o.id = ?1").map_err(|e| e.to_string())?;
     let order = stmt.query_row([&order_id], |row| {
         Ok(ActiveOrder {
             id: row.get(0)?,
-            table_number: row.get(1)?,
-            status: row.get(2)?,
-            discount_amount: row.get(3)?,
-            order_type: row.get(4).unwrap_or(None),
-            customer_id: row.get(5).unwrap_or(None),
-            customer_phone: row.get(6).unwrap_or(None),
-            delivery_address: row.get(7).unwrap_or(None),
-            order_taker_id: row.get(8).unwrap_or(None),
-            order_taker_name: row.get(9).unwrap_or(None),
-            table_category_name: row.get(10).unwrap_or(None),
+            order_number: row.get(1)?,
+            table_number: row.get(2)?,
+            status: row.get(3)?,
+            discount_amount: row.get(4)?,
+            order_type: row.get(5).unwrap_or(None),
+            customer_id: row.get(6).unwrap_or(None),
+            customer_phone: row.get(7).unwrap_or(None),
+            delivery_address: row.get(8).unwrap_or(None),
+            order_taker_id: row.get(9).unwrap_or(None),
+            order_taker_name: row.get(10).unwrap_or(None),
+            table_category_name: row.get(11).unwrap_or(None),
         })
     }).map_err(|e| e.to_string())?;
     
@@ -1998,6 +2150,7 @@ pub fn create_walkin_order(
         ).ok();
         return Ok(ActiveOrder {
             id: existing.id,
+            order_number: existing.order_number,
             table_number: 0,
             table_category_name: None,
             status: "Open".to_string(),
@@ -2011,16 +2164,24 @@ pub fn create_walkin_order(
         });
     }
 
-    let new_id = conn.last_insert_rowid() as i32;
+    let frequency: String = conn
+        .query_row(
+            "SELECT COALESCE(order_reset_frequency, 'Daily') FROM restaurant_settings WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let (order_number, period_key) = get_next_order_number(&conn, &frequency)?;
 
     conn.execute(
-        "INSERT INTO orders (table_id, table_number, status, created_at, order_type, customer_phone, delivery_address, order_taker_id, order_taker_name) VALUES (0, 0, 'Open', datetime('now', 'localtime'), ?1, ?2, ?3, ?4, ?5)", 
-        rusqlite::params![&order_type, &customer_phone, &delivery_address, &order_taker_id, &order_taker_name]
+        "INSERT INTO orders (table_id, table_number, status, created_at, order_type, customer_phone, delivery_address, order_taker_id, order_taker_name, order_number, order_period_key) VALUES (0, 0, 'Open', datetime('now', 'localtime'), ?1, ?2, ?3, ?4, ?5, ?6, ?7)", 
+        rusqlite::params![&order_type, &customer_phone, &delivery_address, &order_taker_id, &order_taker_name, order_number, period_key]
     ).map_err(|e| e.to_string())?;
     let new_id = conn.last_insert_rowid() as i32;
     
     Ok(ActiveOrder {
         id: new_id,
+        order_number,
         table_number: 0,
         table_category_name: None,
         status: "Open".to_string(),
@@ -2038,21 +2199,22 @@ pub fn create_walkin_order(
 /// the newest avoids silently reusing a stale open walk-in from a prior session.
 fn get_open_walkin_order(conn: &rusqlite::Connection) -> Result<ActiveOrder, String> {
     let mut stmt = conn.prepare(
-        "SELECT id, table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address, order_taker_id, order_taker_name
+        "SELECT id, COALESCE(order_number, 0), table_number, status, COALESCE(discount_amount, 0.0), order_type, customer_id, customer_phone, delivery_address, order_taker_id, order_taker_name
          FROM orders WHERE table_id = 0 AND status = 'Open' ORDER BY id DESC LIMIT 1"
     ).map_err(|e| e.to_string())?;
     let order = stmt.query_row([], |row| {
         Ok(ActiveOrder {
             id: row.get(0)?,
-            table_number: row.get(1)?,
-            status: row.get(2)?,
-            discount_amount: row.get(3)?,
-            order_type: row.get(4).unwrap_or(None),
-            customer_id: row.get(5).unwrap_or(None),
-            customer_phone: row.get(6).unwrap_or(None),
-            delivery_address: row.get(7).unwrap_or(None),
-            order_taker_id: row.get(8).unwrap_or(None),
-            order_taker_name: row.get(9).unwrap_or(None),
+            order_number: row.get(1)?,
+            table_number: row.get(2)?,
+            status: row.get(3)?,
+            discount_amount: row.get(4)?,
+            order_type: row.get(5).unwrap_or(None),
+            customer_id: row.get(6).unwrap_or(None),
+            customer_phone: row.get(7).unwrap_or(None),
+            delivery_address: row.get(8).unwrap_or(None),
+            order_taker_id: row.get(9).unwrap_or(None),
+            order_taker_name: row.get(10).unwrap_or(None),
             table_category_name: None,
         })
     }).map_err(|e| e.to_string())?;
@@ -2193,6 +2355,7 @@ pub struct StaffDropdown {
     pub role: Option<String>,
     pub category_id: Option<i32>,
     pub category_name: Option<String>,
+    pub salary: Option<f64>,
 }
 
 #[tauri::command]
@@ -2218,7 +2381,7 @@ pub fn get_staff_dropdown() -> Result<Vec<StaffDropdown>, String> {
     ).map_err(|e| e.to_string())?;
 
     let mut stmt = conn.prepare(
-        "SELECT s.id, s.name, s.role, s.category_id, c.name as category_name
+        "SELECT s.id, s.name, s.role, s.category_id, c.name as category_name, s.salary
          FROM staff s
          LEFT JOIN staff_categories c ON s.category_id = c.id
          ORDER BY s.name"
@@ -2231,6 +2394,7 @@ pub fn get_staff_dropdown() -> Result<Vec<StaffDropdown>, String> {
             role: row.get(2).unwrap_or(None),
             category_id: row.get(3).unwrap_or(None),
             category_name: row.get(4).unwrap_or(None),
+            salary: row.get(5).unwrap_or(None),
         })
     }).map_err(|e| e.to_string())?;
 
@@ -2265,7 +2429,7 @@ pub fn get_order_takers() -> Result<Vec<StaffDropdown>, String> {
     ).map_err(|e| e.to_string())?;
 
     let mut stmt = conn.prepare(
-        "SELECT s.id, s.name, s.role, s.category_id, c.name as category_name
+        "SELECT s.id, s.name, s.role, s.category_id, c.name as category_name, s.salary
          FROM staff s
          LEFT JOIN staff_categories c ON s.category_id = c.id
          WHERE COALESCE(s.status, 'Active') = 'Active' AND c.name LIKE 'Order Taker%'
@@ -2279,6 +2443,7 @@ pub fn get_order_takers() -> Result<Vec<StaffDropdown>, String> {
             role: row.get(2).unwrap_or(None),
             category_id: row.get(3).unwrap_or(None),
             category_name: row.get(4).unwrap_or(None),
+            salary: row.get(5).unwrap_or(None),
         })
     }).map_err(|e| e.to_string())?;
 
@@ -2913,6 +3078,7 @@ pub fn get_recent_expenses() -> Result<Vec<Expense>, String> {
 #[derive(serde::Serialize)]
 pub struct TodaySale {
     pub id: String,
+    pub order_id: i32,
     pub table: String,
     pub customer: String,
     pub time: String,
@@ -2950,6 +3116,7 @@ pub fn get_todays_sales(client_date: String) -> Result<Vec<TodaySale>, String> {
 
         Ok(TodaySale {
             id: format!("#ORD-{:04}", order_id),
+            order_id,
             table: if table_num == 0 { "Walk-in".to_string() } else { format!("Table {:02}", table_num) },
             customer: "Walk-in".to_string(), // Later we can join with customers table if order has customer_id
             time: time.unwrap_or_else(|| "N/A".into()),
@@ -3279,6 +3446,7 @@ fn deduct_advances(tx: &rusqlite::Transaction, staff_id: i32, mut amount: f64) -
 #[tauri::command]
 pub fn get_payout_history(start_date: String, end_date: String) -> Result<Vec<SalaryPayout>, String> {
     let conn = get_conn()?;
+    let end_date_full = format!("{}T23:59:59.999Z", end_date);
     
     conn.execute("ALTER TABLE salary_payouts ADD COLUMN bonus REAL", []).ok();
     conn.execute("ALTER TABLE salary_payouts ADD COLUMN deduction REAL", []).ok();
@@ -3297,7 +3465,7 @@ pub fn get_payout_history(start_date: String, end_date: String) -> Result<Vec<Sa
          ORDER BY date DESC"
     ).map_err(|e| e.to_string())?;
     
-    let iter = stmt.query_map([&start_date, &end_date], |row| {
+    let iter = stmt.query_map([&start_date, &end_date_full], |row| {
         Ok(SalaryPayout {
             id: row.get(0)?,
             staff_name: row.get(1)?,
@@ -3422,6 +3590,77 @@ pub fn pay_advance_salary(staff_id: i32, amount: f64, date: String, note: String
     Ok("Advance salary recorded successfully".to_string())
 }
 
+/// Corrects an advance's amount/note. Runs in a single transaction and keeps
+/// the matching salary_advance expense in sync, so the two can never diverge.
+/// The amount cannot drop below what payroll has already recovered.
+#[tauri::command]
+pub fn update_advance(advance_id: i32, amount: f64, note: Option<String>) -> Result<String, String> {
+    let mut conn_guard = get_conn()?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
+
+    if !amount.is_finite() || amount <= 0.0 {
+        return Err("Advance amount must be a positive number.".into());
+    }
+
+    let (deducted, current_note, staff_id): (f64, Option<String>, i32) = tx.query_row(
+        "SELECT COALESCE(deducted_amount, 0), note, staff_id FROM advance_salaries WHERE id = ?1",
+        [&advance_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).map_err(|_| "Advance not found.".to_string())?;
+
+    if amount < deducted - 0.001 {
+        return Err(format!(
+            "New amount ({:.2}) cannot be less than the amount already recovered from payroll ({:.2}).",
+            amount, deducted
+        ));
+    }
+
+    let new_note = note.unwrap_or(current_note.unwrap_or_default());
+    let staff_name: String = tx.query_row(
+        "SELECT name FROM staff WHERE id = ?1",
+        [&staff_id],
+        |row| row.get(0),
+    ).map_err(|_| "Staff member not found.".to_string())?;
+
+    tx.execute(
+        "UPDATE advance_salaries SET amount = ?1, note = ?2 WHERE id = ?3",
+        rusqlite::params![amount, new_note, advance_id],
+    ).map_err(|e| e.to_string())?;
+
+    tx.execute(
+        "UPDATE expenses SET amount = ?1, note = ?2 WHERE reference_type = 'salary_advance' AND reference_id = ?3",
+        rusqlite::params![amount, format!("Advance Salary: {} - {}", staff_name, new_note), advance_id],
+    ).map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok("Advance updated successfully".to_string())
+}
+
+/// Deletes an advance and its matching expense in a single transaction. Money
+/// already recovered from past payrolls is kept; only the remaining outstanding
+/// balance stops being deducted from future payrolls.
+#[tauri::command]
+pub fn delete_advance(advance_id: i32) -> Result<String, String> {
+    let mut conn_guard = get_conn()?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
+
+    let deleted = tx.execute(
+        "DELETE FROM advance_salaries WHERE id = ?1",
+        [&advance_id],
+    ).map_err(|e| e.to_string())?;
+    if deleted == 0 {
+        return Err("Advance not found.".to_string());
+    }
+
+    tx.execute(
+        "DELETE FROM expenses WHERE reference_type = 'salary_advance' AND reference_id = ?1",
+        [&advance_id],
+    ).map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok("Advance deleted successfully".to_string())
+}
+
 // ─── Payroll periods & payroll records ───────────────────────────────────────
 
 #[derive(serde::Serialize)]
@@ -3500,26 +3739,43 @@ const PAYROLL_RECORD_SELECT: &str =
      LEFT JOIN staff_categories c ON s.category_id = c.id
      WHERE pr.start_date = ?1 AND pr.end_date = ?2";
 
+/// Same as [`PAYROLL_RECORD_SELECT`] but scoped to a single record id (?3) so a
+/// specific row is returned instead of an arbitrary row from the period.
+const PAYROLL_RECORD_SELECT_BY_ID: &str =
+    "SELECT pr.id, pr.staff_id, s.name, c.name, pr.base_salary,
+            (SELECT COUNT(DISTINCT a.date) FROM staff_attendance a WHERE a.staff_id = s.id AND a.date >= ?1 AND a.date <= ?2) AS days_present,
+            COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = s.id), 0) AS advance_balance,
+            pr.bonus, pr.deduction, pr.advance_deduction, pr.gross_pay, pr.net_pay, pr.status, pr.payroll_id, pr.paid_at
+     FROM payroll_records pr
+     JOIN staff s ON pr.staff_id = s.id
+     LEFT JOIN staff_categories c ON s.category_id = c.id
+     WHERE pr.start_date = ?1 AND pr.end_date = ?2 AND pr.id = ?3";
+
 /// Loads (creating if needed) the payroll period and returns a summary plus
 /// every staff member's payroll record for that period. Pending records are
 /// automatically created from each staff member's current salary snapshot so
 /// the admin only has to review, adjust and confirm.
 #[tauri::command]
 pub fn get_payroll_period(start_date: String, end_date: String) -> Result<PayrollPeriod, String> {
-    let conn = get_conn()?;
+    let mut conn_guard = get_conn()?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
 
     // Create a Pending payroll record for every active staff member in this
     // period if one does not already exist (INSERT OR IGNORE + unique index).
-    conn.execute(
-        "INSERT OR IGNORE INTO payroll_records (start_date, end_date, staff_id, base_salary, gross_pay, net_pay, status)
-         SELECT ?1, ?2, s.id, COALESCE(s.salary, 0), COALESCE(s.salary, 0), COALESCE(s.salary, 0), 'Pending'
+    tx.execute(
+        "INSERT OR IGNORE INTO payroll_records (start_date, end_date, staff_id, base_salary, advance_deduction, gross_pay, net_pay, status)
+         SELECT ?1, ?2, s.id, COALESCE(s.salary, 0), 
+                MIN(COALESCE(s.salary, 0), COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = s.id), 0)),
+                COALESCE(s.salary, 0), 
+                COALESCE(s.salary, 0) - MIN(COALESCE(s.salary, 0), COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = s.id), 0)),
+                'Pending'
          FROM staff s WHERE COALESCE(s.status, 'Active') = 'Active'",
         rusqlite::params![&start_date, &end_date],
     ).map_err(|e| e.to_string())?;
 
     // Recompute gross/net for pending records from their stored split so the
     // table always reflects the latest saved adjustments.
-    conn.execute(
+    tx.execute(
         "UPDATE payroll_records SET
             gross_pay = base_salary + bonus,
             net_pay = base_salary + bonus - deduction - advance_deduction,
@@ -3527,6 +3783,9 @@ pub fn get_payroll_period(start_date: String, end_date: String) -> Result<Payrol
          WHERE start_date = ?1 AND end_date = ?2 AND status = 'Pending'",
         rusqlite::params![&start_date, &end_date],
     ).map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+    let conn = &conn_guard;
 
     let mut stmt = conn.prepare(PAYROLL_RECORD_SELECT).map_err(|e| e.to_string())?;
     let mut rows = Vec::new();
@@ -3563,9 +3822,10 @@ pub fn get_payroll_period(start_date: String, end_date: String) -> Result<Payrol
 /// value up to the outstanding balance; net pay can never go negative.
 #[tauri::command]
 pub fn update_payroll_record(record_id: i32, bonus: f64, deduction: f64, advance_deduction: f64) -> Result<PayrollRecordRow, String> {
-    let conn = get_conn()?;
+    let mut conn_guard = get_conn()?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
 
-    let (staff_id, base_salary, status): (i32, f64, String) = conn.query_row(
+    let (staff_id, base_salary, status): (i32, f64, String) = tx.query_row(
         "SELECT staff_id, base_salary, status FROM payroll_records WHERE id = ?1",
         [&record_id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -3580,7 +3840,7 @@ pub fn update_payroll_record(record_id: i32, bonus: f64, deduction: f64, advance
         return Err("Bonus and deductions must be non-negative numbers.".to_string());
     }
 
-    let outstanding = outstanding_advance(&conn, staff_id);
+    let outstanding = outstanding_advance(&tx, staff_id);
     if advance_deduction > outstanding + 0.001 {
         return Err(format!(
             "Advance deduction of {:.2} exceeds the outstanding balance of {:.2}.",
@@ -3597,20 +3857,27 @@ pub fn update_payroll_record(record_id: i32, bonus: f64, deduction: f64, advance
     }
     let net_pay = net_pay.max(0.0);
 
-    conn.execute(
+    tx.execute(
         "UPDATE payroll_records SET bonus = ?1, deduction = ?2, advance_deduction = ?3,
                 gross_pay = ?4, net_pay = ?5, updated_at = datetime('now', 'localtime')
          WHERE id = ?6",
         rusqlite::params![bonus, deduction, advance_deduction, base_salary + bonus, net_pay, record_id],
     ).map_err(|e| e.to_string())?;
 
+    tx.commit().map_err(|e| e.to_string())?;
+    let conn = &conn_guard;
+
     let (start_date, end_date): (String, String) = conn.query_row(
         "SELECT start_date, end_date FROM payroll_records WHERE id = ?1",
         [&record_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     ).map_err(|_| "Payroll record not found.".to_string())?;
-    conn.query_row(PAYROLL_RECORD_SELECT, rusqlite::params![&start_date, &end_date], map_payroll_row)
-        .map_err(|e| format!("Payroll record not found: {}", e))
+    conn.query_row(
+        PAYROLL_RECORD_SELECT_BY_ID,
+        rusqlite::params![&start_date, &end_date, &record_id],
+        map_payroll_row,
+    )
+    .map_err(|e| format!("Payroll record not found: {}", e))
 }
 
 /// Returns a single payroll record row by id (period bounds are looked up so
@@ -3623,8 +3890,12 @@ pub fn get_payroll_record(record_id: i32) -> Result<PayrollRecordRow, String> {
         [&record_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     ).map_err(|_| "Payroll record not found.".to_string())?;
-    conn.query_row(PAYROLL_RECORD_SELECT, rusqlite::params![&start_date, &end_date], map_payroll_row)
-        .map_err(|e| format!("Payroll record not found: {}", e))
+    conn.query_row(
+        PAYROLL_RECORD_SELECT_BY_ID,
+        rusqlite::params![&start_date, &end_date, &record_id],
+        map_payroll_row,
+    )
+    .map_err(|e| format!("Payroll record not found: {}", e))
 }
 
 /// Reverses a previous advance deduction, oldest advances first, up to `amount`.
@@ -3648,7 +3919,10 @@ fn restore_advances(tx: &rusqlite::Transaction, staff_id: i32, mut amount: f64) 
         if already_deducted <= 0.001 { continue; }
         let to_restore = if already_deducted > amount { amount } else { already_deducted };
         let new_deducted = already_deducted - to_restore;
-        let is_deducted = if new_deducted <= 0.001 { 0 } else { 1 };
+        // Only stay "fully recovered" if nothing was restored from this advance;
+        // a partial restore leaves a live outstanding balance that future
+        // payrolls (deduct_advances, which filters is_deducted = 0) must pick up.
+        let is_deducted = if new_deducted >= advance_amount - 0.001 { 1 } else { 0 };
         tx.execute(
             "UPDATE advance_salaries SET deducted_amount = ?1, is_deducted = ?2 WHERE id = ?3",
             rusqlite::params![new_deducted, is_deducted, id]
@@ -3659,27 +3933,47 @@ fn restore_advances(tx: &rusqlite::Transaction, staff_id: i32, mut amount: f64) 
     Ok(restored_total)
 }
 
-/// Confirms the payroll for a period: marks every pending record as Paid,
-/// deducts advances, records a salary payout and a matching expense for each
-/// staff member. Idempotent per record (only Pending rows are processed).
+/// Confirms the payroll for a period: marks the selected pending records as
+/// Paid, deducts advances, records a salary payout and a matching expense for
+/// each staff member. When `record_ids` is provided only those records in the
+/// period are processed, otherwise every pending record is. Idempotent per
+/// record (only Pending rows are processed).
 #[tauri::command]
-pub fn process_payroll_batch(start_date: String, end_date: String) -> Result<String, String> {
+pub fn process_payroll_batch(start_date: String, end_date: String, record_ids: Option<Vec<i32>>) -> Result<String, String> {
     let mut conn_guard = get_conn()?;
     let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
 
-    let mut stmt = tx.prepare(
+    // Honor the UI selection: filter the pending records to the chosen ids.
+    let record_filter = match &record_ids {
+        Some(ids) if !ids.is_empty() => {
+            let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            format!(" AND pr.id IN ({})", placeholders)
+        }
+        _ => String::new(),
+    };
+    let sql = format!(
         "SELECT pr.id, pr.staff_id, pr.base_salary, pr.bonus, pr.deduction, pr.advance_deduction, s.name
          FROM payroll_records pr JOIN staff s ON pr.staff_id = s.id
-         WHERE pr.start_date = ?1 AND pr.end_date = ?2 AND pr.status = 'Pending'
-         ORDER BY pr.id"
-    ).map_err(|e| e.to_string())?;
+         WHERE pr.start_date = ?1 AND pr.end_date = ?2 AND pr.status = 'Pending'{} ORDER BY pr.id",
+        record_filter
+    );
+    let mut params: Vec<rusqlite::types::Value> = vec![start_date.clone().into(), end_date.clone().into()];
+    if let Some(ids) = &record_ids {
+        for id in ids.iter().filter(|id| **id > 0) {
+            params.push((*id).into());
+        }
+    }
+    let mut stmt = tx.prepare(&sql).map_err(|e| e.to_string())?;
     let rows: Vec<(i32, i32, f64, f64, f64, f64, String)> = stmt.query_map(
-        rusqlite::params![&start_date, &end_date],
+        rusqlite::params_from_iter(params),
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?))
     ).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
     drop(stmt);
 
     if rows.is_empty() {
+        if record_ids.is_some() {
+            return Err("No pending payroll records found for the selected staff in this period.".to_string());
+        }
         return Err("No pending payroll records found for this period.".to_string());
     }
 
@@ -3708,10 +4002,10 @@ pub fn process_payroll_batch(start_date: String, end_date: String) -> Result<Str
 
         let payroll_id = format!("PR-{}-{:03}", end_date.replace('-', ""), record_id);
         tx.execute(
-            "UPDATE payroll_records SET status = 'Paid', payroll_id = ?1, paid_at = ?2,
-                    advance_deduction = ?3, net_pay = ?4, updated_at = datetime('now', 'localtime')
-             WHERE id = ?5",
-            rusqlite::params![&payroll_id, &end_date, actually_deducted, net_amount, record_id]
+            "UPDATE payroll_records SET status = 'Paid', payroll_id = ?1, paid_at = datetime('now', 'localtime'),
+                    advance_deduction = ?2, net_pay = ?3, updated_at = datetime('now', 'localtime')
+             WHERE id = ?4",
+            rusqlite::params![&payroll_id, actually_deducted, net_amount, record_id]
         ).map_err(|e| e.to_string())?;
 
         total_paid += net_amount;
@@ -3799,6 +4093,84 @@ pub fn void_payroll(start_date: String, end_date: String) -> Result<String, Stri
     Ok(format!("Voided payroll for {} staff members.", voided_count))
 }
 
+/// Deletes a single staff's payroll record. Paid records are fully reverted in
+/// the same transaction: recovered advance amounts are restored, and the salary
+/// payout + matching expense rows are removed so money stays consistent.
+#[tauri::command]
+pub fn delete_payroll_record(record_id: i32) -> Result<String, String> {
+    let mut conn_guard = get_conn()?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
+
+    let (staff_id, advance_deduction, status, net_pay, end_date): (i32, f64, String, f64, String) = tx.query_row(
+        "SELECT staff_id, COALESCE(advance_deduction, 0), status, COALESCE(net_pay, 0), end_date
+         FROM payroll_records WHERE id = ?1",
+        [&record_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+    ).map_err(|_| "Payroll record not found.".to_string())?;
+
+    if status == "Paid" {
+        if advance_deduction > 0.0 {
+            restore_advances(&tx, staff_id, advance_deduction)?;
+        }
+        tx.execute(
+            "DELETE FROM salary_payouts WHERE staff_id = ?1 AND date = ?2 AND ABS(amount - ?3) < 0.001",
+            rusqlite::params![staff_id, &end_date, net_pay],
+        ).map_err(|e| e.to_string())?;
+        tx.execute(
+            "DELETE FROM expenses WHERE reference_type = 'payroll' AND reference_id = ?1",
+            [&record_id],
+        ).map_err(|e| e.to_string())?;
+    }
+
+    tx.execute("DELETE FROM payroll_records WHERE id = ?1", [&record_id]).map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok("Payroll record deleted successfully.".to_string())
+}
+
+/// Deletes an entire payroll period (every staff record). Each paid record is
+/// first reverted like `delete_payroll_record`, then all records are removed —
+/// all inside a single transaction.
+#[tauri::command]
+pub fn delete_payroll_period(start_date: String, end_date: String) -> Result<String, String> {
+    let mut conn_guard = get_conn()?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
+
+    let mut stmt = tx.prepare(
+        "SELECT id, staff_id, COALESCE(advance_deduction, 0), status, COALESCE(net_pay, 0)
+         FROM payroll_records WHERE start_date = ?1 AND end_date = ?2"
+    ).map_err(|e| e.to_string())?;
+    let rows: Vec<(i32, i32, f64, String, f64)> = stmt.query_map(rusqlite::params![&start_date, &end_date], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    if rows.is_empty() {
+        return Err("No payroll records found for this period.".to_string());
+    }
+    let count = rows.len();
+
+    for (record_id, staff_id, advance_deduction, status, net_pay) in rows {
+        if status == "Paid" {
+            if advance_deduction > 0.0 {
+                restore_advances(&tx, staff_id, advance_deduction)?;
+            }
+            tx.execute(
+                "DELETE FROM salary_payouts WHERE staff_id = ?1 AND date = ?2 AND ABS(amount - ?3) < 0.001",
+                rusqlite::params![staff_id, &end_date, net_pay],
+            ).map_err(|e| e.to_string())?;
+            tx.execute(
+                "DELETE FROM expenses WHERE reference_type = 'payroll' AND reference_id = ?1",
+                [&record_id],
+            ).map_err(|e| e.to_string())?;
+        }
+        tx.execute("DELETE FROM payroll_records WHERE id = ?1", [&record_id]).map_err(|e| e.to_string())?;
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(format!("Deleted payroll period with {} staff record(s).", count))
+}
+
 #[derive(serde::Serialize)]
 pub struct AdvanceHistoryRow {
     pub id: i32,
@@ -3815,14 +4187,15 @@ pub struct AdvanceHistoryRow {
 #[tauri::command]
 pub fn get_advance_history(staff_id: i32, start_date: String, end_date: String) -> Result<Vec<AdvanceHistoryRow>, String> {
     let conn = get_conn()?;
+    let end_date_full = format!("{}T23:59:59.999Z", end_date);
     let mut stmt = conn.prepare(
         "SELECT a.id, a.staff_id, s.name, a.amount, a.date, a.note,
                 COALESCE(a.deducted_amount, 0.0), (a.amount - COALESCE(a.deducted_amount, 0.0)), COALESCE(a.is_deducted, 0)
          FROM advance_salaries a JOIN staff s ON a.staff_id = s.id
-         WHERE a.staff_id = ?1 AND a.date >= ?2 AND a.date <= ?3
+         WHERE (a.staff_id = ?1 OR ?1 = 0) AND a.date >= ?2 AND a.date <= ?3
          ORDER BY a.date DESC, a.id DESC"
     ).map_err(|e| e.to_string())?;
-    let iter = stmt.query_map(rusqlite::params![&staff_id, &start_date, &end_date], |row| {
+    let iter = stmt.query_map(rusqlite::params![&staff_id, &start_date, &end_date_full], |row| {
         Ok(AdvanceHistoryRow {
             id: row.get(0)?,
             staff_id: row.get(1)?,
@@ -3945,6 +4318,7 @@ pub struct AnalyticsReport {
 #[tauri::command]
 pub fn get_analytics_report(start_date: String, end_date: String) -> Result<AnalyticsReport, String> {
     let conn = get_conn()?;
+    let end_date = format!("{}T23:59:59.999Z", end_date);
 
     let mut total_sales = 0.0;
     let mut total_orders = 0;
@@ -4430,6 +4804,7 @@ pub struct DetailedReport {
 #[tauri::command]
 pub fn get_detailed_report(start_date: String, end_date: String) -> Result<DetailedReport, String> {
     let conn = get_conn()?;
+    let end_date = format!("{}T23:59:59.999Z", end_date);
 
     // Orders — only completed (Closed) orders, keyed on closed_at so revenue is
     // counted when actually paid, matching get_analytics_report.
@@ -4659,6 +5034,7 @@ pub fn get_detailed_report(start_date: String, end_date: String) -> Result<Detai
 #[derive(serde::Serialize)]
 pub struct DeliveryOrder {
     pub id: i32,
+    pub order_number: i32,
     pub created_at: Option<String>,
     pub customer_name: Option<String>,
     pub customer_phone: Option<String>,
@@ -4708,7 +5084,7 @@ pub fn get_active_deliveries() -> Result<Vec<DeliveryOrder>, String> {
     let conn = get_conn()?;
     
     let mut stmt = conn.prepare(
-        "SELECT o.id, o.created_at, c.name, c.phone, o.delivery_address, o.status, o.delivery_status, 
+        "SELECT o.id, COALESCE(o.order_number, 0), o.created_at, c.name, c.phone, o.delivery_address, o.status, o.delivery_status, 
                 COALESCE(SUM(oi.price * oi.quantity), 0) + COALESCE(o.delivery_fee, 0) + COALESCE(o.tax_amount, 0.0) + COALESCE(o.service_charge_amount, 0.0) - COALESCE(o.discount_amount, 0.0) as total_price,
                 o.delivery_fee, s.name as driver_name
          FROM orders o
@@ -4722,15 +5098,16 @@ pub fn get_active_deliveries() -> Result<Vec<DeliveryOrder>, String> {
     let deliveries = stmt.query_map([], |row| {
         Ok(DeliveryOrder {
             id: row.get(0)?,
-            created_at: row.get(1).unwrap_or(None),
-            customer_name: row.get(2).unwrap_or(None),
-            customer_phone: row.get(3).unwrap_or(None),
-            delivery_address: row.get(4).unwrap_or(None),
-            status: row.get(5)?,
-            delivery_status: row.get(6).unwrap_or(Some("Pending".to_string())),
-            total_price: row.get(7).unwrap_or(0.0),
-            delivery_fee: row.get(8).unwrap_or(0.0),
-            driver_name: row.get(9).unwrap_or(None),
+            order_number: row.get(1)?,
+            created_at: row.get(2).unwrap_or(None),
+            customer_name: row.get(3).unwrap_or(None),
+            customer_phone: row.get(4).unwrap_or(None),
+            delivery_address: row.get(5).unwrap_or(None),
+            status: row.get(6)?,
+            delivery_status: row.get(7).unwrap_or(Some("Pending".to_string())),
+            total_price: row.get(8).unwrap_or(0.0),
+            delivery_fee: row.get(9).unwrap_or(0.0),
+            driver_name: row.get(10).unwrap_or(None),
         })
     }).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
     
@@ -4748,6 +5125,15 @@ pub fn update_delivery_status(order_id: i32, status: String) -> Result<String, S
     ).map_err(|e| e.to_string())?;
     
     if status == "Delivered" {
+        // Defense in depth: never close an order that has no items.
+        let item_count: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM order_items WHERE order_id = ?1",
+            [&order_id], |row| row.get(0)
+        ).map_err(|e| e.to_string())?;
+        if item_count == 0 {
+            return Err("Cannot mark an empty order as Delivered.".into());
+        }
+
         tx.execute(
             "UPDATE orders SET status = 'Closed', closed_at = datetime('now', 'localtime') WHERE id = ?1",
             rusqlite::params![order_id]
@@ -4820,6 +5206,16 @@ pub fn place_delivery_order(
         "SELECT COALESCE(SUM(price * quantity), 0.0) FROM order_items WHERE order_id = ?1",
         [&order_id], |row| row.get(0)
     ).map_err(|e| e.to_string())?;
+
+    // Never place a delivery order that has no items. An empty cart must not be
+    // placed even if the delivery fee would make its total positive.
+    let item_count: i64 = conn_guard.query_row(
+        "SELECT COUNT(*) FROM order_items WHERE order_id = ?1",
+        [&order_id], |row| row.get(0)
+    ).map_err(|e| e.to_string())?;
+    if item_count == 0 {
+        return Err("Cannot place an empty order. Please add at least one item first.".into());
+    }
 
     let (tax_rate, sc_rate, sc_types): (f64, f64, String) = conn_guard.query_row(
         "SELECT COALESCE(tax_rate, 0.0), COALESCE(service_charge_rate, 0.0), COALESCE(service_charge_types, 'Dine-in') FROM restaurant_settings WHERE id = 1",

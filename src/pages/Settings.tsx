@@ -14,6 +14,7 @@ export default function SettingsPage() {
   const [taxRate, setTaxRate] = useState("");
   const [serviceChargeRate, setServiceChargeRate] = useState("");
   const [serviceChargeTypes, setServiceChargeTypes] = useState<string[]>(["Dine-in"]);
+  const [orderResetFrequency, setOrderResetFrequency] = useState("Daily");
   const [logo, setLogo] = useState<string | null>(null);
   const [message, setMessage] = useState("");
 
@@ -53,6 +54,7 @@ export default function SettingsPage() {
         setTaxRate(data.tax_rate.toString());
         setServiceChargeRate(data.service_charge_rate?.toString() || "0");
         setServiceChargeTypes(data.service_charge_types ? data.service_charge_types.split(",") : ["Dine-in"]);
+        setOrderResetFrequency(data.order_reset_frequency || "Daily");
       } catch (err) {
         console.error("Failed to load settings", err);
       }
@@ -108,7 +110,8 @@ export default function SettingsPage() {
         taxRate: parsedTaxRate,
         serviceChargeRate: parsedServiceChargeRate,
         serviceChargeTypes: serviceChargeTypes.join(","),
-        contactNumber: contact.trim() || null
+        contactNumber: contact.trim() || null,
+        orderResetFrequency: orderResetFrequency
       });
       setMessage("Settings saved successfully!");
       window.dispatchEvent(new Event("settingsUpdated"));
@@ -184,6 +187,21 @@ export default function SettingsPage() {
                     type="number" step="0.1" value={taxRate} onChange={(e) => setTaxRate(e.target.value)}
                     className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" required
                   />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Order Number Reset</label>
+                  <select
+                    value={orderResetFrequency}
+                    onChange={(e) => setOrderResetFrequency(e.target.value)}
+                    className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="Daily">Daily</option>
+                    <option value="Weekly">Weekly</option>
+                    <option value="Monthly">Monthly</option>
+                    <option value="Yearly">Yearly</option>
+                    <option value="Never">Never</option>
+                  </select>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5">How often order numbers restart from 1.</p>
                 </div>
               </div>
 

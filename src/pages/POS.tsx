@@ -11,7 +11,7 @@ import {
   ArrowLeft, Plus, Minus, Receipt,
   X, Trash2,
   Users, Search,
-  Percent, Calculator, FileText, Printer, ChevronDown, ClipboardList
+  Percent, Calculator, FileText, Printer, ChevronDown, ClipboardList, CheckCircle
 } from "lucide-react";
 
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -70,6 +70,7 @@ export default function POS() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [recentlyAdded, setRecentlyAdded] = useState<Set<number>>(new Set());
   const [taxRate, setTaxRate] = useState<number>(0);
   const [serviceChargeRate, setServiceChargeRate] = useState<number>(0);
   const [serviceChargeTypes, setServiceChargeTypes] = useState<string[]>(["Dine-in"]);
@@ -88,6 +89,7 @@ export default function POS() {
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [itemSearch, setItemSearch] = useState<string>("");
   const [orderId, setOrderId] = useState<number | null>(null);
+  const [orderNumber, setOrderNumber] = useState<number | null>(null);
   const [orderType, setOrderType] = useState<string>(tableId === "0" ? "Takeaway" : "Dine-in");
   
   useEffect(() => {
@@ -202,6 +204,13 @@ export default function POS() {
 
   const changeAmount = amountReceived ? Math.max(0, parseFloat(amountReceived) - totalAmount) : 0;
 
+  const currentTableInfo = useMemo(
+    () => tables.find((t) => t.table_id.toString() === tableId),
+    [tables, tableId]
+  );
+  const tableCategoryName = currentTableInfo?.category_name?.trim() || undefined;
+  const actualTableNumber = currentTableInfo?.table_number?.toString() || tableId || "0";
+
 
   // Keyboard Shortcuts
   useEffect(() => {
@@ -275,6 +284,7 @@ export default function POS() {
           // Resume specific existing order
           const order: any = await invoke("get_order_by_id", { orderId: parseInt(routeOrderId) });
           setOrderId(order.id);
+          setOrderNumber(order.order_number);
           setDiscount(order.discount_amount || 0);
           if (order.order_type) setOrderType(order.order_type);
           setDeliveryPhone(order.customer_phone || "");
@@ -289,6 +299,7 @@ export default function POS() {
           const order: any = await invoke("get_active_order", { tableId: parseInt(tableId!) });
           if (order) {
             setOrderId(order.id);
+            setOrderNumber(order.order_number);
             setDiscount(order.discount_amount || 0);
             if (order.order_type) setOrderType(order.order_type);
             setDeliveryPhone(order.customer_phone || "");
@@ -301,6 +312,7 @@ export default function POS() {
           } else {
             // No active order exists for this table
             setOrderId(null);
+            setOrderNumber(null);
             setCartItems([]);
             setDiscount(0);
             setOrderType("Dine-in");
@@ -316,6 +328,7 @@ export default function POS() {
           // For walk-in (table 0) with 'new' or no routeOrderId: 
           // Clear state for a fresh order. It will be created lazily when the first item is added.
           setOrderId(null);
+          setOrderNumber(null);
           setCartItems([]);
           setDiscount(0);
           setDeliveryPhone("");
@@ -375,6 +388,15 @@ export default function POS() {
   };
 
   const handleAddToCart = async (item: MenuItem) => {
+    setRecentlyAdded(prev => new Set(prev).add(item.id));
+    setTimeout(() => {
+      setRecentlyAdded(prev => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
+    }, 400);
+
     let currentOrderId = orderId;
 
     // Lazy order creation: create the order now if it doesn'tocurring
@@ -388,6 +410,7 @@ export default function POS() {
           });
           currentOrderId = order.id;
           setOrderId(order.id);
+          setOrderNumber(order.order_number);
           if (order.order_type) setOrderType(order.order_type);
           // Update URL so refresh doesn't create another order
           navigate(`${basePath}/pos/0/${order.id}${location.search}`, { replace: true });
@@ -395,6 +418,7 @@ export default function POS() {
           const order: any = await invoke("get_or_create_order", { tableId: parseInt(tableId!) });
           currentOrderId = order.id;
           setOrderId(order.id);
+          setOrderNumber(order.order_number);
           if (order.order_type) setOrderType(order.order_type);
         }
       } catch (err) {
@@ -684,7 +708,7 @@ export default function POS() {
                   className="w-full text-left px-3 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg flex items-start justify-between transition-colors"
                 >
                   <div>
-                    <span className="font-bold text-slate-900 dark:text-white block">#{po.id} - {po.table_number ? `Table ${po.table_number}` : 'Walk-in'}</span>
+                    <span className="font-bold text-slate-900 dark:text-white block">Order #{po.order_number || po.id} - {po.table_number ? `Table ${po.table_number}` : 'Walk-in'}</span>
                     <span className="text-xs text-slate-500">{po.order_type === 'Delivery' ? 'Delivery Pending' : po.status}</span>
                   </div>
                   <div className="text-right">
@@ -780,13 +804,20 @@ export default function POS() {
                 key={item.id}
                 onClick={() => handleAddToCart(item)}
                 disabled={!item.is_active}
-                className={`border p-3 rounded-lg flex flex-col items-start justify-between text-left min-h-[5rem] transition-all relative overflow-hidden ${
-                  item.is_active 
-                    ? 'bg-white dark:bg-[#1E293B] border-slate-200 dark:border-slate-800 hover:border-blue-500/50 hover:bg-slate-50 dark:hover:bg-slate-800/50 group cursor-pointer' 
-                    : 'bg-slate-50 dark:bg-[#0B1120] border-slate-200 dark:border-slate-800 opacity-60 cursor-not-allowed grayscale'
+                className={`border p-3 rounded-lg flex flex-col items-start justify-between text-left min-h-[5rem] transition-all duration-200 relative overflow-hidden ${
+                  recentlyAdded.has(item.id)
+                    ? 'ring-2 ring-emerald-500 border-emerald-500 bg-emerald-50 dark:bg-emerald-900/30 scale-95 shadow-inner'
+                    : item.is_active 
+                      ? 'bg-white dark:bg-[#1E293B] border-slate-200 dark:border-slate-800 hover:border-blue-500/50 hover:bg-slate-50 dark:hover:bg-slate-800/50 group cursor-pointer shadow-sm hover:shadow-md' 
+                      : 'bg-slate-50 dark:bg-[#0B1120] border-slate-200 dark:border-slate-800 opacity-60 cursor-not-allowed grayscale'
                 }`}
               >
-                <h3 className="text-[13px] font-bold text-slate-900 dark:text-slate-200 leading-tight w-full break-words" title={item.name}>{item.name}</h3>
+                {recentlyAdded.has(item.id) && (
+                  <div className="absolute top-2 right-2 text-emerald-500 animate-in zoom-in fade-in duration-200">
+                    <CheckCircle size={16} />
+                  </div>
+                )}
+                <h3 className="text-[13px] font-bold text-slate-900 dark:text-slate-200 leading-tight w-full break-words pr-5" title={item.name}>{item.name}</h3>
                 <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800/50 w-full flex items-center justify-between">
                   {item.is_active ? (
                     <span className="text-blue-600 dark:text-blue-400 font-bold text-sm">{formatCurrency(item.price)}</span>
@@ -916,16 +947,6 @@ export default function POS() {
           <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-0.5">Change Amount</p>
           <div className="text-lg font-bold text-[#059669]">{formatCurrency(changeAmount)}</div>
         </div>
-        <div className="bg-white dark:bg-[#0F172A] rounded-lg p-3 border border-slate-300 dark:border-slate-600 focus-within:border-[#0066FF] transition-colors relative">
-          <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-0.5">Order Note</p>
-          <input
-            type="text"
-            value={orderNote}
-            onChange={(e) => setOrderNote(e.target.value)}
-            placeholder="e.g. Extra spicy, no onions"
-            className="bg-transparent text-sm font-medium text-slate-900 dark:text-white w-full focus:outline-none"
-          />
-        </div>
       </div>
 
         {/* Quick Cash Options below the grid */}
@@ -968,7 +989,6 @@ export default function POS() {
           disabled={posLoading || !orderId || cartItems.length === 0}
           className="flex-1 bg-[#0066FF] hover:bg-[#0052CC] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl py-3 flex items-center justify-center font-bold transition-colors relative shadow-md text-sm"
         >
-          <span className="absolute right-4 text-xs bg-[#0047B3] px-2 py-1 rounded">F9</span>
           Complete Payment
         </button>
       </div>
@@ -1057,7 +1077,7 @@ export default function POS() {
                       ) : (
                         <p className="text-sm font-bold text-slate-900 dark:text-white">Dine-in Customer</p>
                       )}
-                      <p className="text-[10px] text-slate-500">Order #{orderId || '...'} • Type: {orderType}</p>
+                      <p className="text-[10px] text-slate-500">Order #{orderNumber || orderId || '...'} • Type: {orderType}</p>
                     </div>
                   </div>
 
@@ -1346,9 +1366,10 @@ export default function POS() {
           ref={receiptRef}
           restaurantName={restaurantName}
           restaurantAddress={restaurantAddress}
-          orderId={`#ORD-${orderId?.toString().padStart(4, '0')}`}
+          orderId={orderNumber ? `#ORD-${orderNumber.toString().padStart(4, '0')}` : `#ORD-${orderId?.toString().padStart(4, '0')}`}
           orderType={orderType}
-          tableNumber={tableId || "0"}
+          tableNumber={actualTableNumber}
+          tableCategoryName={tableCategoryName}
           date={new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString()}
           items={cartItems}
           subtotal={subtotal}
@@ -1363,9 +1384,10 @@ export default function POS() {
         />
         <KOTTemplate
           ref={kotRef}
-          orderId={`#ORD-${orderId?.toString().padStart(4, '0')}`}
+          orderId={orderNumber ? `#ORD-${orderNumber.toString().padStart(4, '0')}` : `#ORD-${orderId?.toString().padStart(4, '0')}`}
           orderType={orderType}
-          tableNumber={tableId || "0"}
+          tableNumber={actualTableNumber}
+          tableCategoryName={tableCategoryName}
           date={new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString()}
           items={kotPrintItems}
           cashierName={displayName}

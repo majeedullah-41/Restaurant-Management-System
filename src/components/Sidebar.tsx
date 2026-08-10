@@ -110,7 +110,18 @@ export default function Sidebar({ activePage }: { activePage: string }) {
             <NavItem icon={<Table2 size={20} />} label="Table Management" active={activePage === "tables"} onClick={() => navigate('/admin/tables')} />
             <NavItem icon={<Users size={20} />} label="Customers" active={activePage === "customers"} onClick={() => navigate('/admin/customers')} />
             <NavItem icon={<UserSquare2 size={20} />} label="Staff Management" active={activePage === "staff"} onClick={() => navigate('/admin/staff')} />
-            <NavItem icon={<Receipt size={20} />} label="Payroll" active={activePage === "payroll"} onClick={() => navigate('/admin/payroll')} />
+            
+            <NavGroup 
+              icon={<Receipt size={20} />} 
+              label="Payroll" 
+              isActive={activePage.startsWith("payroll")}
+              defaultExpanded={activePage.startsWith("payroll")}
+            >
+              <NavItem label="Process Payroll" active={activePage === "payroll_process"} onClick={() => navigate('/admin/payroll/process')} isSubItem />
+              <NavItem label="Payroll History" active={activePage === "payroll_history"} onClick={() => navigate('/admin/payroll/history')} isSubItem />
+              <NavItem label="Advance History" active={activePage === "payroll_advance"} onClick={() => navigate('/admin/payroll/advance')} isSubItem />
+            </NavGroup>
+
             <NavItem icon={<Receipt size={20} />} label="Expenses" active={activePage === "expenses"} onClick={() => navigate('/admin/expenses')} />
             <NavItem icon={<Package size={20} />} label="Inventory" active={activePage === "inventory"} onClick={() => navigate('/admin/inventory')} />
             <NavItem icon={<BarChart3 size={20} />} label="Reports" active={activePage === "reports"} onClick={() => navigate('/admin/reports')} />
@@ -131,18 +142,54 @@ export default function Sidebar({ activePage }: { activePage: string }) {
   );
 }
 
-// Helper component moved inside the shared file
-function NavItem({ icon, label, active = false, onClick }: { icon: React.ReactNode, label: string, active?: boolean, onClick?: () => void }) {
+// Helper components
+import { ChevronDown, ChevronRight } from "lucide-react";
+
+function NavGroup({ icon, label, isActive, defaultExpanded, children }: { icon: React.ReactNode, label: string, isActive: boolean, defaultExpanded: boolean, children: React.ReactNode }) {
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  
+  useEffect(() => {
+    if (isActive) setIsExpanded(true);
+  }, [isActive]);
+
+  return (
+    <div className="space-y-1">
+      <button 
+        onClick={() => setIsExpanded(!isExpanded)}
+        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-all ${
+          isActive && !isExpanded
+          ? "bg-blue-50/50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 font-semibold"
+          : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/50 font-medium"
+        }`}
+      >
+        <div className="flex items-center space-x-3">
+          {icon}
+          <span className="text-sm">{label}</span>
+        </div>
+        {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+      </button>
+      {isExpanded && (
+        <div className="pl-4 space-y-1">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NavItem({ icon, label, active = false, isSubItem = false, onClick }: { icon?: React.ReactNode, label: string, active?: boolean, isSubItem?: boolean, onClick?: () => void }) {
   return (
     <button onClick={onClick}
       className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-all ${
         active 
-        ? "bg-blue-600 text-white shadow-md shadow-blue-600/20" 
+        ? isSubItem 
+          ? "bg-slate-100/80 dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-sm border-l-2 border-blue-600" 
+          : "bg-blue-600 text-white shadow-md shadow-blue-600/20" 
         : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200"
       }`}
     >
       {icon}
-      <span className="font-medium text-sm">{label}</span>
+      <span className={`font-medium text-sm ${isSubItem && active ? "font-semibold" : ""}`}>{label}</span>
     </button>
   );
 }

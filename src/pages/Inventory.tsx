@@ -9,6 +9,7 @@ import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { ConfirmModal } from "../components/ConfirmModal";
 import DateFilterToolbar from "../components/DateFilterToolbar";
+import { MoneyInput } from "../components/MoneyInput";
 import { useReactToPrint } from "react-to-print";
 import { InventoryReportTemplate } from "../components/InventoryReportTemplate";
 
@@ -618,7 +619,7 @@ export default function Inventory() {
                     </div>
                     <div>
                       <label className={labelClass}>Total Cost (Rs.)</label>
-                      <input type="number" step="0.01" min="0" value={purchaseCost} onChange={(e) => setPurchaseCost(e.target.value)} className={inputClass} placeholder="e.g. 500" required />
+                      <MoneyInput value={purchaseCost} onChange={setPurchaseCost} className={inputClass} placeholder="e.g. 500" required />
                     </div>
                   </div>
                   {purchaseQty && purchaseCost && parseFloat(purchaseQty) > 0 && (

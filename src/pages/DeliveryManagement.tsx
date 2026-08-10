@@ -8,6 +8,7 @@ import { AlertModal } from "../components/AlertModal";
 
 interface DeliveryOrder {
   id: number;
+  order_number: number;
   created_at: string | null;
   customer_name: string | null;
   customer_phone: string | null;
@@ -113,7 +114,7 @@ export default function DeliveryManagement() {
       console.error("Failed to fetch items", err);
     }
 
-    const formattedId = `#ORD-${order.id.toString().padStart(4, '0')}`;
+    const formattedId = `#ORD-${(order.order_number || order.id).toString().padStart(4, '0')}`;
     const dateStr = order.created_at ? new Date(order.created_at).toLocaleString() : new Date().toLocaleString();
 
     const padBoth = (left: string, right: string, width = 32) => {
@@ -195,7 +196,7 @@ export default function DeliveryManagement() {
                   <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/30">
                     <div>
                       <div className="flex items-center space-x-2">
-                        <h3 className="font-bold text-slate-900 dark:text-white">Order #{order.id}</h3>
+                        <h3 className="font-bold text-slate-900 dark:text-white">Order #{order.order_number || order.id}</h3>
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
                           order.delivery_status === 'Pending' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' :
                           order.delivery_status === 'Dispatched' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400' :

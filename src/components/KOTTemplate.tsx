@@ -9,6 +9,7 @@ interface KOTProps {
   orderId: string;
   orderType: string;
   tableNumber: string;
+  tableCategoryName?: string;
   date: string;
   items: KOTItem[];
   cashierName: string;
@@ -48,7 +49,7 @@ export const KOTTemplate = React.forwardRef<HTMLDivElement, KOTProps>((props, re
           {props.orderType === "Dine-in" && (
             <div className="flex justify-between">
               <span className="font-bold">Table:</span>
-              <span>{props.tableNumber === "0" ? "Walk-in" : `Table ${props.tableNumber.padStart(2, '0')}`}</span>
+              <span>{props.tableNumber === "0" ? "Walk-in" : (props.tableCategoryName ? `${props.tableCategoryName.trim()} ${props.tableNumber.padStart(2, '0')}` : `Table ${props.tableNumber.padStart(2, '0')}`)}</span>
             </div>
           )}
           <div className="flex justify-between">

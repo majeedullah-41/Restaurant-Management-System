@@ -89,6 +89,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(wrap_handler(tauri::generate_handler![
     db::pay_advance_salary,
+    db::update_advance,
+    db::delete_advance,
     db::get_user_role_by_username,
     db::get_users,
     db::get_restaurant_name,
@@ -177,6 +179,8 @@ pub fn run() {
     db::process_payroll_batch,
     db::reopen_payroll,
     db::void_payroll,
+    db::delete_payroll_record,
+    db::delete_payroll_period,
     db::get_advance_history,
     db::get_staff_advance_balance,
     db::get_payroll_history,

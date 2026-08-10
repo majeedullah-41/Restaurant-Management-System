@@ -6,6 +6,7 @@ import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { AlertModal } from "../components/AlertModal";
+import { MoneyInput } from "../components/MoneyInput";
 
 interface StaffMember {
   id: number;
@@ -249,8 +250,8 @@ export default function StaffManagement() {
               </div>
               <div>
                 <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Monthly Salary (Rs.)</label>
-                <input
-                  type="number" value={salary} onChange={(e) => setSalary(e.target.value)}
+                <MoneyInput
+                  value={salary} onChange={setSalary}
                   className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" required
                 />
               </div>

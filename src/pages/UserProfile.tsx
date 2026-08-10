@@ -247,26 +247,15 @@ export default function UserProfile() {
                       <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                         <Shield size={16} className="text-slate-400" />
                       </div>
-                      {userRole === "Admin" ? (
-                        <select
-                          value={targetRole || userRole}
-                          onChange={(e) => setTargetRole(e.target.value)}
-                          className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg pl-10 pr-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors cursor-pointer"
-                        >
-                          <option value="Admin">Admin</option>
-                          <option value="Cashier">Cashier</option>
-                        </select>
-                      ) : (
-                        <input
-                          type="text"
-                          value={targetRole || userRole}
-                          className="w-full h-11 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg pl-10 pr-4 text-slate-500 dark:text-slate-400 cursor-not-allowed"
-                          disabled
-                        />
-                      )}
+                      <input
+                        type="text"
+                        value={targetRole || userRole}
+                        className="w-full h-11 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg pl-10 pr-4 text-slate-500 dark:text-slate-400 cursor-not-allowed"
+                        disabled
+                      />
                     </div>
                     <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
-                      Your role determines your permissions within the system. {userRole !== "Admin" && "Roles cannot be changed here."}
+                      Your role determines your permissions within the system. Roles cannot be changed here.
                     </p>
                   </div>
 

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "../lib/api";
 import { Save, Truck, Loader2 } from "lucide-react";
+import { MoneyInput } from "./MoneyInput";
 
 export default function DeliverySettingsSection() {
   const [baseFee, setBaseFee] = useState("");
@@ -66,15 +67,15 @@ export default function DeliverySettingsSection() {
         <div className="grid grid-cols-2 gap-6">
           <div>
             <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Base Delivery Fee (Rs)</label>
-            <input 
-              type="number" step="1" value={baseFee} onChange={(e) => setBaseFee(e.target.value)}
+            <MoneyInput 
+              value={baseFee} onChange={setBaseFee} maxDecimals={0}
               className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" required
             />
           </div>
           <div>
             <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Free Delivery Threshold (Rs)</label>
-            <input 
-              type="number" step="1" value={freeThreshold} onChange={(e) => setFreeThreshold(e.target.value)}
+            <MoneyInput 
+              value={freeThreshold} onChange={setFreeThreshold} maxDecimals={0}
               className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" required
               placeholder="e.g. 2000 for free delivery over Rs.2000"
             />

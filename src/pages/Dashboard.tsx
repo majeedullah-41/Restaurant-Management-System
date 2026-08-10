@@ -43,6 +43,7 @@ interface Expense {
 
 interface TodaySale {
   id: string;
+  order_id: number;
   table: string;
   customer: string;
   time: string;

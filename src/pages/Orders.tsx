@@ -7,9 +7,11 @@ import { Search, CheckCircle2, ChevronDown, ChevronRight, PackageOpen, User, Clo
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import DateFilterToolbar from "../components/DateFilterToolbar";
+import { MoneyInput } from "../components/MoneyInput";
 
 interface OrderHistory {
   id: number;
+  order_number: number;
   table_id: number;
   table_number: number;
   table_category_name?: string;
@@ -54,10 +56,9 @@ const EditablePayable = ({ order, onDiscountUpdated }: { order: OrderHistory, on
       <label className="text-xs font-semibold text-blue-700 dark:text-blue-400">Net Payable Amount</label>
       <div className="flex items-center space-x-2">
         <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Rs.</span>
-        <input
-          type="text"
+        <MoneyInput
           value={val}
-          onChange={(e) => setVal(e.target.value)}
+          onChange={setVal}
           onBlur={async () => {
             const parsed = parseFloat(val);
             if (isNaN(parsed) || parsed < 0) {
@@ -74,7 +75,7 @@ const EditablePayable = ({ order, onDiscountUpdated }: { order: OrderHistory, on
               console.error("Failed to update discount", err);
             }
           }}
-          onKeyDown={(e) => {
+          onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
           }}
           className="flex-1 bg-white dark:bg-slate-900 border border-blue-300 dark:border-blue-500/30 rounded-lg px-3 py-2 text-sm font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -157,7 +158,8 @@ export default function Orders() {
   };
 
   const filteredOrders = orders.filter(order => 
-    order.id.toString().includes(searchQuery.trim())
+    order.id.toString().includes(searchQuery.trim()) ||
+    order.order_number.toString().includes(searchQuery.trim())
   );
 
   useEffect(() => {
@@ -256,7 +258,7 @@ export default function Orders() {
                         >
                           <td className="p-4 pl-6 font-bold text-slate-900 dark:text-white flex items-center space-x-2">
                             {expandedOrderId === order.id ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
-                            <span>#{order.id}</span>
+                            <span>#{order.order_number || order.id}</span>
                           </td>
                           <td className="p-4 font-medium text-slate-700 dark:text-slate-300">
                             {order.table_number === 0 ? 'Walk-in' : (order.table_category_name ? `${order.table_category_name} - Table ${order.table_number.toString().padStart(2, '0')}` : `Table ${order.table_number.toString().padStart(2, '0')}`)}

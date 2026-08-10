@@ -1,10 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "../lib/api";
 import { formatCurrency, todayLocal } from "../lib/utils";
-import { Plus, Trash2, Landmark, X } from "lucide-react";
+import { Plus, Trash2, Landmark, X, Download } from "lucide-react";
+import { useReactToPrint } from "react-to-print";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { MoneyInput } from "../components/MoneyInput";
+import { ExpenseReportTemplate } from "../components/ExpenseReportTemplate";
 import DateFilterToolbar from "../components/DateFilterToolbar";
 
 interface Expense {
@@ -28,6 +31,24 @@ export default function Expenses() {
   const [expenseDate, setExpenseDate] = useState(todayLocal());
 
   const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
+
+  const printRef = useRef<HTMLDivElement>(null);
+  const [restaurantName, setRestaurantName] = useState('Restaurant POS');
+  const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke<any>('get_settings')
+      .then((settings) => {
+        if (settings?.restaurant_name) setRestaurantName(settings.restaurant_name);
+        if (settings?.logo_path) setRestaurantLogo(settings.logo_path);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handlePrint = useReactToPrint({
+    contentRef: printRef,
+    documentTitle: `Expense_Report_${dateRange.startDate || 'all'}_to_${dateRange.endDate || 'all'}`,
+  });
 
   const loadExpenses = async () => {
     try {
@@ -117,8 +138,8 @@ export default function Expenses() {
             <form onSubmit={handleSaveExpense} className="space-y-4">
               <div>
                 <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Amount (Rs.)</label>
-                <input 
-                  type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)}
+                <MoneyInput 
+                  value={amount} onChange={setAmount}
                   className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" required
                 />
               </div>
@@ -194,6 +215,15 @@ export default function Expenses() {
               />
 
               <button 
+                onClick={() => handlePrint()}
+                disabled={filteredExpenses.length === 0}
+                className="h-10 px-4 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-sm font-semibold rounded-lg transition-colors flex items-center space-x-2 border border-slate-200 dark:border-slate-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Download size={16} />
+                <span>Export PDF</span>
+              </button>
+
+              <button 
                 onClick={() => setIsExpenseModalOpen(true)}
                 className="bg-blue-600 hover:bg-blue-700 text-white px-4 h-10 rounded-lg text-sm font-semibold flex items-center space-x-2 transition-colors shadow-lg shadow-blue-600/20"
               >
@@ -253,6 +283,15 @@ export default function Expenses() {
           </div>
         </div>
       </main>
+
+      <ExpenseReportTemplate
+        ref={printRef}
+        expenses={filteredExpenses}
+        startDate={dateRange.startDate || 'Start'}
+        endDate={dateRange.endDate || 'End'}
+        restaurantName={restaurantName}
+        restaurantLogo={restaurantLogo}
+      />
     </div>
   );
 }
