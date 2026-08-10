@@ -320,8 +320,8 @@ export default function POS() {
             setDeliveryAddress("");
             setOrderNote("");
             setSelectedCustomerId(null);
-            setOrderTakerId(null);
-            setOrderTakerName(null);
+            setOrderTakerId(selfTaker ? selfTaker.id : null);
+            setOrderTakerName(selfTaker ? selfTaker.name : null);
             setAmountReceived("");
           }
         } else if (tableId === "0" && (!routeOrderId || routeOrderId === 'new')) {

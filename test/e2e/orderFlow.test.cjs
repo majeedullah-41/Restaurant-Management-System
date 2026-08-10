@@ -6,11 +6,13 @@ const path = require('path');
  * End-to-end order flow against the running desktop app (rms.exe).
  *
  * Prerequisites:
- *  1. `npm run build && npm run tauri build -- --debug` (or a debug build at
- *     D:\RustTarget\debug\rms.exe / RMS_EXE env override)
+ *  1. A built app binary: `npm run tauri build` (release) or `-- --debug`
+ *     (D:\RustTarget\release\rms.exe / D:\RustTarget\debug\rms.exe, or RMS_EXE)
  *  2. msedgedriver.exe matching the installed Edge, at the repo root
  *  3. A valid license seeded by setup.cjs (requires scripts/.keys/private_key.pem)
- *  4. No other instance of rms.exe already running (file lock on local.db)
+ *  4. The app under test runs against an ISOLATED database (DB_PATH env set by
+ *     wdio.conf.cjs) so it never touches the live store DB — any running RMS
+ *     instance is safe to leave open.
  *
  * Run with: npm run test:e2e
  */
@@ -18,7 +20,7 @@ describe('RMS Order Flow E2E Test', () => {
     let db;
 
     before(async () => {
-        const dbPath = path.resolve(__dirname, '../../test.db');
+        const dbPath = process.env.E2E_DB_PATH || path.resolve(__dirname, '../../test.db');
         db = new Database(dbPath);
     });
 
