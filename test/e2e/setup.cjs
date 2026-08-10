@@ -162,7 +162,7 @@ function setupTestDB() {
             email TEXT,
             created_at TEXT DEFAULT (datetime('now', 'localtime')),
             total_spent REAL NOT NULL DEFAULT 0.0,
-            visit_count INTEGER NOT NULL DEFAULT 0,
+            visits INTEGER NOT NULL DEFAULT 0,
             last_visit TEXT,
             points REAL NOT NULL DEFAULT 0.0,
             address TEXT
