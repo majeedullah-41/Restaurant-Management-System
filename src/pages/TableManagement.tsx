@@ -408,18 +408,16 @@ export default function TableManagement() {
         <Header title="Table Management" subtitle="Override physical floor status. Occupied tables are locked by active orders." />
 
         <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto flex flex-col">
-          <div className="flex justify-between items-center mb-6 shrink-0">
+          <div className="flex items-center space-x-3 mb-6 shrink-0">
             {isAdmin && (
               <>
-                <div className="flex items-center space-x-3">
-                  <button
-                    onClick={() => setIsManageCategoriesOpen(true)}
-                    className="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 px-4 py-2 rounded-lg text-sm font-semibold flex items-center space-x-2 transition-colors"
-                  >
+                <button
+                  onClick={() => setIsManageCategoriesOpen(true)}
+                  className="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 px-4 py-2 rounded-lg text-sm font-semibold flex items-center space-x-2 transition-colors"
+                >
                   <Plus size={16} />
                   <span>Manage Categories</span>
                 </button>
-                </div>
                 <button
                   onClick={() => { setIsAddModalOpen(true); setSaveMsg(null); setErrorAlert(null); }}
                   className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center space-x-2 transition-colors shadow-lg shadow-blue-600/20"

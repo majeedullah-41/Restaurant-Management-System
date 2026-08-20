@@ -6,6 +6,8 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "dialog:default"
+    "dialog:default",
+    "wdio:default",
+    "wdio-webdriver:default"
   ]
 }

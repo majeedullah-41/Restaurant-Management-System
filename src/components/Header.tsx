@@ -2,14 +2,17 @@ import { Moon, Sun, CalendarDays, Menu } from "lucide-react";
 import { Link } from 'react-router-dom';
 import { useTheme } from "./ThemeProvider";
 import { useAuth } from "../lib/auth";
+import React from "react";
 
 interface HeaderProps {
   title: string;
   subtitle?: string;
+  icon?: React.ReactNode;
   children?: React.ReactNode;
+  alwaysShowMenu?: boolean;
 }
 
-export default function Header({ title, subtitle, children }: HeaderProps) {
+export default function Header({ title, subtitle, icon, children, alwaysShowMenu }: HeaderProps) {
   const { theme, setTheme } = useTheme();
   const { user } = useAuth();
   const role = user?.role || "Admin";
@@ -21,13 +24,16 @@ export default function Header({ title, subtitle, children }: HeaderProps) {
       <div className="flex items-center space-x-3 md:space-x-4">
         <button 
           onClick={() => window.dispatchEvent(new CustomEvent('toggleMobileSidebar'))}
-          className="lg:hidden p-2 -ml-2 text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+          className={`${alwaysShowMenu ? 'block' : 'lg:hidden'} p-2 -ml-2 text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors`}
         >
           <Menu size={24} />
         </button>
-        <div>
-          <h1 className="text-[20px] md:text-[28px] font-bold text-slate-900 dark:text-white leading-tight">{title}</h1>
-          {subtitle && <p className="hidden md:block text-[15px] text-slate-500 dark:text-slate-400 mt-1">{subtitle}</p>}
+        <div className="flex items-center space-x-3">
+          {icon && <div className="text-blue-600 shrink-0">{icon}</div>}
+          <div>
+            <h1 className="text-[20px] md:text-[28px] font-bold text-slate-900 dark:text-white leading-tight">{title}</h1>
+            {subtitle && <p className="hidden md:block text-[15px] text-slate-500 dark:text-slate-400 mt-1">{subtitle}</p>}
+          </div>
         </div>
       </div>
 

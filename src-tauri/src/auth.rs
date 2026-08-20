@@ -258,6 +258,7 @@ pub const ADMIN_COMMANDS: &[&str] = &[
     // Settings / config
     "update_settings",
     "update_delivery_settings",
+    "update_print_settings",
     "update_backup_settings",
     "get_backup_settings",
     "perform_backup",
@@ -335,6 +336,7 @@ pub const ADMIN_COMMANDS: &[&str] = &[
     "record_inventory_purchase",
     "get_inventory_transactions",
     "get_inventory_summary",
+    "delete_inventory_transaction",
 ];
 
 /// Payload keys under which the session token may arrive. Tauri command args

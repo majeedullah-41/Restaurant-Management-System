@@ -167,20 +167,20 @@ export default function PayrollHistory() {
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse">
                         <thead>
-                          <tr className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 text-slate-500 dark:text-slate-400 text-xs font-semibold">
-                            <th className="py-3 px-6">Staff</th>
-                            <th className="py-3 px-4 text-center">Attendance</th>
-                            <th className="py-3 px-4 text-right">Base Salary</th>
-                            <th className="py-3 px-4 text-right">Bonus</th>
-                            <th className="py-3 px-4 text-right">Deduction</th>
-                            <th className="py-3 px-4 text-right">Advance</th>
+                          <tr className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 text-xs font-semibold">
+                            <th className="py-3 px-6 border-r border-slate-200 dark:border-slate-800">Staff</th>
+                            <th className="py-3 px-4 text-center border-r border-slate-200 dark:border-slate-800">Attendance</th>
+                            <th className="py-3 px-4 text-right border-r border-slate-200 dark:border-slate-800">Base Salary</th>
+                            <th className="py-3 px-4 text-right border-r border-slate-200 dark:border-slate-800">Bonus</th>
+                            <th className="py-3 px-4 text-right border-r border-slate-200 dark:border-slate-800">Deduction</th>
+                            <th className="py-3 px-4 text-right border-r border-slate-200 dark:border-slate-800">Advance</th>
                             <th className="py-3 px-4 text-right">Net Paid</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
+                        <tbody>
                           {period.rows.map(row => (
-                            <tr key={row.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20">
-                              <td className="py-3 px-6">
+                            <tr key={row.id} className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-800/20">
+                              <td className="py-3 px-6 border-r border-slate-200 dark:border-slate-800">
                                 <div className="flex items-center space-x-3">
                                   <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                                     {getInitials(row.name)}
@@ -190,21 +190,21 @@ export default function PayrollHistory() {
                                   </span>
                                 </div>
                               </td>
-                              <td className="py-3 px-4 text-center">
+                              <td className="py-3 px-4 text-center border-r border-slate-200 dark:border-slate-800">
                                 <span className="text-slate-600 dark:text-slate-400 text-xs font-semibold">
                                   {row.days_present} Days
                                 </span>
                               </td>
-                              <td className="py-3 px-4 text-right font-mono text-sm text-slate-700 dark:text-slate-300">
+                              <td className="py-3 px-4 text-right font-mono text-sm text-slate-700 dark:text-slate-300 border-r border-slate-200 dark:border-slate-800">
                                 {formatCurrency(row.base_salary)}
                               </td>
-                              <td className="py-3 px-4 text-right font-mono text-sm text-emerald-600">
+                              <td className="py-3 px-4 text-right font-mono text-sm text-emerald-600 border-r border-slate-200 dark:border-slate-800">
                                 {row.bonus > 0 ? `+${formatCurrency(row.bonus)}` : '—'}
                               </td>
-                              <td className="py-3 px-4 text-right font-mono text-sm text-red-500">
+                              <td className="py-3 px-4 text-right font-mono text-sm text-red-500 border-r border-slate-200 dark:border-slate-800">
                                 {row.deduction > 0 ? `-${formatCurrency(row.deduction)}` : '—'}
                               </td>
-                              <td className="py-3 px-4 text-right font-mono text-sm">
+                              <td className="py-3 px-4 text-right font-mono text-sm border-r border-slate-200 dark:border-slate-800">
                                 {row.advance_deduction > 0 ? (
                                   <div className="flex flex-col items-end">
                                     <span className="text-red-500">-{formatCurrency(row.advance_deduction)}</span>

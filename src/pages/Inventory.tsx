@@ -8,6 +8,7 @@ import {
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { ConfirmModal } from "../components/ConfirmModal";
+import AdminPasswordModal from "../components/AdminPasswordModal";
 import DateFilterToolbar from "../components/DateFilterToolbar";
 import { MoneyInput } from "../components/MoneyInput";
 import { useReactToPrint } from "react-to-print";
@@ -68,6 +69,10 @@ export default function Inventory() {
   // ── Delete Modal ──
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<number | null>(null);
+
+  // ── Transaction Delete (admin-gated) ──
+  const [txnToDelete, setTxnToDelete] = useState<InventoryTransaction | null>(null);
+  const [showTxnPassword, setShowTxnPassword] = useState(false);
 
   // ── Print Report State ──
   const printRef = useRef<HTMLDivElement>(null);
@@ -243,6 +248,28 @@ export default function Inventory() {
     }
   };
 
+  // ── Delete Transaction (requires admin password) ──
+  const handleDeleteTransaction = (txn: InventoryTransaction) => {
+    setTxnToDelete(txn);
+    setShowTxnPassword(true);
+  };
+
+  const confirmDeleteTransaction = async () => {
+    if (!txnToDelete) return;
+    const txnId = txnToDelete.id;
+    setShowTxnPassword(false);
+    setTxnToDelete(null);
+    try {
+      await invoke("delete_inventory_transaction", { id: txnId });
+      loadAll();
+      if (dateRange.startDate && dateRange.endDate) {
+        loadTransactions();
+      }
+    } catch (err: any) {
+      setError(err.toString());
+    }
+  };
+
   // ── Record Usage ──
   const handleRecordUsage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -404,6 +431,16 @@ export default function Inventory() {
         confirmText="Delete"
       />
 
+      <AdminPasswordModal
+        isOpen={showTxnPassword}
+        title="Delete Inventory Entry"
+        description={`Enter your password to permanently delete this ${txnToDelete?.transaction_type === 'purchase' ? 'purchase' : 'usage'} entry${txnToDelete?.transaction_type === 'purchase' ? ' and its linked expense' : ''}. This action cannot be undone.`}
+        confirmLabel="Delete Entry"
+        accentColor="red"
+        onClose={() => { setShowTxnPassword(false); setTxnToDelete(null); }}
+        onSuccess={confirmDeleteTransaction}
+      />
+
       <Sidebar activePage="inventory" />
 
       <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors min-w-0">
@@ -455,15 +492,15 @@ export default function Inventory() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
-                    <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Item Name</th>
-                    <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Unit</th>
-                    <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Current Stock</th>
-                    <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Alert Threshold</th>
-                    <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Status</th>
+                    <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Item Name</th>
+                    <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Unit</th>
+                    <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Current Stock</th>
+                    <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Alert Threshold</th>
+                    <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Status</th>
                     <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                <tbody>
                   {items.length === 0 ? (
                     <tr><td colSpan={6} className="py-16 text-center text-slate-400">
                       <div className="flex flex-col items-center space-y-3">
@@ -476,14 +513,14 @@ export default function Inventory() {
                     items.map((item) => {
                       const status = getStockStatus(item);
                       return (
-                        <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
-                          <td className="py-4 px-6 text-sm font-semibold text-slate-900 dark:text-white">{item.name}</td>
-                          <td className="py-4 px-6 text-sm text-slate-600 dark:text-slate-400">{item.unit}</td>
-                          <td className="py-4 px-6 text-sm font-bold text-slate-900 dark:text-white">
+                        <tr key={item.id} className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors last:border-b-0">
+                          <td className="py-4 px-6 text-sm font-semibold text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800">{item.name}</td>
+                          <td className="py-4 px-6 text-sm text-slate-600 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{item.unit}</td>
+                          <td className="py-4 px-6 text-sm font-bold text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800">
                             {item.current_stock % 1 === 0 ? item.current_stock : item.current_stock.toFixed(2)}
                           </td>
-                          <td className="py-4 px-6 text-sm text-slate-600 dark:text-slate-400">{item.low_stock_threshold}</td>
-                          <td className="py-4 px-6">
+                          <td className="py-4 px-6 text-sm text-slate-600 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{item.low_stock_threshold}</td>
+                          <td className="py-4 px-6 border-r border-slate-200 dark:border-slate-800">
                             <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${status.color}`}>{status.label}</span>
                           </td>
                           <td className="py-4 px-6 text-right">
@@ -566,6 +603,7 @@ export default function Inventory() {
                 icon={<TrendingDown size={20} />}
                 color="orange"
                 dateRange={dateRange}
+                onDelete={handleDeleteTransaction}
               />
             </div>
           )}
@@ -660,6 +698,7 @@ export default function Inventory() {
                 icon={<ShoppingCart size={20} />}
                 color="emerald"
                 dateRange={dateRange}
+                onDelete={handleDeleteTransaction}
               />
             </div>
           )}
@@ -691,24 +730,25 @@ export default function Inventory() {
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
-                      <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Date</th>
-                      <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Item</th>
-                      <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Type</th>
-                      <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Quantity</th>
-                      <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Cost</th>
-                      <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Supplier</th>
-                      <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Note</th>
+                      <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Date</th>
+                      <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Item</th>
+                      <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Type</th>
+                      <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Quantity</th>
+                      <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Cost</th>
+                      <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Supplier</th>
+                      <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Note</th>
+                      <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                  <tbody>
                     {transactions.length === 0 ? (
-                      <tr><td colSpan={7} className="py-12 text-center text-slate-500">No transactions found for this period.</td></tr>
+                      <tr><td colSpan={8} className="py-12 text-center text-slate-500">No transactions found for this period.</td></tr>
                     ) : (
                       transactions.map((t) => (
-                        <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
-                          <td className="py-4 px-6 text-sm text-slate-700 dark:text-slate-300 font-medium">{t.date}</td>
-                          <td className="py-4 px-6 text-sm font-semibold text-slate-900 dark:text-white">{t.item_name}</td>
-                          <td className="py-4 px-6">
+                        <tr key={t.id} className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors last:border-b-0">
+                          <td className="py-4 px-6 text-sm text-slate-700 dark:text-slate-300 font-medium border-r border-slate-200 dark:border-slate-800">{t.date}</td>
+                          <td className="py-4 px-6 text-sm font-semibold text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800">{t.item_name}</td>
+                          <td className="py-4 px-6 border-r border-slate-200 dark:border-slate-800">
                             <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${
                               t.transaction_type === 'purchase'
                                 ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20'
@@ -717,14 +757,23 @@ export default function Inventory() {
                               {t.transaction_type === 'purchase' ? '↑ Purchase' : '↓ Usage'}
                             </span>
                           </td>
-                          <td className="py-4 px-6 text-sm text-slate-700 dark:text-slate-300">
+                          <td className="py-4 px-6 text-sm text-slate-700 dark:text-slate-300 border-r border-slate-200 dark:border-slate-800">
                             {t.quantity % 1 === 0 ? t.quantity : t.quantity.toFixed(2)} {t.item_unit}
                           </td>
-                          <td className="py-4 px-6 text-sm font-bold text-slate-900 dark:text-white">
+                          <td className="py-4 px-6 text-sm font-bold text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800">
                             {t.total_cost != null ? `${formatCurrency(t.total_cost)}` : '—'}
                           </td>
-                          <td className="py-4 px-6 text-sm text-slate-600 dark:text-slate-400">{t.supplier || '—'}</td>
-                          <td className="py-4 px-6 text-sm text-slate-600 dark:text-slate-400">{t.note || '—'}</td>
+                          <td className="py-4 px-6 text-sm text-slate-600 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{t.supplier || '—'}</td>
+                          <td className="py-4 px-6 text-sm text-slate-600 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{t.note || '—'}</td>
+                          <td className="py-4 px-6 text-right">
+                            <button
+                              onClick={() => handleDeleteTransaction(t)}
+                              className="text-slate-400 hover:text-red-600 dark:hover:text-red-400 p-2 rounded-lg transition-colors hover:bg-red-50 dark:hover:bg-red-500/10"
+                              title="Delete transaction (admin)"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </td>
                         </tr>
                       ))
                     )}
@@ -771,7 +820,7 @@ function SummaryCard({ icon, label, value, color }: { icon: React.ReactNode, lab
 }
 
 // ── Selected Period Log Component (reused for both Usage and Purchase tabs) ──
-function TodaysLog({ type, title, icon, color, dateRange }: { items: InventoryItem[], type: string, title: string, icon: React.ReactNode, color: string, dateRange: { startDate: string, endDate: string } }) {
+function TodaysLog({ type, title, icon, color, dateRange, onDelete }: { items: InventoryItem[], type: string, title: string, icon: React.ReactNode, color: string, dateRange: { startDate: string, endDate: string }, onDelete?: (txn: InventoryTransaction) => void }) {
   const [todayTransactions, setTodayTransactions] = useState<InventoryTransaction[]>([]);
 
   const loadTodayLog = async () => {
@@ -816,24 +865,36 @@ function TodaysLog({ type, title, icon, color, dateRange }: { items: InventoryIt
             No {type === 'usage' ? 'usage' : 'purchases'} recorded today.
           </div>
         ) : (
-          <table className="w-full text-left">
+          <table className="w-full text-left border-collapse">
             <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800/50">
-              <tr>
-                <th className="py-3 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Item</th>
-                <th className="py-3 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Qty</th>
-                {type === 'purchase' && <th className="py-3 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Cost</th>}
-                {type === 'purchase' && <th className="py-3 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Supplier</th>}
-                <th className="py-3 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Note</th>
+              <tr className="border-b border-slate-200 dark:border-slate-800">
+                <th className="py-3 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase border-r border-slate-200 dark:border-slate-800">Item</th>
+                <th className="py-3 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase border-r border-slate-200 dark:border-slate-800">Qty</th>
+                {type === 'purchase' && <th className="py-3 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase border-r border-slate-200 dark:border-slate-800">Cost</th>}
+                {type === 'purchase' && <th className="py-3 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase border-r border-slate-200 dark:border-slate-800">Supplier</th>}
+                <th className="py-3 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase border-r border-slate-200 dark:border-slate-800">Note</th>
+                {onDelete && <th className="py-3 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase text-right">Actions</th>}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+            <tbody>
               {todayTransactions.map(t => (
-                <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
-                  <td className="py-3 px-6 text-sm font-semibold text-slate-900 dark:text-white">{t.item_name}</td>
-                  <td className="py-3 px-6 text-sm text-slate-700 dark:text-slate-300">{t.quantity % 1 === 0 ? t.quantity : t.quantity.toFixed(2)} {t.item_unit}</td>
-                  {type === 'purchase' && <td className="py-3 px-6 text-sm font-bold text-slate-900 dark:text-white">{formatCurrency(t.total_cost ?? 0)}</td>}
-                  {type === 'purchase' && <td className="py-3 px-6 text-sm text-slate-600 dark:text-slate-400">{t.supplier || '—'}</td>}
-                  <td className="py-3 px-6 text-sm text-slate-500 dark:text-slate-400">{t.note || '—'}</td>
+                <tr key={t.id} className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors last:border-b-0">
+                  <td className="py-3 px-6 text-sm font-semibold text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800">{t.item_name}</td>
+                  <td className="py-3 px-6 text-sm text-slate-700 dark:text-slate-300 border-r border-slate-200 dark:border-slate-800">{t.quantity % 1 === 0 ? t.quantity : t.quantity.toFixed(2)} {t.item_unit}</td>
+                  {type === 'purchase' && <td className="py-3 px-6 text-sm font-bold text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800">{formatCurrency(t.total_cost ?? 0)}</td>}
+                  {type === 'purchase' && <td className="py-3 px-6 text-sm text-slate-600 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{t.supplier || '—'}</td>}
+                  <td className="py-3 px-6 text-sm text-slate-500 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{t.note || '—'}</td>
+                  {onDelete && (
+                    <td className="py-3 px-6 text-right">
+                      <button
+                        onClick={() => onDelete(t)}
+                        className="text-slate-400 hover:text-red-600 dark:hover:text-red-400 p-2 rounded-lg transition-colors hover:bg-red-50 dark:hover:bg-red-500/10"
+                        title="Delete entry (admin)"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

@@ -1,25 +1,23 @@
 import React from 'react';
 import { formatCurrency } from '../lib/utils';
-import { DEFAULT_RECEIPT_LAYOUT, type ReceiptLayoutConfig } from '../lib/printing';
+import { DEFAULT_DR_LAYOUT, type DeliveryReceiptLayoutConfig } from '../lib/printing';
 
-interface ReceiptItem {
+interface DeliveryReceiptItem {
   id: number;
   name: string;
   price: number;
   quantity: number;
 }
 
-interface ReceiptProps {
+interface DeliveryReceiptProps {
   restaurantName: string;
   restaurantAddress?: string;
   restaurantContact?: string;
   logoUrl?: string;
   orderId: string;
   orderType: string;
-  tableNumber: string;
-  tableCategoryName?: string;
   date: string;
-  items: ReceiptItem[];
+  items: DeliveryReceiptItem[];
   subtotal: number;
   discount: number;
   taxAmount: number;
@@ -27,12 +25,16 @@ interface ReceiptProps {
   totalAmount: number;
   amountReceived: number;
   changeAmount: number;
+  deliveryFee: number;
   cashierName: string;
-  config?: Partial<ReceiptLayoutConfig>;
+  customerName: string | null;
+  customerPhone: string | null;
+  deliveryAddress: string | null;
+  config?: Partial<DeliveryReceiptLayoutConfig>;
 }
 
-export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((props, ref) => {
-  const config: ReceiptLayoutConfig = { ...DEFAULT_RECEIPT_LAYOUT, ...(props.config ?? {}) };
+export const DeliveryReceiptTemplate = React.forwardRef<HTMLDivElement, DeliveryReceiptProps>((props, ref) => {
+  const config: DeliveryReceiptLayoutConfig = { ...DEFAULT_DR_LAYOUT, ...(props.config ?? {}) };
   const zoom = Math.max(0.4, Math.min(2, (config.fontScale / 100) * (config.widthMm / 80)));
   const itemWidthPct = Math.max(20, Math.min(70, config.itemNameWidthPct));
   const otherPct = Math.max(10, (82 - itemWidthPct) / 2);
@@ -68,6 +70,7 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
   const sub = getCurrencyParts(props.subtotal);
   const tax = getCurrencyParts(props.taxAmount);
   const disc = getCurrencyParts(props.discount);
+  const fee = getCurrencyParts(props.deliveryFee);
   const tot = getCurrencyParts(props.totalAmount);
   const cash = getCurrencyParts(props.amountReceived);
   const change = getCurrencyParts(props.changeAmount);
@@ -127,7 +130,6 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
           {config.showOrderNo && <div><span className="font-bold">ORD:</span> {props.orderId}</div>}
           {(config.showDate || config.showTime) && <div><span className="font-bold">DT:</span> {[config.showDate ? datePart : '', config.showTime ? timePart : ''].filter(Boolean).join(' ')}</div>}
           {config.showOrderType && <div><span className="font-bold">TYPE:</span> {props.orderType}</div>}
-          {config.showTable && <div><span className="font-bold">TBL:</span> {props.tableNumber === "0" ? "Walk-in" : (props.tableCategoryName ? `${props.tableCategoryName.trim()} ${props.tableNumber.padStart(2, '0')}` : `Table ${props.tableNumber.padStart(2, '0')}`)}</div>}
           {config.showCashier && <div><span className="font-bold">CASHIER:</span> {props.cashierName}</div>}
         </div>
 
@@ -179,6 +181,15 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
               </div>
             </div>
           )}
+          {props.deliveryFee > 0 && (
+            <div className="flex justify-between px-1">
+              <span className="uppercase">DELIVERY FEE</span>
+              <div className="flex w-[35%] justify-between">
+                <span>{fee.sym}</span>
+                <span>{fee.val}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="border-y border-black px-1 py-0.5 flex justify-between items-center text-[13px] font-black mb-1 mt-1">
@@ -213,7 +224,30 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
           </div>
         )}
 
-        <div className="border-b border-dashed border-black mb-1"></div>
+        {/* Customer details */}
+        {config.showCustomerDetails && (
+          <div className="mb-1">
+            <div className="border-t border-dashed border-black mb-1 mt-1"></div>
+            <div className="text-[11px] px-1 font-black">
+              <div className="flex justify-between">
+                <span className="uppercase">CUSTOMER:</span>
+                <span className="uppercase text-right">{props.customerName || "WALK-IN"}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="uppercase">PHONE:</span>
+                <span className="uppercase text-right">{props.customerPhone || "N/A"}</span>
+              </div>
+              {config.showDeliveryAddress && (
+                <div className="mt-0.5">
+                  <span className="uppercase">ADDRESS:</span>
+                  <p className="uppercase break-words">{props.deliveryAddress || "NO ADDRESS PROVIDED"}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="border-b border-dashed border-black mb-1 mt-1"></div>
 
         {/* Footer */}
         <div className="text-center text-[10px] mt-1 mb-1 flex flex-col items-center">
@@ -231,4 +265,4 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
   );
 });
 
-ReceiptTemplate.displayName = 'ReceiptTemplate';
+DeliveryReceiptTemplate.displayName = 'DeliveryReceiptTemplate';

@@ -32,7 +32,7 @@ export default function SecuritySettingsSection() {
           }
         }
       })
-      .catch((e) => console.log("No security question set yet", e));
+      .catch(() => {});
   }, [user?.username]);
 
   const handleSave = async (e: React.FormEvent) => {

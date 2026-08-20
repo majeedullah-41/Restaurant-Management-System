@@ -8,10 +8,10 @@ import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { useParams, useNavigate } from "react-router-dom";
 import {
-  ArrowLeft, Plus, Minus, Receipt,
+  Plus, Minus,
   X, Trash2,
   Users, Search,
-  Percent, Calculator, FileText, Printer, ChevronDown, ClipboardList, CheckCircle
+  FileText, Printer, ChevronDown, ClipboardList, CheckCircle, Table2, ArrowUpDown
 } from "lucide-react";
 
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -19,6 +19,12 @@ import { AlertModal } from "../components/AlertModal";
 import { useReactToPrint } from "react-to-print";
 import { ReceiptTemplate } from "../components/ReceiptTemplate";
 import { KOTTemplate } from "../components/KOTTemplate";
+import { DeliveryReceiptTemplate } from "../components/DeliveryReceiptTemplate";
+import {
+  loadPrintSettings,
+  DEFAULT_PRINT_SETTINGS,
+  type PrintSettings,
+} from "../lib/printing";
 
 interface MenuItem { id: number; name: string; category_id: number; price: number; is_active: boolean; }
 interface Category { id: number; name: string; }
@@ -38,11 +44,19 @@ export default function POS() {
   // Core Data
   const receiptRef = useRef<HTMLDivElement>(null);
   const kotRef = useRef<HTMLDivElement>(null);
+  const drRef = useRef<HTMLDivElement>(null);
   const [kotPrintItems, setKotPrintItems] = useState<{name: string, printQty: number}[]>([]);
   const kotPrintTriggered = useRef(false);
 
   const triggerReceiptPrint = useReactToPrint({
     contentRef: receiptRef,
+    onAfterPrint: () => {
+      setTimeout(() => navigate(`${basePath}/pos/0`), 500);
+    }
+  });
+
+  const triggerDRPrint = useReactToPrint({
+    contentRef: drRef,
     onAfterPrint: () => {
       setTimeout(() => navigate(`${basePath}/pos/0`), 500);
     }
@@ -55,6 +69,7 @@ export default function POS() {
       try {
         await invoke("mark_kot_printed", { orderId });
         if (orderId) refreshCart(orderId);
+        navigate(`${basePath}/pos/0`);
       } catch (err) {
          console.error(err);
       }
@@ -88,6 +103,7 @@ export default function POS() {
   // State
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [itemSearch, setItemSearch] = useState<string>("");
+  const [sortBy, setSortBy] = useState<'default' | 'price_asc' | 'price_desc' | 'name_asc' | 'name_desc'>('default');
   const [orderId, setOrderId] = useState<number | null>(null);
   const [orderNumber, setOrderNumber] = useState<number | null>(null);
   const [orderType, setOrderType] = useState<string>("Dine-in");
@@ -98,11 +114,13 @@ export default function POS() {
     }
   }, [tableId, routeOrderId]);
 
-  const [view, setView] = useState<'payment' | 'menu'>('payment');
+
   const isCheckingOut = useRef(false);
   const [restaurantName, setRestaurantName] = useState("RMS");
   const [restaurantAddress, setRestaurantAddress] = useState("");
   const [restaurantContact, setRestaurantContact] = useState("");
+  const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
+  const [printSettings, setPrintSettings] = useState<PrintSettings>(DEFAULT_PRINT_SETTINGS);
 
   // Delivery State
   const [deliverySettings, setDeliverySettings] = useState({ base_delivery_fee: 0, free_delivery_threshold: 0 });
@@ -144,10 +162,30 @@ export default function POS() {
     setAlertModal({ isOpen: true, title, message, type });
   };
 
+  // Dine-in Conversion State (walk-in -> Dine-in uses the Table dropdown)
+  const tableSelectTables = useMemo(() =>
+    tables.filter(t => t.status === 'Available' || (tableId !== "0" && tableId && t.table_id === parseInt(tableId))),
+    [tables, tableId]
+  );
+
   const filteredCustomers = useMemo(() => customers.filter(c =>
     c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
     c.phone.includes(customerSearch)
   ), [customers, customerSearch]);
+
+  const sortedMenuItems = useMemo(() => {
+    const filtered = menuItems.filter(item =>
+      (selectedCategoryId === null || item.category_id === selectedCategoryId) &&
+      item.name.toLowerCase().includes(itemSearch.toLowerCase())
+    );
+    switch (sortBy) {
+      case 'price_asc': return [...filtered].sort((a, b) => a.price - b.price);
+      case 'price_desc': return [...filtered].sort((a, b) => b.price - a.price);
+      case 'name_asc': return [...filtered].sort((a, b) => a.name.localeCompare(b.name));
+      case 'name_desc': return [...filtered].sort((a, b) => b.name.localeCompare(a.name));
+      default: return filtered;
+    }
+  }, [menuItems, selectedCategoryId, itemSearch, sortBy]);
 
   const { subtotal, taxAmount, serviceChargeAmount, deliveryFee, effectiveDiscount, totalAmount, maxDiscount } = useMemo(() => {
     const sub = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
@@ -175,11 +213,11 @@ export default function POS() {
   }, [cartItems, taxRate, serviceChargeTypes, serviceChargeRate, orderType, deliverySettings, discount]);
 
 
+  const changeAmount = amountReceived ? Math.max(0, parseFloat(amountReceived) - totalAmount) : 0;
 
   const getQuickCashSuggestions = (total: number) => {
     if (total <= 0) return [100, 500, 1000, 5000];
     const suggestions = new Set<number>();
-    
     const notes = [100, 500, 1000, 5000];
     for (const note of notes) {
       const nextMultiple = Math.ceil(total / note) * note;
@@ -187,22 +225,17 @@ export default function POS() {
         suggestions.add(nextMultiple);
       }
     }
-    
-    // Ensure we always have 4 options by adding combinations if needed
     if (suggestions.size < 4) {
       let current = Math.max(...Array.from(suggestions));
       for (const note of notes) {
-          if (suggestions.size >= 4) break;
-          suggestions.add(current + note);
+        if (suggestions.size >= 4) break;
+        suggestions.add(current + note);
       }
     }
-
     return Array.from(suggestions).slice(0, 4).sort((a, b) => a - b);
   };
-  
-  const quickCashOptions = getQuickCashSuggestions(totalAmount);
 
-  const changeAmount = amountReceived ? Math.max(0, parseFloat(amountReceived) - totalAmount) : 0;
+  const quickCashOptions = getQuickCashSuggestions(totalAmount);
 
   const currentTableInfo = useMemo(
     () => tables.find((t) => t.table_id.toString() === tableId),
@@ -218,7 +251,7 @@ export default function POS() {
       if (e.key === 'F9') {
         e.preventDefault();
         document.getElementById('complete-payment-btn')?.click();
-      } else if (e.key === 'Enter' && view === 'payment') {
+      } else if (e.key === 'Enter') {
         const tag = (document.activeElement?.tagName || '').toLowerCase();
         if (tag !== 'input' && tag !== 'select' && tag !== 'textarea') {
           e.preventDefault();
@@ -234,7 +267,7 @@ export default function POS() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [view]);
+  }, []);
 
   // Load everything on mount
   useEffect(() => {
@@ -261,6 +294,10 @@ export default function POS() {
         setRestaurantName(settings.restaurant_name);
         setRestaurantAddress(settings.address || "");
         setRestaurantContact(settings.contact_number || "");
+        setRestaurantLogo(settings.logo_path || null);
+
+        const pSettings = await loadPrintSettings();
+        setPrintSettings(pSettings);
 
         const delSettings: any = await invoke("get_delivery_settings");
         setDeliverySettings(delSettings);
@@ -277,7 +314,7 @@ export default function POS() {
         }
 
         const history: any = await invoke("get_order_history");
-        setPendingOrders(history.filter((o: any) => o.status === 'Open' || o.status === 'Placed'));
+        setPendingOrders(history.filter((o: any) => o.status === 'Open' || (o.status === 'Placed' && o.order_type !== 'Delivery')));
 
         // Only create/fetch order for physical tables or when resuming an existing order
         if (routeOrderId && routeOrderId !== 'new') {
@@ -322,6 +359,19 @@ export default function POS() {
             setSelectedCustomerId(null);
             setOrderTakerId(selfTaker ? selfTaker.id : null);
             setOrderTakerName(selfTaker ? selfTaker.name : null);
+            // Restore the order taker carried over from a previous screen (e.g., walk-in -> table)
+            try {
+              const savedTaker = sessionStorage.getItem("pos_selected_taker");
+              if (savedTaker) {
+                const parsed = JSON.parse(savedTaker);
+                if (parsed && parsed.id) {
+                  setOrderTakerId(parsed.id);
+                  setOrderTakerName(parsed.name || null);
+                }
+              }
+            } finally {
+              sessionStorage.removeItem("pos_selected_taker");
+            }
             setAmountReceived("");
           }
         } else if (tableId === "0" && (!routeOrderId || routeOrderId === 'new')) {
@@ -384,8 +434,49 @@ export default function POS() {
         showAlert("Error", "Failed to reassign table: " + err);
       }
     } else {
+      // Carry the selected order taker over to the new table screen so it isn't lost on re-init
+      if (orderTakerId && orderTakerName) {
+        sessionStorage.setItem("pos_selected_taker", JSON.stringify({ id: orderTakerId, name: orderTakerName }));
+      }
       navigate(`${basePath}/pos/${newTableId}/new${location.search}`, { replace: true });
     }
+  };
+
+  const handleOrderTypeChange = (newOrderType: string) => {
+    // An order that is already placed must confirm before changing its type.
+    const applyChange = () => {
+      if (tableId !== "0" && tableId) {
+        handleTableChange("0", newOrderType);
+        return;
+      }
+      setOrderType(newOrderType);
+      if (orderId) invoke("update_order_type", { orderId, orderType: newOrderType });
+    };
+
+    if (!orderId) {
+      applyChange();
+      return;
+    }
+
+    const currentType = tableId !== "0" && tableId ? "Dine-in" : orderType;
+    const message =
+      currentType === "Dine-in"
+        ? `This order is a Dine-in order. Changing the order type to ${newOrderType} will move it to walk-in. Are you sure you want to continue?`
+        : `This order has already been placed as ${currentType}. Changing the order type to ${newOrderType} may affect how it is processed. Are you sure you want to continue?`;
+
+    setAlertModal({
+      isOpen: true,
+      title: "Change Order Type",
+      message,
+      type: "warning",
+      buttonText: "Yes, Change",
+      onConfirm: () => {
+        setAlertModal(prev => ({ ...prev, isOpen: false }));
+        applyChange();
+      },
+      secondaryButtonText: "No",
+      onSecondaryAction: () => setAlertModal(prev => ({ ...prev, isOpen: false }))
+    });
   };
 
   const handleAddToCart = async (item: MenuItem) => {
@@ -536,10 +627,19 @@ export default function POS() {
     maximumFractionDigits: 2,
   });
 
+  const formattedOrderNumber = orderNumber
+    ? `#ORD-${orderNumber.toString().padStart(4, '0')}`
+    : `#ORD-${orderId?.toString().padStart(4, '0')}`;
+
   const handlePrint = async () => {
     if (!orderId || cartItems.length === 0) return;
     try {
-      if (triggerReceiptPrint) triggerReceiptPrint();
+      if (orderType === "Delivery") {
+        triggerDRPrint();
+      } else {
+        triggerReceiptPrint();
+      }
+      setTimeout(() => navigate(`${basePath}/pos/0`), 800);
     } catch (err) {
       console.error("Failed to generate receipt:", err);
       showAlert("Print Error", String(err));
@@ -630,7 +730,7 @@ export default function POS() {
   };
 
   const printKotText = async (items: { name: string; printQty: number }[]) => {
-    if (items.length === 0) return;
+    if (!orderId || items.length === 0) return;
     setKotPrintItems(items);
     kotPrintTriggered.current = true;
   };
@@ -693,13 +793,13 @@ export default function POS() {
     <div className="relative w-64 z-50">
       <button 
         onClick={() => setShowPendingDropdown(!showPendingDropdown)}
-        className="w-full flex items-center justify-between bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 px-3 py-2.5 rounded-xl font-bold border border-amber-200 dark:border-amber-500/20 shadow-sm transition-colors hover:bg-amber-100 dark:hover:bg-amber-500/20"
+        className="flex items-center justify-between bg-white dark:bg-[#1E293B] text-orange-500 dark:text-orange-400 px-3 py-1.5 rounded-lg font-bold border border-orange-200 dark:border-orange-900/50 shadow-sm transition-colors hover:bg-orange-50 dark:hover:bg-orange-900/30 text-xs"
       >
-        <div className="flex items-center space-x-2">
-          <ClipboardList size={18} />
+        <div className="flex items-center space-x-2 mr-3">
+          <ClipboardList size={14} className="text-orange-500 dark:text-orange-400" />
           <span>{pendingOrders.length} Pending Orders</span>
         </div>
-        <ChevronDown size={16} />
+        <ChevronDown size={12} className="text-orange-400 dark:text-orange-500" />
       </button>
 
       {showPendingDropdown && (
@@ -722,7 +822,7 @@ export default function POS() {
                 >
                   <div>
                     <span className="font-bold text-slate-900 dark:text-white block">Order #{po.order_number || po.id} - {po.table_number ? (po.table_category_name ? `${po.table_category_name.trim()} ${po.table_number}` : `Table ${po.table_number}`) : 'Walk-in'}</span>
-                    <span className="text-xs text-slate-500">{po.order_type === 'Delivery' ? 'Delivery Pending' : po.status}</span>
+                    <span className="text-xs text-slate-500">{po.order_type || 'Dine-in'} · {po.order_type === 'Delivery' && po.status === 'Placed' ? 'Delivery Pending' : po.status}</span>
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-bold text-slate-900 dark:text-white">{formatCurrency(po.total_price)}</p>
@@ -738,37 +838,39 @@ export default function POS() {
   );
 
   // Render the Menu Overlay
+  const getPastelColor = (id: number) => {
+    const colors = [
+      'bg-blue-100',
+      'bg-amber-100',
+      'bg-emerald-100',
+      'bg-rose-100',
+      'bg-purple-100',
+      'bg-indigo-100'
+    ];
+    return colors[id % colors.length];
+  };
+
   const renderMenuGrid = () => (
-    <div className="flex-1 flex flex-col min-w-0 overflow-hidden p-4 md:p-6 animate-in fade-in zoom-in-95 duration-200">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 mb-4">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 min-w-0">
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Select Items</h2>
-          {pendingOrdersDropdown}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button onClick={() => {
-              if (tableId === "0") navigate(`${basePath}/pos/0/new`);
-              else navigate(`${basePath}/dashboard`);
-            }} 
-            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold shadow-md transition-colors text-sm"
-          >
-            New Order
-          </button>
-          <button onClick={() => setView('payment')} className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg flex items-center font-medium shadow-md transition-colors text-sm">
-            <X size={16} className="mr-1.5" /> Close Menu
-          </button>
-        </div>
+    <div className="flex-[3] min-w-0 flex flex-col overflow-hidden p-3 bg-slate-50 dark:bg-[#0F172A]">
+      <div className="relative flex items-center justify-center gap-3 mb-2.5 shrink-0 z-30">
+        {pendingOrdersDropdown}
+        <button onClick={() => navigate(`${basePath}/pos/0/new`)} 
+          className="px-4 py-1.5 bg-emerald-500 text-white rounded-lg font-bold shadow-sm transition-colors text-xs hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700 whitespace-nowrap"
+        >
+          New Order
+        </button>
       </div>
 
       {/* Item Search */}
-      <div className="relative mb-4 shrink-0">
-        <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+      <div className="relative mb-3 shrink-0">
+        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
         <input
+          id="pos-search-bar"
           type="text"
           value={itemSearch}
           onChange={(e) => setItemSearch(e.target.value)}
-          placeholder="Search items..."
-          className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-lg pl-10 pr-9 py-2 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all shadow-sm"
+          placeholder="Search items (or type barcode...)"
+          className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-8 py-2 focus:outline-none focus:border-[#0066FF] transition-all shadow-sm"
         />
         {itemSearch && (
           <button
@@ -782,64 +884,80 @@ export default function POS() {
       </div>
 
       {/* Categories */}
-      <div className="flex flex-wrap gap-1.5 mb-4 shrink-0">
-        <button
-          onClick={() => setSelectedCategoryId(null)}
-          className={`px-3 py-1.5 text-[13px] rounded-lg whitespace-nowrap font-medium transition-all ${selectedCategoryId === null
-            ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-            : 'bg-white dark:bg-[#1E293B] text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
-            }`}
-        >
-          All Items
-        </button>
-        {categories.map(c => (
+      <div className="flex items-center justify-between mb-3 shrink-0">
+        <div className="flex flex-wrap gap-1.5">
           <button
-            key={c.id}
-            onClick={() => setSelectedCategoryId(c.id)}
-            className={`px-3 py-1.5 text-[13px] rounded-lg whitespace-nowrap font-medium transition-all ${selectedCategoryId === c.id
-              ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-              : 'bg-white dark:bg-[#1E293B] text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
+            onClick={() => setSelectedCategoryId(null)}
+            className={`px-3 py-1.5 text-xs rounded-lg whitespace-nowrap font-bold transition-all ${selectedCategoryId === null
+              ? 'bg-[#0066FF] text-white shadow-md shadow-blue-500/20'
+              : 'bg-white dark:bg-[#1E293B] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
               }`}
           >
-            {c.name}
+            All Items
           </button>
-        ))}
+          {categories.map(c => (
+            <button
+              key={c.id}
+              onClick={() => setSelectedCategoryId(c.id)}
+              className={`px-3 py-1.5 text-xs rounded-lg whitespace-nowrap font-bold transition-all ${selectedCategoryId === c.id
+                ? 'bg-[#0066FF] text-white shadow-md shadow-blue-500/20'
+                : 'bg-white dark:bg-[#1E293B] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
+                }`}
+            >
+              {c.name}
+            </button>
+          ))}
+        </div>
+        <div className="relative shrink-0">
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+            className={`pl-7 pr-6 py-1.5 text-[10px] font-bold rounded-lg focus:outline-none cursor-pointer appearance-none shadow-sm transition-colors border bg-white dark:bg-[#1E293B] text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800`}
+            title="Sort items"
+          >
+            <option value="default">Sort: Default</option>
+            <option value="name_asc">Name A-Z</option>
+            <option value="name_desc">Name Z-A</option>
+            <option value="price_asc">Price: Low to High</option>
+            <option value="price_desc">Price: High to Low</option>
+          </select>
+          <ArrowUpDown size={12} className="absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" />
+          <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" />
+        </div>
       </div>
 
       {/* Items Grid */}
-      <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar pr-2 pb-10">
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
-          {menuItems
-            .filter(item => (selectedCategoryId === null || item.category_id === selectedCategoryId) &&
-              item.name.toLowerCase().includes(itemSearch.toLowerCase()))
+      <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar pr-1.5 pb-3">
+        <div className="grid grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-2">
+          {sortedMenuItems
             .map(item => (
               <button
                 key={item.id}
                 onClick={() => handleAddToCart(item)}
                 disabled={!item.is_active}
-                className={`border p-3 rounded-lg flex flex-col items-start justify-between text-left min-h-[5rem] transition-all duration-200 relative overflow-hidden ${
+                className={`p-2 rounded-xl flex flex-col items-start justify-between text-left h-[86px] transition-all duration-200 relative overflow-hidden ${
                   recentlyAdded.has(item.id)
-                    ? 'ring-2 ring-emerald-500 border-emerald-500 bg-emerald-50 dark:bg-emerald-900/30 scale-95 shadow-inner'
+                    ? 'ring-2 ring-emerald-500 bg-emerald-100 dark:bg-emerald-900/40 scale-95 shadow-inner'
                     : item.is_active 
-                      ? 'bg-white dark:bg-[#1E293B] border-slate-200 dark:border-slate-800 hover:border-blue-500/50 hover:bg-slate-50 dark:hover:bg-slate-800/50 group cursor-pointer shadow-sm hover:shadow-md' 
-                      : 'bg-slate-50 dark:bg-[#0B1120] border-slate-200 dark:border-slate-800 opacity-60 cursor-not-allowed grayscale'
+                      ? `${getPastelColor(item.id)} dark:bg-[#1E293B] hover:shadow-md group cursor-pointer border border-slate-200 dark:border-slate-700 hover:border-[#0066FF]/30` 
+                      : 'bg-slate-100 dark:bg-[#0B1120] opacity-60 cursor-not-allowed grayscale'
                 }`}
               >
                 {recentlyAdded.has(item.id) && (
-                  <div className="absolute top-2 right-2 text-emerald-500 animate-in zoom-in fade-in duration-200">
-                    <CheckCircle size={16} />
+                  <div className="absolute top-2 right-2 text-emerald-600 animate-in zoom-in fade-in duration-200">
+                    <CheckCircle size={14} />
                   </div>
                 )}
-                <h3 className="text-[13px] font-bold text-slate-900 dark:text-slate-200 leading-tight w-full break-words pr-5" title={item.name}>{item.name}</h3>
-                <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800/50 w-full flex items-center justify-between">
+                <h3 className="text-[13.5px] font-bold text-slate-900 dark:text-white leading-tight w-full pr-5 line-clamp-2">{item.name}</h3>
+                <div className="w-full flex items-end justify-between mt-auto">
                   {item.is_active ? (
-                    <span className="text-blue-600 dark:text-blue-400 font-bold text-sm">{formatCurrency(item.price)}</span>
+                    <span className="text-slate-900 dark:text-white font-black text-[13px]">Rs. {item.price.toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
                   ) : (
-                    <span className="text-red-500 font-bold text-[10px] uppercase tracking-wider border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded-full">Out of Stock</span>
+                    <span className="text-red-500 font-bold text-[9px] uppercase tracking-wider bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 rounded-full mb-1">Out of Stock</span>
                   )}
-                  {item.is_active && (
-                    <div className="w-5 h-5 rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Plus size={14} strokeWidth={2.5} />
+                  {item.is_active && !recentlyAdded.has(item.id) && (
+                    <div className="w-5 h-5 rounded-full bg-white/60 dark:bg-white/10 flex items-center justify-center text-slate-700 dark:text-white group-hover:bg-white dark:group-hover:bg-white/20 transition-colors shadow-sm shrink-0">
+                      <Plus size={12} strokeWidth={2.5} />
                     </div>
                   )}
                 </div>
@@ -848,289 +966,121 @@ export default function POS() {
           }
         </div>
       </div>
-    </div>
-  );
-
-  // Render Payment View (The main image reference)
-  const renderPaymentView = () => (
-    <div className="flex-1 flex flex-col min-w-0 p-4 md:p-6 animate-in fade-in zoom-in-95 duration-200 overflow-y-auto custom-scrollbar">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center space-x-6">
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-0.5">Payment</h2>
-            <p className="text-slate-500 dark:text-slate-400 text-xs">Complete the order and receive payment.</p>
-          </div>
-          {pendingOrdersDropdown}
+      
+      {/* Footer Info Banner */}
+      <div className="mt-2.5 flex items-center space-x-2 text-blue-600 dark:text-blue-400 text-xs p-2 bg-blue-50/50 dark:bg-blue-900/10 rounded-lg">
+        <div className="w-4 h-4 rounded-full border border-blue-600 flex items-center justify-center shrink-0">
+          <span className="text-[9px] font-bold font-serif italic">i</span>
         </div>
-        <button onClick={() => {
-            if (tableId === "0") navigate(`${basePath}/pos/0/new`);
-            else navigate(`${basePath}/dashboard`);
-          }} 
-          className="px-4 py-2 bg-[#0066FF] hover:bg-blue-700 text-white rounded-lg font-bold shadow-md transition-colors"
-        >
-          New Order
-        </button>
-      </div>
-
-      {/* Top 4 Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4 shrink-0">
-        <div className="bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex items-center justify-between shadow-sm">
-          <div className="w-10 h-10 rounded-lg bg-[#E6F0FF] dark:bg-blue-900/20 flex items-center justify-center text-[#0066FF] dark:text-blue-400 shrink-0">
-            <FileText size={20} strokeWidth={2.5} />
-          </div>
-          <div className="text-right">
-            <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1 uppercase tracking-wider">Total Amount</p>
-            <p className="text-2xl font-black text-slate-900 dark:text-white leading-none">{formatCurrency(subtotal)}</p>
-          </div>
-        </div>
-        <div className="bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex items-center justify-between shadow-sm">
-          <div className="w-10 h-10 rounded-lg bg-[#D1FAE5] dark:bg-emerald-900/20 flex items-center justify-center text-[#059669] dark:text-emerald-400 shrink-0">
-            <Percent size={18} strokeWidth={2.5} />
-          </div>
-          <div className="text-right">
-            <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-0.5 uppercase tracking-wider">Discount (Rs)</p>
-            <input
-              type="number"
-              value={discount || ''}
-              onChange={e => setDiscount(Math.max(0, Math.min(Number(e.target.value) || 0, maxDiscount)))}
-              placeholder="0"
-              className="w-24 bg-transparent text-right text-xl font-black text-[#059669] border-b-2 border-transparent focus:border-[#059669] focus:outline-none transition-colors"
-            />
-          </div>
-        </div>
-        <div className="bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex items-center justify-between shadow-sm">
-          <div className="w-10 h-10 rounded-lg bg-[#FEF3C7] dark:bg-amber-900/20 flex items-center justify-center text-[#D97706] dark:text-amber-400 shrink-0">
-            <Calculator size={20} strokeWidth={2.5} />
-          </div>
-          <div className="text-right">
-            <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1 uppercase tracking-wider">Tax ({taxRate}%)</p>
-            <p className="text-2xl font-black text-[#D97706]">{formatCurrency(taxAmount)}</p>
-          </div>
-        </div>
-        <div className="bg-[#0066FF] border border-[#0052CC] rounded-xl p-3 flex items-center justify-between shadow-md">
-          <div className="w-10 h-10 rounded-lg bg-white/20 flex items-center justify-center text-white shrink-0">
-            <Receipt size={18} strokeWidth={2.5} />
-          </div>
-          <div className="text-right">
-            <p className="text-[10px] font-bold text-blue-100 mb-0.5 uppercase tracking-wider">Payable Amount</p>
-            <p className="text-xl font-black text-white leading-none">{formatCurrency(totalAmount)}</p>
-          </div>
-        </div>
-      </div>
-      {/* Receive Cash Section */}
-      <div className="bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-800 rounded-xl p-4 mb-4">
-        <h3 className="text-[#0066FF] dark:text-blue-400 font-bold mb-3 flex items-center text-sm">
-          Receive Cash
-        </h3>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-          <div>
-            <div className="bg-[#EEF2FF] dark:bg-blue-900/10 rounded-lg p-3 border border-[#C7D2FE] dark:border-blue-900/30 focus-within:border-[#0066FF] transition-colors relative h-[64px]">
-              <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-0.5">Payable Amount</p>
-              <div className="flex items-center">
-                <input
-                  type="number"
-                  value={totalAmount || ""}
-                  onChange={(e) => {
-                    const raw = parseFloat(e.target.value) || 0;
-                    const val = Math.max(0, Math.min(raw, maxDiscount));
-                    const diff = maxDiscount - val;
-                    setDiscount(diff >= 0 ? diff : 0);
-                  }}
-                  className="bg-transparent text-lg font-bold text-[#0066FF] dark:text-blue-400 w-full focus:outline-none"
-                />
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-white dark:bg-[#0F172A] rounded-lg p-3 border border-slate-300 dark:border-slate-600 focus-within:border-[#0066FF] transition-colors relative h-[64px]">
-            <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-0.5">Amount Received</p>
-            <div className="flex items-center">
-              <input
-                type="number"
-                value={amountReceived}
-                onChange={(e) => setAmountReceived(e.target.value)}
-                placeholder="0.00"
-                className="bg-transparent text-lg font-bold text-slate-900 dark:text-white w-full focus:outline-none"
-              />
-              <div className="text-slate-400"><Calculator size={14} /></div>
-            </div>
-          </div>
-        <div className="bg-[#D1FAE5] dark:bg-emerald-900/10 rounded-lg p-3 border border-[#A7F3D0] dark:border-emerald-900/30 h-[64px]">
-          <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-0.5">Change Amount</p>
-          <div className="text-lg font-bold text-[#059669]">{formatCurrency(changeAmount)}</div>
-        </div>
-      </div>
-
-        {/* Quick Cash Options below the grid */}
-        <div className="flex items-center space-x-4 mb-2">
-          <span className="text-[10px] uppercase font-bold text-slate-400 shrink-0 whitespace-nowrap">Quick Cash:</span>
-          <div className="flex gap-2 overflow-x-auto custom-scrollbar pb-1">
-            <button
-              onClick={() => setAmountReceived(totalAmount > 0 ? String(totalAmount) : "")}
-              className={`px-4 py-1.5 rounded-lg border text-xs font-bold transition-colors shrink-0 whitespace-nowrap ${amountReceived && Math.abs(parseFloat(amountReceived) - totalAmount) < 0.01
-                ? 'bg-blue-50 border-[#0066FF] text-[#0066FF]'
-                : 'bg-white dark:bg-[#0F172A] border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-300'
-                }`}
-            >
-              Exact
-            </button>
-            {quickCashOptions.map(amt => (
-              <button
-                key={amt}
-                onClick={() => setAmountReceived(amt.toString())}
-                className={`px-4 py-1.5 rounded-lg border text-xs font-bold transition-colors shrink-0 whitespace-nowrap tabular-nums ${parseFloat(amountReceived) === amt
-                  ? 'bg-blue-50 border-[#0066FF] text-[#0066FF]'
-                  : 'bg-white dark:bg-[#0F172A] border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-300'
-                  }`}
-              >
-                {amt}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Action Buttons */}
-      <div className="flex space-x-3 mt-auto shrink-0">
-        <button onClick={() => navigate(returnUrl)} className="flex-1 max-w-[150px] bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white rounded-xl py-3 flex items-center justify-center font-bold transition-colors text-sm">
-          <ArrowLeft size={16} className="mr-2" /> Back
-        </button>
-        <button
-          id="complete-payment-btn"
-          onClick={handleCheckout}
-          disabled={posLoading || !orderId || cartItems.length === 0}
-          className="flex-1 bg-[#0066FF] hover:bg-[#0052CC] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl py-3 flex items-center justify-center font-bold transition-colors relative shadow-md text-sm"
-        >
-          Complete Payment
-        </button>
+        <p>Select items from the menu to add to the order. Click on an item in the order summary to modify.</p>
       </div>
     </div>
   );
+
+
 
   return (
     <div className="flex h-screen w-full bg-slate-50 dark:bg-[#0F172A] text-slate-700 dark:text-slate-300 font-sans overflow-hidden">
-      <Sidebar activePage="pos" />
+      <Sidebar activePage="pos" collapsed />
 
       <div className="flex-1 flex flex-col overflow-hidden relative min-w-0">
-        {/* Top Header */}
         <Header 
           title="Point of Sale" 
-          subtitle={view === 'payment' ? 'Process Payment' : 'Create a new order'} 
+          subtitle="Create New Order" 
+          icon={<ClipboardList size={28} />}
+          alwaysShowMenu={true}
         />
 
         {/* Main Workspace */}
         <div className="flex-1 flex overflow-hidden">
           {posLoading ? (
-            <div className="flex-1 flex flex-col items-center justify-center gap-4 min-h-[400px]">
+            <div className="flex-[3] flex flex-col items-center justify-center gap-4 min-h-[400px]">
               <div className="w-10 h-10 border-4 border-blue-200 dark:border-blue-800 border-t-blue-600 dark:border-t-blue-500 rounded-full animate-spin" />
               <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">Loading menu and order data...</p>
             </div>
           ) : (
-            view === 'payment' ? renderPaymentView() : renderMenuGrid()
+            renderMenuGrid()
           )}
 
           {/* Right Sidebar - Order Summary */}
-          <aside className="w-[320px] lg:w-[380px] xl:w-[420px] bg-white dark:bg-[#0B1120] border-l border-slate-200 dark:border-slate-800 flex flex-col z-10 shrink-0">
+          <aside className="flex-[2] min-w-0 bg-white dark:bg-[#0B1120] border-l border-slate-200 dark:border-slate-800 flex flex-col z-10">
             <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col">
-              <div className="p-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-base font-bold text-slate-900 dark:text-white">Order Summary</h2>
-                <div className="flex items-center space-x-2">
-                  {/* Table Dropdown */}
-                  <div className="relative">
-                    <select
-                      value={tableId !== "0" && tableId ? tableId : "Walk-in Customer"}
-                      onChange={(e) => handleTableChange(e.target.value)}
-                      className={`pl-3 pr-7 py-1.5 text-xs font-bold rounded-lg focus:outline-none cursor-pointer appearance-none shadow-sm transition-colors ${tableId !== "0" && tableId ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800/50 text-blue-600 dark:text-blue-400 border' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border border-transparent'}`}
-                    >
-                      <option value="Walk-in Customer" disabled hidden>Walk-in Customer</option>
-                      {tables.map(t => {
-                          if (t.status === 'Available' || t.table_id.toString() === tableId) {
-                            return <option key={t.id} value={t.table_id} className="text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-800">{t.category_name ? `${t.category_name} ${t.table_number.toString().padStart(2, '0')}` : `Table ${t.table_number.toString().padStart(2, '0')}`}</option>
-                          }
-                          return null;
-                      })}
-                    </select>
-                    <ChevronDown size={12} className={`absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none ${tableId !== "0" && tableId ? 'text-blue-500 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'}`} />
+              <div className="p-3 shrink-0">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-bold text-slate-900 dark:text-white">Order Summary</h2>
+                    {orderId ? (
+                      <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700">{formattedOrderNumber}</span>
+                    ) : null}
                   </div>
-                  <div className="relative">
-                    <select
-                      value={tableId === "0" || !tableId ? orderType : "Dine-in"}
-                      onChange={async (e) => {
-                        const newOrderType = e.target.value;
-                        if (tableId !== "0") {
-                          await handleTableChange("0", newOrderType);
-                        } else {
-                          setOrderType(newOrderType);
-                          if (orderId) await invoke("update_order_type", { orderId, orderType: newOrderType });
-                        }
-                      }}
-                      className={`pl-3 pr-7 py-1.5 text-xs font-bold rounded-lg focus:outline-none cursor-pointer appearance-none shadow-sm transition-colors border ${tableId === "0" || !tableId ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800/50 text-blue-600 dark:text-blue-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border-transparent'}`}
-                    >
-                      {tableId !== "0" ? (
-                        <option value="Dine-in" disabled hidden>Dine-in</option>
-                      ) : (
-                        <option value="Dine-in" className="text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-800">Dine-in</option>
-                      )}
-                      <option value="Takeaway" className="text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-800">Takeaway</option>
-                      <option value="Delivery" className="text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-800">Delivery</option>
-                    </select>
-                    <ChevronDown size={12} className={`absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none ${tableId === "0" || !tableId ? 'text-blue-500 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'}`} />
-                  </div>
-                </div>
-              </div>
-
-
-              <div className="flex flex-col space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-slate-500 dark:text-slate-400">
-                      <Users size={18} />
-                    </div>
-                    <div>
-                      {tableId === "0" || !tableId ? (
-                        <p className="text-sm font-bold text-slate-900 dark:text-white">Walk-in Customer</p>
-                      ) : (
-                        <p className="text-sm font-bold text-slate-900 dark:text-white">Dine-in Customer</p>
-                      )}
-                      <p className="text-[10px] text-slate-500">Order #{orderNumber || orderId || '...'} • Type: {orderType}</p>
-                    </div>
-                  </div>
-
-                  <div className="mt-2">
+                  <div className="flex items-center space-x-2">
                     <div className="relative">
-                      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-                        <Users size={14} />
-                      </div>
+                      <select
+                        value={tableId === "0" || !tableId ? orderType : "Dine-in"}
+                        onChange={(e) => handleOrderTypeChange(e.target.value)}
+                        className={`pl-2.5 pr-6 py-1.5 text-[11px] font-bold rounded-lg focus:outline-none cursor-pointer appearance-none shadow-sm transition-colors border bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800/50 dark:hover:bg-blue-900/40`}
+                      >
+                        {tableId !== "0" ? (
+                          <option value="Dine-in" disabled hidden className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white">Dine-in</option>
+                        ) : (
+                          <option value="Dine-in" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white">Dine-in</option>
+                        )}
+                        <option value="Takeaway" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white">Takeaway</option>
+                        <option value="Delivery" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white">Delivery</option>
+                      </select>
+                      <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-blue-500 dark:text-blue-400" />
+                    </div>
+                    <div className="relative">
                       <select
                         value={orderTakerId ? String(orderTakerId) : ""}
                         onChange={(e) => handleOrderTakerChange(e.target.value)}
-                        className="w-full bg-white dark:bg-[#1E293B] text-xs font-bold text-slate-900 dark:text-white border border-slate-200 dark:border-slate-700 rounded-lg py-2 pl-9 pr-8 focus:outline-none focus:border-blue-500 transition-colors cursor-pointer appearance-none shadow-sm"
+                        className={`pl-7 pr-6 py-1.5 text-[11px] font-bold rounded-lg focus:outline-none cursor-pointer appearance-none shadow-sm transition-colors border bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-800/50 dark:hover:bg-purple-900/40 w-[105px]`}
                       >
-                        <option value="">Order Taker</option>
+                        <option value="" className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white">Order Taker</option>
                         {orderTakers.map((t: any) => (
-                          <option key={t.id} value={t.id}>
+                          <option key={t.id} value={t.id} className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
                             {t.name}
                           </option>
                         ))}
                       </select>
-                      <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-                        <ChevronDown size={14} />
-                      </div>
+                      <Users size={12} className="absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none text-purple-500 dark:text-purple-400" />
+                      <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-purple-500 dark:text-purple-400" />
                     </div>
                   </div>
-
                 </div>
 
-                <details className="mt-4 p-3 border border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-900/10 rounded-xl group transition-all shadow-sm">
-                  <summary className="flex justify-between items-center cursor-pointer list-none [&::-webkit-details-marker]:hidden text-[11px] font-bold text-[#0066FF] dark:text-blue-400 uppercase tracking-wider hover:text-blue-700 dark:hover:text-blue-300 transition-colors select-none">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-[10px] uppercase font-bold text-slate-500 shrink-0">Table</span>
+                  <div className="relative flex-1">
+                    <select
+                      value={tableId !== "0" && tableId ? String(tableId) : ""}
+                      onChange={(e) => { if (e.target.value) handleTableChange(e.target.value, "Dine-in"); }}
+                      className={`w-full pl-7 pr-6 py-1.5 text-[11px] font-bold rounded-lg focus:outline-none cursor-pointer appearance-none shadow-sm transition-colors border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800/50 dark:hover:bg-emerald-900/40`}
+                    >
+                      <option value="" disabled className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
+                        {tableId !== "0" && tableId ? "Table Assigned" : orderType === "Dine-in" ? "Select a Table" : "Select a Table (Dine-in)"}
+                      </option>
+                      {tableSelectTables.length === 0 && (
+                        <option value="" disabled className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white">No available tables</option>
+                      )}
+                      {tableSelectTables.map(t => (
+                        <option key={t.id} value={t.table_id} className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
+                          {t.category_name ? `${t.category_name.trim()} ${t.table_number}` : `Table ${t.table_number}`}
+                        </option>
+                      ))}
+                    </select>
+                    <Table2 size={12} className="absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none text-emerald-500 dark:text-emerald-400" />
+                    <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-emerald-500 dark:text-emerald-400" />
+                  </div>
+                </div>
+
+                <details className="p-2.5 border border-rose-200 dark:border-rose-900/30 bg-rose-50/50 dark:bg-rose-900/10 rounded-lg group transition-all shadow-sm mb-3">
+                  <summary className="flex justify-between items-center cursor-pointer list-none [&::-webkit-details-marker]:hidden text-[10px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider hover:text-rose-700 dark:hover:text-rose-300 transition-colors select-none">
                     <span>Customer Info {orderType === "Delivery" && "(Required)"}</span>
-                    <ChevronDown size={14} className="group-open:rotate-180 transition-transform" />
+                    <ChevronDown size={13} className="group-open:rotate-180 transition-transform" />
                   </summary>
-                  <div className="mt-2 space-y-3">
+                  <div className="mt-2 space-y-2">
                     <div className="relative">
-                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1 tracking-wider">Customer Name</label>
                       <input
                         type="text"
                         placeholder="Customer Name (or Search...)"
@@ -1144,10 +1094,10 @@ export default function POS() {
                         }}
                         onFocus={() => setShowCustomerDropdown(true)}
                         onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
-                        className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-lg p-2 pr-8 focus:outline-none focus:border-blue-500 transition-colors cursor-text"
+                        className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-lg p-1.5 pr-7 focus:outline-none focus:border-[#0066FF] transition-colors cursor-text"
                       />
-                      <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500 dark:text-slate-400 mt-2.5">
-                        <ChevronDown size={14} />
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                        <ChevronDown size={12} />
                       </div>
                     </div>
 
@@ -1186,184 +1136,213 @@ export default function POS() {
                         )}
                       </div>
                     )}
-                  </div>
-                  {selectedCustomerId && (() => {
-                    const customer = customers.find(c => c.id === selectedCustomerId);
-                    return customer ? (
-                      <p className="text-[10px] text-blue-400 mt-1">
-                        <Users size={10} className="inline mr-1" />
-                        {customer.visits > 5 ? 'Loyal Customer!' : 'Returning Customer'} ({customer.visits} Visits)
-                      </p>
-                    ) : null;
-                  })()}
 
-                  <div className="mt-3 space-y-3">
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1 tracking-wider">Phone Number</label>
-                        <input
-                        type="text"
-                        value={deliveryPhone}
-                        onChange={(e) => setDeliveryPhone(e.target.value)}
-                        onBlur={() => {
-                          const exactMatch = customers.find(c => c.phone === deliveryPhone.trim());
-                          if (exactMatch && !selectedCustomerId) {
-                            setSelectedCustomerId(exactMatch.id);
-                            setCustomerSearch(exactMatch.name);
-                            if (exactMatch.address) setDeliveryAddress(exactMatch.address);
-                          }
-                          saveDeliveryDraft(undefined, deliveryPhone, undefined);
-                        }}
-                        placeholder="Enter contact number..."
-                        className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-lg p-2 focus:outline-none focus:border-blue-500 transition-colors"
-                      />
-                    </div>
+                    <input
+                      type="text"
+                      value={deliveryPhone}
+                      onChange={(e) => setDeliveryPhone(e.target.value)}
+                      onBlur={() => {
+                        const exactMatch = customers.find(c => c.phone === deliveryPhone.trim());
+                        if (exactMatch && !selectedCustomerId) {
+                          setSelectedCustomerId(exactMatch.id);
+                          setCustomerSearch(exactMatch.name);
+                          if (exactMatch.address) setDeliveryAddress(exactMatch.address);
+                        }
+                        saveDeliveryDraft(undefined, deliveryPhone, undefined);
+                      }}
+                      placeholder="Phone Number"
+                      className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-lg p-1.5 focus:outline-none focus:border-[#0066FF] transition-colors"
+                    />
                     {orderType === "Delivery" && (
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1 tracking-wider">Delivery Address</label>
-                        <textarea
-                          value={deliveryAddress}
-                          onChange={(e) => setDeliveryAddress(e.target.value)}
-                          onBlur={() => saveDeliveryDraft(deliveryAddress, undefined, undefined)}
-                          placeholder="Enter full delivery address..."
-                          className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-lg p-2 focus:outline-none focus:border-blue-500 transition-colors custom-scrollbar"
-                          rows={2}
-                        />
-                      </div>
+                      <textarea
+                        value={deliveryAddress}
+                        onChange={(e) => setDeliveryAddress(e.target.value)}
+                        onBlur={() => saveDeliveryDraft(deliveryAddress, undefined, undefined)}
+                        placeholder="Delivery Address"
+                        className="w-full bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white text-xs border border-slate-200 dark:border-slate-700 rounded-lg p-1.5 focus:outline-none focus:border-[#0066FF] transition-colors custom-scrollbar"
+                        rows={2}
+                      />
                     )}
                   </div>
                 </details>
+
+                <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden bg-white dark:bg-slate-900">
+                  <table className="w-full table-fixed border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 dark:bg-slate-800/50 text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
+                        <th className="w-10 px-2 py-3 text-center font-bold border-r border-slate-200 dark:border-slate-700">#</th>
+                        <th className="px-3 py-3 text-left font-bold border-r border-slate-200 dark:border-slate-700">ITEM</th>
+                        <th className="w-[110px] px-2 py-3 text-center font-bold border-r border-slate-200 dark:border-slate-700">QTY</th>
+                        <th className="w-[90px] px-2 py-3 text-center font-bold border-r border-slate-200 dark:border-slate-700">TOTAL</th>
+                        <th className="w-10 px-2 py-3 text-center font-bold"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cartItems.map((item, index) => (
+                        <tr key={item.id} className="border-b border-slate-200 dark:border-slate-800 last:border-b-0 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                          <td className="px-2 py-3 text-center text-slate-700 dark:text-slate-300 font-bold border-r border-slate-200 dark:border-slate-800">{index + 1}</td>
+                          <td className="px-3 py-3 border-r border-slate-200 dark:border-slate-800">
+                            <span className="block whitespace-nowrap overflow-hidden text-ellipsis text-slate-800 dark:text-slate-200 font-medium" title={item.name}>{item.name}</span>
+                          </td>
+                          <td className="px-2 py-3 border-r border-slate-200 dark:border-slate-800">
+                            <div className="flex items-center justify-center gap-2">
+                              <button
+                                onClick={() => handleDecrementItem(item.item_id)}
+                                className="w-6 h-6 flex items-center justify-center rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                              >
+                                <Minus size={14} />
+                              </button>
+                              <span className="w-4 text-center text-slate-900 dark:text-white font-bold">{item.quantity}</span>
+                              <button
+                                onClick={() => handleIncrementItem(item)}
+                                className="w-6 h-6 flex items-center justify-center rounded bg-blue-50 dark:bg-blue-900/30 text-[#0066FF] dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                              >
+                                <Plus size={14} />
+                              </button>
+                            </div>
+                          </td>
+                          <td className="px-2 py-3 text-center font-bold text-slate-800 dark:text-slate-200 border-r border-slate-200 dark:border-slate-800">Rs. {formatAmount(item.price * item.quantity)}</td>
+                          <td className="px-2 py-3 text-center">
+                            <button
+                              onClick={() => handleDeleteItem(item.item_id)}
+                              className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors inline-flex items-center justify-center"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {cartItems.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-8 text-center text-slate-500 text-sm italic bg-slate-50/50 dark:bg-transparent">
+                            No items added to order yet.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="mt-2.5 space-y-2 px-1">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-600 dark:text-slate-400 font-medium">Subtotal</span>
+                    <span className="text-slate-900 dark:text-white font-bold">{formatCurrency(subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-600 dark:text-slate-400 font-medium">Tax ({taxRate}%)</span>
+                    <span className="text-slate-900 dark:text-white font-bold">{formatCurrency(taxAmount)}</span>
+                  </div>
+                  {serviceChargeAmount > 0 && (
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-600 dark:text-slate-400 font-medium">Service ({serviceChargeRate}%)</span>
+                      <span className="text-slate-900 dark:text-white font-bold">{formatCurrency(serviceChargeAmount)}</span>
+                    </div>
+                  )}
+                  {deliveryFee > 0 && (
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-600 dark:text-slate-400 font-medium">Delivery</span>
+                      <span className="text-slate-900 dark:text-white font-bold">{formatCurrency(deliveryFee)}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
-            {/* Cart Items Area - Inside the scrollable container */}
-            <div className="p-5 flex-1 flex flex-col">
-              <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-                <table className="w-full table-fixed border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-100 dark:bg-slate-800 text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                      <th className="w-6 px-1 py-2 text-center font-bold border-b border-r border-slate-200 dark:border-slate-700 whitespace-nowrap">#</th>
-                      <th className="px-2 py-2 text-left font-bold border-b border-r border-slate-200 dark:border-slate-700">Item</th>
-                      <th className="w-[80px] px-1 py-2 text-center font-bold border-b border-r border-slate-200 dark:border-slate-700 whitespace-nowrap">Qty</th>
-                      <th className="w-[72px] px-2 py-2 text-right font-bold border-b border-r border-slate-200 dark:border-slate-700 whitespace-nowrap">Total</th>
-                      <th className="w-7 px-1 py-2 text-center font-bold border-b border-slate-200 dark:border-slate-700"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cartItems.map((item, index) => (
-                      <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                        <td className="px-1 py-1.5 text-center text-slate-500 border-b border-r border-slate-200 dark:border-slate-700 tabular-nums">{index + 1}</td>
-                        <td className="px-2 py-1.5 border-b border-r border-slate-200 dark:border-slate-700">
-                          <span className="block whitespace-nowrap overflow-hidden text-ellipsis text-slate-900 dark:text-white leading-tight" title={item.name}>{item.name}</span>
-                        </td>
-                        <td className="px-1 py-1.5 border-b border-r border-slate-200 dark:border-slate-700">
-                          <div className="flex items-center justify-center gap-0.5">
-                            <button
-                              onClick={() => handleDecrementItem(item.item_id)}
-                              className="w-6 h-6 flex items-center justify-center rounded-md bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors shrink-0"
-                              title="Decrease quantity"
-                            >
-                              <Minus size={12} strokeWidth={2.5} />
-                            </button>
-                            <span className="w-7 text-center text-slate-900 dark:text-white font-bold tabular-nums">{item.quantity}</span>
-                            <button
-                              onClick={() => handleIncrementItem(item)}
-                              className="w-6 h-6 flex items-center justify-center rounded-md bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors shrink-0"
-                              title="Increase quantity"
-                            >
-                              <Plus size={12} strokeWidth={2.5} />
-                            </button>
-                          </div>
-                        </td>
-                        <td className="px-2 py-1.5 text-right font-bold text-slate-900 dark:text-white border-b border-r border-slate-200 dark:border-slate-700 whitespace-nowrap tabular-nums">{formatAmount(item.price * item.quantity)}</td>
-                        <td className="px-1 py-1.5 text-center border-b border-slate-200 dark:border-slate-700">
-                          <button
-                            onClick={() => handleDeleteItem(item.item_id)}
-                            className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-500/20 rounded transition-colors"
-                            title="Remove item"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                    {cartItems.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="px-3 py-8 text-center text-slate-500 text-xs whitespace-nowrap">
-                          Cart is empty. Click "+ Add Item" to begin.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-slate-100 dark:bg-slate-800">
-                      <td colSpan={3} className="px-2 py-2.5 text-right font-bold uppercase tracking-wider text-[10px] text-slate-700 dark:text-slate-300 border-r border-slate-200 dark:border-slate-700 whitespace-nowrap">Total</td>
-                      <td colSpan={2} className="px-2 py-2.5 text-right font-black text-slate-900 dark:text-white whitespace-nowrap tabular-nums">{formatCurrency(subtotal)}</td>
-                    </tr>
-                  </tfoot>
-                </table>
+            <div className="p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-[#0B1120] shrink-0 space-y-3">
+              <div className="flex justify-between items-center px-1">
+                <span className="text-base font-bold text-slate-900 dark:text-white">Total Amount</span>
+                <span className="text-xl font-black text-slate-900 dark:text-white">{formatCurrency(totalAmount)}</span>
               </div>
 
-              <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800">
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-slate-500 dark:text-slate-400 whitespace-nowrap">Discount</span>
-                  <span className="text-emerald-500 whitespace-nowrap tabular-nums">- {formatCurrency(effectiveDiscount)}</span>
+              <div className="flex items-center space-x-2">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide shrink-0">Quick Cash</span>
+                <div className="flex gap-1.5 overflow-x-auto custom-scrollbar pb-0.5">
+                  {quickCashOptions.map(amt => (
+                    <button
+                      key={amt}
+                      onClick={() => setAmountReceived(amt.toString())}
+                      className={`px-2.5 py-1 rounded-md border text-[11px] font-bold transition-colors shrink-0 tabular-nums ${parseFloat(amountReceived) === amt
+                        ? 'bg-blue-50 border-[#0066FF] text-[#0066FF]'
+                        : 'bg-white dark:bg-[#1E293B] border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 text-slate-700 dark:text-slate-300'
+                        }`}
+                    >
+                      {amt}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setAmountReceived(totalAmount > 0 ? String(totalAmount) : "")}
+                    className={`px-2.5 py-1 rounded-md border text-[11px] font-bold transition-colors shrink-0 ${amountReceived && Math.abs(parseFloat(amountReceived) - totalAmount) < 0.01
+                      ? 'bg-blue-50 border-[#0066FF] text-[#0066FF]'
+                      : 'bg-white dark:bg-[#1E293B] border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 text-slate-700 dark:text-slate-300'
+                      }`}
+                  >
+                    Custom
+                  </button>
                 </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-slate-500 dark:text-slate-400 whitespace-nowrap">Tax ({taxRate}%)</span>
-                  <span className="text-slate-900 dark:text-white whitespace-nowrap tabular-nums">{formatCurrency(taxAmount)}</span>
-                </div>
-                {serviceChargeAmount > 0 && (
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-slate-500 dark:text-slate-400 whitespace-nowrap">Service Charge ({serviceChargeRate}%)</span>
-                    <span className="text-slate-900 dark:text-white whitespace-nowrap tabular-nums">{formatCurrency(serviceChargeAmount)}</span>
-                  </div>
-                )}
-                {deliveryFee > 0 && (
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-slate-500 dark:text-slate-400 whitespace-nowrap">Delivery Fee</span>
-                    <span className="text-slate-900 dark:text-white whitespace-nowrap tabular-nums">{formatCurrency(deliveryFee)}</span>
-                  </div>
-                )}
               </div>
-            </div>
-            </div> {/* Close scrollable container */}
 
-            <div className="px-5 pt-5 pb-8 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0F172A] shrink-0">
+              <div className="grid grid-cols-3 gap-1.5">
+                <div className="bg-white dark:bg-[#1E293B] rounded-lg border border-slate-200 dark:border-slate-700 p-1.5 focus-within:border-[#0066FF] transition-colors relative">
+                  <p className="text-[8px] uppercase font-bold text-slate-500 mb-0.5">Discount (Rs.)</p>
+                  <input
+                    type="number"
+                    value={discount || ''}
+                    onChange={e => setDiscount(Math.max(0, Math.min(Number(e.target.value) || 0, maxDiscount)))}
+                    placeholder="0.00"
+                    className="w-full bg-transparent text-sm font-bold text-slate-900 dark:text-white focus:outline-none"
+                  />
+                </div>
+                <div className="bg-white dark:bg-[#1E293B] rounded-lg border border-slate-200 dark:border-slate-700 p-1.5 focus-within:border-[#0066FF] transition-colors relative">
+                  <p className="text-[8px] uppercase font-bold text-slate-500 mb-0.5">Receive (Rs.)</p>
+                  <input
+                    type="number"
+                    value={amountReceived}
+                    onChange={(e) => setAmountReceived(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full bg-transparent text-sm font-bold text-slate-900 dark:text-white focus:outline-none"
+                  />
+                </div>
+                <div className="bg-[#E6F4EA] dark:bg-emerald-900/20 rounded-lg border-[#A8DAB5] dark:border-emerald-800/50 p-1.5 relative">
+                  <p className="text-[8px] uppercase font-bold text-[#1E8E3E] dark:text-emerald-400 mb-0.5">Change</p>
+                  <div className="text-sm font-bold text-[#1E8E3E] dark:text-emerald-400">{formatCurrency(changeAmount)}</div>
+                </div>
+              </div>
+
               <button
-                onClick={() => setView('menu')}
-                className="w-full py-2.5 mb-4 border-2 border-dashed border-[#CCE0FF] dark:border-[#0066FF]/30 text-[#0066FF] dark:text-[#3385FF] hover:bg-[#F0F5FF] dark:hover:bg-[#0066FF]/10 rounded-xl text-sm flex items-center justify-center transition-colors font-bold"
+                id="complete-payment-btn"
+                onClick={handleCheckout}
+                disabled={posLoading || !orderId || cartItems.length === 0}
+                className="w-full bg-[#0066FF] hover:bg-[#0052CC] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg py-3 flex items-center justify-center font-bold text-sm shadow-lg transition-colors"
               >
-                <Plus size={16} className="mr-2" strokeWidth={2.5} /> Add Item
+                Complete Payment
               </button>
 
-              <div className="flex justify-between items-end mb-4">
-                <span className="text-sm font-bold text-slate-700 dark:text-slate-300">Total Amount</span>
-                <span className="text-2xl font-bold text-slate-900 dark:text-white">{formatCurrency(totalAmount)}</span>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 gap-1.5">
                 <button
                   onClick={handlePrintKOT}
-                  className="py-2.5 bg-[#002B5E] hover:bg-[#001D40] text-white rounded-lg text-[11px] font-bold uppercase transition-colors flex flex-col items-center justify-center space-y-1 shadow-sm"
+                  disabled={!orderId || cartItems.length === 0}
+                  className="py-2 bg-white dark:bg-[#1E293B] border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 disabled:opacity-50 rounded-md text-[9px] font-bold uppercase transition-colors flex items-center justify-center space-x-1 shadow-sm"
                 >
-                  <Printer size={16} strokeWidth={2} />
-                  <span>Print KOT</span>
+                  <Printer size={12} strokeWidth={2.5} />
+                  <span>PRINT KOT</span>
                 </button>
                 <button
                   id="draft-btn"
                   onClick={() => navigate(`${basePath}/pos/0`)}
-                  className="py-2.5 bg-[#E6F0FF] hover:bg-[#D4E4FF] text-[#0066FF] rounded-lg text-[11px] font-bold uppercase transition-colors flex flex-col items-center justify-center space-y-1 shadow-sm"
+                  disabled={!orderId}
+                  className="py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-[#0066FF] dark:text-blue-400 disabled:opacity-50 rounded-md text-[9px] font-bold uppercase transition-colors flex items-center justify-center space-x-1 shadow-sm"
                 >
-                  <FileText size={16} strokeWidth={2} />
-                  <span>Hold</span>
+                  <FileText size={12} strokeWidth={2.5} />
+                  <span>HOLD ORDER</span>
                 </button>
                 <button
                   id="cancel-btn"
                   onClick={handleCancelOrder}
-                  className="py-2.5 bg-[#FEE2E2] hover:bg-[#FCD5D5] text-[#EF4444] rounded-lg text-[11px] font-bold uppercase transition-colors flex flex-col items-center justify-center space-y-1 shadow-sm"
+                  disabled={!orderId}
+                  className="py-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 disabled:opacity-50 rounded-md text-[9px] font-bold uppercase transition-colors flex items-center justify-center space-x-1 shadow-sm"
                 >
-                  <X size={16} strokeWidth={2.5} />
-                  <span>Cancel</span>
+                  <X size={12} strokeWidth={3} />
+                  <span>CANCEL ORDER</span>
                 </button>
               </div>
             </div>
@@ -1372,10 +1351,12 @@ export default function POS() {
       </div>
 
       <style>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
-        .custom-scrollbar:hover::-webkit-scrollbar-thumb { background: #475569; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 6px; }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; }
+        .custom-scrollbar:hover::-webkit-scrollbar-thumb { background: #94A3B8; }
+        .dark .custom-scrollbar:hover::-webkit-scrollbar-thumb { background: #475569; }
       `}</style>
 
       <div style={{ display: "none" }}>
@@ -1383,7 +1364,8 @@ export default function POS() {
           ref={receiptRef}
           restaurantName={restaurantName}
           restaurantAddress={restaurantAddress}
-          orderId={orderNumber ? `#ORD-${orderNumber.toString().padStart(4, '0')}` : `#ORD-${orderId?.toString().padStart(4, '0')}`}
+          logoUrl={restaurantLogo || undefined}
+          orderId={formattedOrderNumber}
           orderType={orderType}
           tableNumber={actualTableNumber}
           tableCategoryName={tableCategoryName}
@@ -1398,10 +1380,11 @@ export default function POS() {
           changeAmount={parseFloat(amountReceived) ? parseFloat(amountReceived) - totalAmount : 0}
           cashierName={displayName}
           restaurantContact={restaurantContact}
+          config={printSettings.receiptLayout}
         />
         <KOTTemplate
           ref={kotRef}
-          orderId={orderNumber ? `#ORD-${orderNumber.toString().padStart(4, '0')}` : `#ORD-${orderId?.toString().padStart(4, '0')}`}
+          orderId={formattedOrderNumber}
           orderType={orderType}
           tableNumber={actualTableNumber}
           tableCategoryName={tableCategoryName}
@@ -1409,6 +1392,34 @@ export default function POS() {
           items={kotPrintItems}
           cashierName={displayName}
           orderTakerName={orderTakerName || undefined}
+          restaurantName={restaurantName}
+          restaurantContact={restaurantContact}
+          logoUrl={restaurantLogo || undefined}
+          config={printSettings.kotLayout}
+        />
+        <DeliveryReceiptTemplate
+          ref={drRef}
+          restaurantName={restaurantName}
+          restaurantAddress={restaurantAddress}
+          restaurantContact={restaurantContact}
+          logoUrl={restaurantLogo || undefined}
+          orderId={formattedOrderNumber}
+          orderType={orderType}
+          date={new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString()}
+          items={cartItems}
+          subtotal={subtotal}
+          discount={effectiveDiscount}
+          taxAmount={taxAmount}
+          taxRate={taxRate}
+          totalAmount={totalAmount}
+          amountReceived={parseFloat(amountReceived) || totalAmount}
+          changeAmount={parseFloat(amountReceived) ? parseFloat(amountReceived) - totalAmount : 0}
+          deliveryFee={deliveryFee}
+          cashierName={displayName}
+          customerName={selectedCustomerId ? customers.find(c => c.id === selectedCustomerId)?.name || null : customerSearch.trim() || null}
+          customerPhone={deliveryPhone.trim() || null}
+          deliveryAddress={deliveryAddress.trim() || null}
+          config={printSettings.deliveryReceiptLayout}
         />
       </div>
 

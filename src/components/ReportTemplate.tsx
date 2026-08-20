@@ -23,6 +23,8 @@ interface DetailedPayout {
     staff_name: string;
     date: string;
     amount: number;
+    payout_type: string;
+    note?: string | null;
 }
 
 interface DailyTrend {
@@ -287,6 +289,8 @@ export const ReportTemplate = React.forwardRef<HTMLDivElement, ReportTemplatePro
                   <th className="p-3 font-semibold rounded-tl-lg">ID</th>
                   <th className="p-3 font-semibold">Date</th>
                   <th className="p-3 font-semibold">Staff Name</th>
+                  <th className="p-3 font-semibold">Type</th>
+                  <th className="p-3 font-semibold">Details</th>
                   <th className="p-3 font-semibold text-right rounded-tr-lg">Amount</th>
                 </tr>
               </thead>
@@ -296,6 +300,8 @@ export const ReportTemplate = React.forwardRef<HTMLDivElement, ReportTemplatePro
                     <td className="p-3 font-medium">#{payout.id}</td>
                     <td className="p-3 text-slate-600">{payout.date}</td>
                     <td className="p-3 text-slate-600">{payout.staff_name}</td>
+                    <td className="p-3 text-slate-600">{payout.payout_type === 'Advance' ? 'Advance' : 'Salary'}</td>
+                    <td className="p-3 text-slate-600">{payout.payout_type === 'Advance' ? (payout.note || '-') : '-'}</td>
                     <td className="p-3 text-right font-medium">{formatCurrency(payout.amount)}</td>
                   </tr>
                 ))}

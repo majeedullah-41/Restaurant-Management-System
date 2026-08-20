@@ -1,5 +1,3 @@
-#![allow(dead_code, unused_variables, non_snake_case)]
-
 use rusqlite::{Connection, OpenFlags, Result};
 use serde::Serialize;
 use std::ops::{Deref, DerefMut};
@@ -216,7 +214,7 @@ pub fn init_db() -> Result<()> {
 /// monotonic, idempotent migration sequence: it runs exactly once per database
 /// (`PRAGMA user_version`), so the expensive per-row backfills no longer re-run
 /// on every app start or backup command.
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 3;
 
 pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
     // Only run the migration suite once per database. `user_version` starts at
@@ -588,6 +586,14 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
         [],
     ).ok();
 
+    // Clean up orphaned inventory-purchase expenses whose linked inventory
+    // transaction no longer exists (e.g. items deleted before cascading existed).
+    conn.execute(
+        "DELETE FROM expenses WHERE reference_type = 'inventory_purchase'
+         AND reference_id NOT IN (SELECT id FROM inventory_transactions)",
+        [],
+    ).ok();
+
     // Backfill payroll_records from the legacy salary_payouts table so existing
     // paid history remains visible and reproducible under the new structure.
     // Group legacy payouts by (staff, month) — the old system recorded one
@@ -685,6 +691,34 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
         }
     }
 
+    // 13. Printing system configuration. Single-row table holding per-document
+    //     printer selection, copies, print mode, and receipt/KOT/delivery/
+    //     delivery-receipt layout JSON blobs (see print::PrintSettings).
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS print_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            receipt_printer TEXT,
+            kot_printer TEXT,
+            delivery_printer TEXT,
+            delivery_receipt_printer TEXT,
+            receipt_copies INTEGER NOT NULL DEFAULT 1,
+            kot_copies INTEGER NOT NULL DEFAULT 1,
+            delivery_copies INTEGER NOT NULL DEFAULT 1,
+            delivery_receipt_copies INTEGER NOT NULL DEFAULT 1,
+            print_mode TEXT NOT NULL DEFAULT 'auto',
+            receipt_layout TEXT,
+            kot_layout TEXT,
+            delivery_layout TEXT,
+            delivery_receipt_layout TEXT
+        )",
+        [],
+    ).ok();
+    conn.execute("INSERT OR IGNORE INTO print_settings (id) VALUES (1)", []).ok();
+    // Delivery receipt columns for databases created before SCHEMA_VERSION 3.
+    conn.execute("ALTER TABLE print_settings ADD COLUMN delivery_receipt_printer TEXT", []).ok();
+    conn.execute("ALTER TABLE print_settings ADD COLUMN delivery_receipt_copies INTEGER NOT NULL DEFAULT 1", []).ok();
+    conn.execute("ALTER TABLE print_settings ADD COLUMN delivery_receipt_layout TEXT", []).ok();
+
     // Persist the completed migration state so the suite does not re-run.
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|e| format!("Failed to record schema version: {}", e))?;
@@ -743,7 +777,7 @@ pub fn update_user_profile(
     if matches.len() > 1 {
         return Err("Multiple accounts share this username. Please contact an administrator to resolve the duplicate.".to_string());
     }
-    let (user_id, db_password, db_username) = matches.remove(0);
+    let (user_id, db_password, _db_username) = matches.remove(0);
 
     // Check if new_username is already taken by another user (case-insensitive).
     // Exclude by id rather than by raw username so a case-only rename of the
@@ -1173,6 +1207,9 @@ pub fn add_category(name: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn add_menu_item(name: String, category_id: i32, price: f64) -> Result<String, String> {
+    if !price.is_finite() || price <= 0.0 {
+        return Err("Price must be a positive number.".into());
+    }
     let conn = get_conn()?;
     conn.execute(
         "INSERT INTO menu_items (name, category_id, price) VALUES (?1, ?2, ?3)",
@@ -1185,7 +1222,19 @@ pub fn add_menu_item(name: String, category_id: i32, price: f64) -> Result<Strin
 #[tauri::command]
 pub fn delete_category(id: i32) -> Result<String, String> {
     let conn = get_conn()?;
-    // Note: In a real production app, you'd want to handle menu items linked to this category first!
+    // Never leave orphaned menu items behind: a category that still has items
+    // must be emptied first, otherwise those items disappear from every
+    // category listing but remain purchasable in the POS (shown as "Unknown").
+    let item_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM menu_items WHERE category_id = ?1",
+        [&id], |row| row.get(0)
+    ).map_err(|e| e.to_string())?;
+    if item_count > 0 {
+        return Err(format!(
+            "Cannot delete this category: it still has {} menu item(s). Delete or move them to another category first.",
+            item_count
+        ));
+    }
     conn.execute("DELETE FROM categories WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
     Ok("Category deleted".into())
 }
@@ -1209,6 +1258,9 @@ pub fn delete_menu_item(id: i32) -> Result<String, String> {
 #[tauri::command]
 #[allow(non_snake_case)]
 pub fn update_menu_item(id: i32, name: String, categoryId: i32, price: f64) -> Result<String, String> {
+    if !price.is_finite() || price <= 0.0 {
+        return Err("Price must be a positive number.".into());
+    }
     let conn = get_conn()?;
     conn.execute(
         "UPDATE menu_items SET name = ?1, category_id = ?2, price = ?3 WHERE id = ?4",
@@ -1275,6 +1327,13 @@ pub fn update_settings(name: String, address: Option<String>, logo_path: Option<
     let frequency = order_reset_frequency.as_deref().unwrap_or("Daily").to_string();
     if !["Daily", "Weekly", "Monthly", "Yearly", "Never"].contains(&frequency.as_str()) {
         return Err("Invalid order reset frequency.".into());
+    }
+
+    if !tax_rate.is_finite() || tax_rate < 0.0 {
+        return Err("Tax rate cannot be negative.".into());
+    }
+    if !service_charge_rate.is_finite() || service_charge_rate < 0.0 {
+        return Err("Service charge rate cannot be negative.".into());
     }
 
     conn.execute(
@@ -1550,14 +1609,14 @@ pub fn checkout_order(
     table_id: i32, 
     order_type: String, 
     customer_id: Option<i32>,
-    subtotal: f64,
-    tax_amount: f64,
+    _subtotal: f64,
+    _tax_amount: f64,
     discount_amount: f64,
     amount_received: f64,
     change_due: f64,
     cashier_name: String,
     order_note: String,
-    service_charge_amount: f64
+    _service_charge_amount: f64
 ) -> Result<String, String> {
     let mut conn_guard = get_conn()?;
     let conn = &*conn_guard;
@@ -1771,39 +1830,9 @@ fn sanitize_html(html: &str) -> String {
 }
 
 #[tauri::command]
-pub async fn print_receipt_text(text: String) -> Result<String, String> {
-    let path = std::env::temp_dir().join("temp_receipt.txt");
-    std::fs::write(&path, &text).map_err(|e| e.to_string())?;
-    
-    // Use powershell to send the text directly to the default printer
-    // We use spawn() instead of output() so it doesn't block if the printer
-    // is a PDF printer waiting for a 'Save As' dialog.
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        let mut cmd = std::process::Command::new("powershell");
-        cmd.args(&[
-            "-WindowStyle", "Hidden",
-            "-Command",
-            &format!("Get-Content '{}' | Out-Printer", path.display())
-        ]);
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd.spawn().map_err(|e| format!("Failed to spawn print command: {}", e))?;
-    }
-    
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::process::Command::new("powershell")
-            .args(&[
-                "-WindowStyle", "Hidden",
-                "-Command",
-                &format!("Get-Content '{}' | Out-Printer", path.display())
-            ])
-            .spawn()
-            .map_err(|e| format!("Failed to spawn print command: {}", e))?;
-    }
-
+pub async fn print_receipt_text(text: String, printer_name: Option<String>, copies: Option<i32>) -> Result<String, String> {
+    let copies = copies.unwrap_or(1).max(1) as u32;
+    crate::print::print_text(printer_name.as_deref(), &text, copies)?;
     Ok("Print job sent".to_string())
 }
 
@@ -2244,26 +2273,34 @@ pub fn create_walkin_order(
     // Idempotency guard: if a walk-in (table_id = 0) order is already open,
     // return it instead of creating a duplicate. This prevents the frontend
     // lazy-creation race (two rapid clicks creating two orders) and stray
-    // orphaned Open orders.
+    // orphaned Open orders. Only an EMPTY order is reused: an open order that
+    // already has items is a pending/held order the user is intentionally
+    // leaving as-is, so starting a new order must create a fresh one.
     if let Ok(existing) = get_open_walkin_order(&conn) {
-        conn.execute(
-            "UPDATE orders SET order_type = ?1 WHERE id = ?2",
-            rusqlite::params![order_type, existing.id],
-        ).ok();
-        return Ok(ActiveOrder {
-            id: existing.id,
-            order_number: existing.order_number,
-            table_number: 0,
-            table_category_name: None,
-            status: "Open".to_string(),
-            discount_amount: existing.discount_amount,
-            order_type: Some(order_type),
-            customer_id: existing.customer_id,
-            customer_phone: existing.customer_phone,
-            delivery_address: existing.delivery_address,
-            order_taker_id: existing.order_taker_id,
-            order_taker_name: existing.order_taker_name,
-        });
+        let item_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM order_items WHERE order_id = ?1",
+            [&existing.id], |row| row.get(0)
+        ).unwrap_or(0);
+        if item_count == 0 {
+            conn.execute(
+                "UPDATE orders SET order_type = ?1 WHERE id = ?2",
+                rusqlite::params![order_type, existing.id],
+            ).ok();
+            return Ok(ActiveOrder {
+                id: existing.id,
+                order_number: existing.order_number,
+                table_number: 0,
+                table_category_name: None,
+                status: "Open".to_string(),
+                discount_amount: existing.discount_amount,
+                order_type: Some(order_type),
+                customer_id: existing.customer_id,
+                customer_phone: existing.customer_phone,
+                delivery_address: existing.delivery_address,
+                order_taker_id: existing.order_taker_id,
+                order_taker_name: existing.order_taker_name,
+            });
+        }
     }
 
     let frequency: String = conn
@@ -2588,11 +2625,17 @@ pub fn delete_staff(id: i32) -> Result<String, String> {
     let mut conn_guard = get_conn()?;
     let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
 
-    // Delete dependent rows first (attendance has an FK to staff; payouts and
-    // advances are orphan-prone) so the staff row can be removed atomically.
+    // Delete dependent rows first (attendance has an FK to staff; payouts,
+    // advances and payroll records are orphan-prone) so the staff row can be
+    // removed atomically. Linked expense entries for this staff's advances and
+    // payouts are removed too, otherwise the expenses ledger would keep rows
+    // pointing at financial records that no longer exist.
+    tx.execute("DELETE FROM expenses WHERE reference_type = 'salary_advance' AND reference_id IN (SELECT id FROM advance_salaries WHERE staff_id = ?1)", [&id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM expenses WHERE reference_type = 'payroll' AND reference_id IN (SELECT id FROM payroll_records WHERE staff_id = ?1)", [&id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM staff_attendance WHERE staff_id = ?1", [&id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM salary_payouts WHERE staff_id = ?1", [&id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM advance_salaries WHERE staff_id = ?1", [&id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM payroll_records WHERE staff_id = ?1", [&id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM staff WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
 
     tx.commit().map_err(|e| e.to_string())?;
@@ -2825,6 +2868,7 @@ pub struct Expense {
     pub date: String,
     pub category: String,
     pub note: Option<String>,
+    pub reference_type: Option<String>,
 }
 
 #[tauri::command]
@@ -2842,7 +2886,7 @@ pub fn get_expenses() -> Result<Vec<Expense>, String> {
         )", []
     ).map_err(|e| e.to_string())?;
 
-    let mut stmt = conn.prepare("SELECT id, amount, date, category, note FROM expenses ORDER BY date DESC, id DESC").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT id, amount, date, category, note, reference_type FROM expenses ORDER BY date DESC, id DESC").map_err(|e| e.to_string())?;
     let expense_iter = stmt.query_map([], |row| {
         Ok(Expense {
             id: row.get(0)?,
@@ -2850,6 +2894,7 @@ pub fn get_expenses() -> Result<Vec<Expense>, String> {
             date: row.get(2)?,
             category: row.get(3)?,
             note: row.get(4).unwrap_or(None),
+            reference_type: row.get(5).unwrap_or(None),
         })
     }).map_err(|e| e.to_string())?;
 
@@ -2893,6 +2938,13 @@ pub fn delete_expense(id: i32) -> Result<String, String> {
 
     if let Ok((amount, date, _note, reference_type, reference_id)) = expense_data {
         match (reference_type.as_deref(), reference_id) {
+            // Inventory purchases are managed from the Inventory page. Deleting
+            // them here would silently desync the stock ledger, so refuse and
+            // ask the user to remove the entry from Inventory instead (which
+            // deletes this expense automatically).
+            (Some("inventory_purchase"), _) => {
+                return Err("This expense is linked to an inventory purchase. Please delete the purchase from the Inventory page first — it will be removed from Expenses automatically.".into());
+            }
             // Advance salary: delete the matching advance so it is no longer
             // shown as outstanding / deductible on the next payroll.
             (Some("salary_advance"), Some(advance_id)) => {
@@ -3159,7 +3211,7 @@ pub fn get_recent_expenses() -> Result<Vec<Expense>, String> {
         )", []
     ).map_err(|e| e.to_string())?;
 
-    let mut stmt = conn.prepare("SELECT id, amount, date, category, note FROM expenses ORDER BY date DESC, id DESC LIMIT 5").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT id, amount, date, category, note, reference_type FROM expenses ORDER BY date DESC, id DESC LIMIT 5").map_err(|e| e.to_string())?;
     let expense_iter = stmt.query_map([], |row| {
         Ok(Expense {
             id: row.get(0)?,
@@ -3167,6 +3219,7 @@ pub fn get_recent_expenses() -> Result<Vec<Expense>, String> {
             date: row.get(2)?,
             category: row.get(3)?,
             note: row.get(4).unwrap_or(None),
+            reference_type: row.get(5).unwrap_or(None),
         })
     }).map_err(|e| e.to_string())?;
 
@@ -3667,6 +3720,21 @@ pub fn process_batch_payout(payouts: Vec<BatchPayoutEntry>, payout_date: String)
     Ok(format!("Processed {} payouts totalling {:.2}", count, total_paid))
 }
 
+/// Recomputes `advance_deduction` and `net_pay` on a staff member's Pending
+/// payroll records to match their current outstanding advance balance, capped
+/// at what each period's salary can absorb.
+fn resync_pending_advances(tx: &rusqlite::Transaction, staff_id: i32) -> std::result::Result<(), String> {
+    tx.execute(
+        "UPDATE payroll_records SET
+            advance_deduction = MAX(0, MIN(base_salary + bonus - deduction, COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = ?1), 0))),
+            net_pay = MAX(0, base_salary + bonus - deduction - MAX(0, MIN(base_salary + bonus - deduction, COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = ?1), 0)))),
+            updated_at = datetime('now', 'localtime')
+         WHERE staff_id = ?1 AND status = 'Pending'",
+        [&staff_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn pay_advance_salary(staff_id: i32, amount: f64, date: String, note: String, staff_name: String) -> Result<String, String> {
     let mut conn_guard = get_conn()?;
@@ -3686,7 +3754,12 @@ pub fn pay_advance_salary(staff_id: i32, amount: f64, date: String, note: String
         "INSERT INTO expenses (amount, date, category, note, reference_type, reference_id) VALUES (?1, ?2, 'Salaries', ?3, 'salary_advance', ?4)",
         rusqlite::params![amount, date, format!("Advance Salary: {} - {}", staff_name, note), advance_id]
     ).map_err(|e| e.to_string())?;
-    
+
+    // Resync from the actual outstanding balance so every Pending record of
+    // this staff member reflects the new advance correctly (and never stores a
+    // negative deduction).
+    resync_pending_advances(&tx, staff_id)?;
+
     tx.commit().map_err(|e| e.to_string())?;
     
     Ok("Advance salary recorded successfully".to_string())
@@ -3734,6 +3807,10 @@ pub fn update_advance(advance_id: i32, amount: f64, note: Option<String>) -> Res
         rusqlite::params![amount, format!("Advance Salary: {} - {}", staff_name, new_note), advance_id],
     ).map_err(|e| e.to_string())?;
 
+    // Resync Pending payroll records so their advance deduction / net pay match
+    // the corrected outstanding balance.
+    resync_pending_advances(&tx, staff_id)?;
+
     tx.commit().map_err(|e| e.to_string())?;
     Ok("Advance updated successfully".to_string())
 }
@@ -3746,18 +3823,25 @@ pub fn delete_advance(advance_id: i32) -> Result<String, String> {
     let mut conn_guard = get_conn()?;
     let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
 
-    let deleted = tx.execute(
+    let staff_id: i32 = tx.query_row(
+        "SELECT staff_id FROM advance_salaries WHERE id = ?1",
+        [&advance_id],
+        |row| row.get(0),
+    ).map_err(|_| "Advance not found.".to_string())?;
+
+    tx.execute(
         "DELETE FROM advance_salaries WHERE id = ?1",
         [&advance_id],
     ).map_err(|e| e.to_string())?;
-    if deleted == 0 {
-        return Err("Advance not found.".to_string());
-    }
 
     tx.execute(
         "DELETE FROM expenses WHERE reference_type = 'salary_advance' AND reference_id = ?1",
         [&advance_id],
     ).map_err(|e| e.to_string())?;
+
+    // Remove the deleted advance from any Pending payroll records so future
+    // payrolls stop deducting it.
+    resync_pending_advances(&tx, staff_id)?;
 
     tx.commit().map_err(|e| e.to_string())?;
     Ok("Advance deleted successfully".to_string())
@@ -3875,12 +3959,18 @@ pub fn get_payroll_period(start_date: String, end_date: String) -> Result<Payrol
         rusqlite::params![&start_date, &end_date],
     ).map_err(|e| e.to_string())?;
 
-    // Recompute gross/net for pending records from their stored split so the
-    // table always reflects the latest saved adjustments.
+    // Recompute gross/net for pending records from their stored split, and
+    // resync advance_deduction against the CURRENT outstanding advance balance
+    // so records created before advances existed (or by an older build) still
+    // recover the advance instead of paying it out in full. The deduction is
+    // capped at what this period's salary can absorb; the rest carries over.
     tx.execute(
         "UPDATE payroll_records SET
+            advance_deduction = MAX(0, MIN(base_salary + bonus - deduction,
+                COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = payroll_records.staff_id), 0))),
             gross_pay = base_salary + bonus,
-            net_pay = base_salary + bonus - deduction - advance_deduction,
+            net_pay = MAX(0, base_salary + bonus - deduction - MAX(0, MIN(base_salary + bonus - deduction,
+                COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = payroll_records.staff_id), 0)))),
             updated_at = datetime('now', 'localtime')
          WHERE start_date = ?1 AND end_date = ?2 AND status = 'Pending'",
         rusqlite::params![&start_date, &end_date],
@@ -3897,7 +3987,7 @@ pub fn get_payroll_period(start_date: String, end_date: String) -> Result<Payrol
     }
 
     let total_staff = rows.len() as i32;
-    let total_gross: f64 = rows.iter().map(|r| r.base_salary).sum();
+    let total_gross: f64 = rows.iter().map(|r| r.gross_pay).sum();
     let advance_outstanding: f64 = rows.iter().map(|r| r.advance_balance).sum();
     let total_paid: f64 = rows.iter().filter(|r| r.status == "Paid").map(|r| r.net_pay).sum();
     let total_remaining: f64 = rows.iter().filter(|r| r.status == "Pending").map(|r| r.net_pay).sum();
@@ -3950,14 +4040,19 @@ pub fn update_payroll_record(record_id: i32, bonus: f64, deduction: f64, advance
         ));
     }
 
-    let net_pay = base_salary + bonus - deduction - advance_deduction;
-    if net_pay < -0.001 {
+    // Manual deductions must not exceed this period's gross pay.
+    let before_advance = base_salary + bonus - deduction;
+    if before_advance < -0.001 {
         return Err(format!(
-            "Net pay would be negative ({:.2}). Reduce the deduction or advance deduction.",
-            net_pay
+            "Deductions of {:.2} exceed this period's gross pay of {:.2}.",
+            deduction, base_salary + bonus
         ));
     }
-    let net_pay = net_pay.max(0.0);
+
+    // Cap the advance recovery at what this period's salary can absorb; the
+    // remaining balance carries over to future payrolls.
+    let advance_deduction = advance_deduction.min(before_advance);
+    let net_pay = (base_salary + bonus - deduction - advance_deduction).max(0.0);
 
     tx.execute(
         "UPDATE payroll_records SET bonus = ?1, deduction = ?2, advance_deduction = ?3,
@@ -4046,12 +4141,20 @@ pub fn process_payroll_batch(start_date: String, end_date: String, record_ids: O
     let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
 
     // Honor the UI selection: filter the pending records to the chosen ids.
-    let record_filter = match &record_ids {
-        Some(ids) if !ids.is_empty() => {
-            let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-            format!(" AND pr.id IN ({})", placeholders)
-        }
-        _ => String::new(),
+    let filtered_ids: Vec<i32> = record_ids
+        .as_ref()
+        .map(|ids| ids.iter().copied().filter(|id| *id > 0).collect())
+        .unwrap_or_default();
+
+    if record_ids.is_some() && filtered_ids.is_empty() {
+        return Err("No valid payroll records selected.".to_string());
+    }
+
+    let record_filter = if !filtered_ids.is_empty() {
+        let placeholders = filtered_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        format!(" AND pr.id IN ({})", placeholders)
+    } else {
+        String::new()
     };
     let sql = format!(
         "SELECT pr.id, pr.staff_id, pr.base_salary, pr.bonus, pr.deduction, pr.advance_deduction, s.name
@@ -4060,10 +4163,8 @@ pub fn process_payroll_batch(start_date: String, end_date: String, record_ids: O
         record_filter
     );
     let mut params: Vec<rusqlite::types::Value> = vec![start_date.clone().into(), end_date.clone().into()];
-    if let Some(ids) = &record_ids {
-        for id in ids.iter().filter(|id| **id > 0) {
-            params.push((*id).into());
-        }
+    for id in &filtered_ids {
+        params.push((*id).into());
     }
     let mut stmt = tx.prepare(&sql).map_err(|e| e.to_string())?;
     let rows: Vec<(i32, i32, f64, f64, f64, f64, String)> = stmt.query_map(
@@ -5095,6 +5196,8 @@ pub struct DetailedPayout {
     pub staff_name: String,
     pub date: String,
     pub amount: f64,
+    pub payout_type: String,
+    pub note: Option<String>,
 }
 
 
@@ -5188,14 +5291,20 @@ pub fn get_detailed_report(start_date: String, end_date: String) -> Result<Detai
         }
     }
 
-    // Payouts
+    // Payouts — salary payouts plus salary advances paid in the period, so the
+    // report shows both regular pay and advanced salary money.
     let mut payouts = Vec::new();
     let mut stmt3 = conn.prepare(
-        "SELECT p.id, s.name, p.date, p.amount 
+        "SELECT p.id, s.name, p.date, p.amount, 'Salary' as payout_type, NULL as note
          FROM salary_payouts p
          JOIN staff s ON p.staff_id = s.id
          WHERE p.date >= ?1 AND p.date <= ?2
-         ORDER BY p.date DESC LIMIT 5"
+         UNION ALL
+         SELECT a.id + 1000000, s.name, a.date, a.amount, 'Advance' as payout_type, a.note
+         FROM advance_salaries a
+         JOIN staff s ON a.staff_id = s.id
+         WHERE a.date >= ?1 AND a.date <= ?2
+         ORDER BY date DESC LIMIT 5"
     ).map_err(|e| e.to_string())?;
     
     let pay_iter = stmt3.query_map([&start_date, &end_date], |row| {
@@ -5204,6 +5313,8 @@ pub fn get_detailed_report(start_date: String, end_date: String) -> Result<Detai
             staff_name: row.get(1)?,
             date: row.get(2)?,
             amount: row.get(3)?,
+            payout_type: row.get(4)?,
+            note: row.get(5)?,
         })
     }).map_err(|e| e.to_string())?;
     
@@ -5405,7 +5516,7 @@ pub fn get_active_deliveries() -> Result<Vec<DeliveryOrder>, String> {
          LEFT JOIN customers c ON o.customer_id = c.id
          LEFT JOIN staff s ON o.delivery_driver_id = s.id
          LEFT JOIN order_items oi ON o.id = oi.order_id
-         WHERE o.order_type = 'Delivery' AND COALESCE(o.delivery_status, 'Pending') != 'Delivered'
+         WHERE o.order_type = 'Delivery' AND o.status IN ('Placed', 'Delivery Pending') AND COALESCE(o.delivery_status, 'Pending') != 'Delivered'
          GROUP BY o.id ORDER BY o.id ASC"
     ).map_err(|e| e.to_string())?;
     
@@ -5715,9 +5826,21 @@ pub fn update_inventory_item(id: i32, name: String, unit: String, low_stock_thre
 
 #[tauri::command]
 pub fn delete_inventory_item(id: i32) -> Result<String, String> {
-    let conn = get_conn()?;
-    conn.execute("DELETE FROM inventory_transactions WHERE item_id = ?1", [&id]).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM inventory_items WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
+    let mut conn_guard = get_conn()?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
+
+    // Purchases for this item are auto-logged as expenses; removing the item
+    // from Inventory must remove the linked expenses too so the ledger stays in sync.
+    tx.execute(
+        "DELETE FROM expenses WHERE reference_type = 'inventory_purchase' AND reference_id IN (
+            SELECT id FROM inventory_transactions WHERE item_id = ?1 AND type = 'purchase'
+        )",
+        [&id]
+    ).map_err(|e| e.to_string())?;
+
+    tx.execute("DELETE FROM inventory_transactions WHERE item_id = ?1", [&id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM inventory_items WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
     Ok("Item and all its transactions deleted".into())
 }
 
@@ -5775,16 +5898,44 @@ pub fn record_inventory_purchase(
         "INSERT INTO inventory_transactions (item_id, type, quantity, unit_price, total_cost, supplier, note, date) VALUES (?1, 'purchase', ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![item_id, quantity, unit_price, total_cost, supplier, note, today]
     ).map_err(|e| e.to_string())?;
+    let transaction_id = conn.last_insert_rowid() as i32;
 
-    // Auto-create expense entry
+    // Auto-create expense entry, linked back to the inventory transaction so
+    // deleting the purchase from Inventory removes the expense automatically,
+    // and deleting it from Expenses is rejected (see delete_expense).
     let supplier_str = supplier.as_deref().map(|s| format!(" from {}", s)).unwrap_or_default();
     let expense_note = format!("Inventory: {} {} {}{}", quantity, item_unit, item_name, supplier_str);
     conn.execute(
-        "INSERT INTO expenses (amount, date, category, note) VALUES (?1, ?2, 'Inventory', ?3)",
-        rusqlite::params![total_cost, today, expense_note]
+        "INSERT INTO expenses (amount, date, category, note, reference_type, reference_id) VALUES (?1, ?2, 'Inventory', ?3, 'inventory_purchase', ?4)",
+        rusqlite::params![total_cost, today, expense_note, transaction_id]
     ).map_err(|e| e.to_string())?;
 
     Ok("Purchase recorded and expense logged".into())
+}
+
+#[tauri::command]
+pub fn delete_inventory_transaction(id: i32) -> Result<String, String> {
+    let mut conn_guard = get_conn()?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
+
+    let txn_type: String = tx.query_row(
+        "SELECT type FROM inventory_transactions WHERE id = ?1",
+        [&id], |row| row.get(0)
+    ).map_err(|_| "Inventory transaction not found.".to_string())?;
+
+    tx.execute("DELETE FROM inventory_transactions WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
+
+    // Purchases are auto-logged as expenses; removing the purchase from
+    // Inventory must remove the linked expense too so the ledger stays in sync.
+    if txn_type == "purchase" {
+        tx.execute(
+            "DELETE FROM expenses WHERE reference_type = 'inventory_purchase' AND reference_id = ?1",
+            [&id]
+        ).map_err(|e| e.to_string())?;
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok("Inventory transaction deleted".into())
 }
 
 fn chrono_today() -> String {

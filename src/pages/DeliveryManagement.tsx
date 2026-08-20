@@ -1,10 +1,17 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "../lib/api";
 import { formatCurrency } from "../lib/utils";
 import { Truck, CheckCircle2, MapPin, Clock, User, Phone, Navigation, ChevronDown, Printer } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { AlertModal } from "../components/AlertModal";
+import { DeliveryTicketTemplate } from "../components/DeliveryTicketTemplate";
+import { useReactToPrint } from "react-to-print";
+import {
+  loadPrintSettings,
+  DEFAULT_PRINT_SETTINGS,
+  type PrintSettings,
+} from "../lib/printing";
 
 interface DeliveryOrder {
   id: number;
@@ -32,7 +39,10 @@ export default function DeliveryManagement() {
   const [selectedDriver, setSelectedDriver] = useState<Record<number, number>>({});
   const [restaurantName, setRestaurantName] = useState<string>("");
   const [restaurantContact, setRestaurantContact] = useState<string>("");
-  
+  const [printSettings, setPrintSettings] = useState<PrintSettings>(DEFAULT_PRINT_SETTINGS);
+  const printRef = useRef<HTMLDivElement>(null);
+  const [printTicket, setPrintTicket] = useState<{ order: DeliveryOrder; driverName: string; formattedId: string; date: string; items: any[] } | null>(null);
+
   const [alertModal, setAlertModal] = useState<{isOpen: boolean; title: string; message: string; type: 'danger' | 'warning' | 'info' | 'success'}>({
     isOpen: false, title: '', message: '', type: 'danger'
   });
@@ -40,6 +50,11 @@ export default function DeliveryManagement() {
   const showAlert = (title: string, message: string, type: 'danger' | 'warning' | 'info' | 'success' = 'danger') => {
     setAlertModal({ isOpen: true, title, message, type });
   };
+
+  const triggerTicketPrint = useReactToPrint({
+    contentRef: printRef,
+    onAfterPrint: () => showAlert("Success", "Delivery ticket sent to the printer.", "success"),
+  });
 
   const fetchDeliveries = async () => {
     try {
@@ -68,6 +83,11 @@ export default function DeliveryManagement() {
       if (settings.contact_number) setRestaurantContact(settings.contact_number);
     } catch (err) {
       console.error("Failed to load settings:", err);
+    }
+    try {
+      setPrintSettings(await loadPrintSettings());
+    } catch (err) {
+      console.error("Failed to load print settings:", err);
     }
   };
 
@@ -116,59 +136,12 @@ export default function DeliveryManagement() {
 
     const formattedId = `#ORD-${(order.order_number || order.id).toString().padStart(4, '0')}`;
     const dateStr = order.created_at ? new Date(order.created_at).toLocaleString() : new Date().toLocaleString();
+    const driverName = order.driver_name || "Pending Dispatch";
 
-    const padBoth = (left: string, right: string, width = 32) => {
-      const spaces = width - left.length - right.length;
-      return left + " ".repeat(Math.max(1, spaces)) + right;
-    };
-  
-    const center = (text: string, width = 32) => {
-      if (text.length >= width) return text.substring(0, width);
-      const left = Math.floor((width - text.length) / 2);
-      return " ".repeat(left) + text;
-    };
-
-    let text = "";
-    text += center(restaurantName || "Restaurant Name") + "\n";
-    if (restaurantContact) text += center(restaurantContact) + "\n";
-    text += center("*** DELIVERY TICKET ***") + "\n";
-    text += "-".repeat(32) + "\n";
-    
-    text += `Order #: ${formattedId}\n`;
-    text += `Date: ${dateStr}\n`;
-    text += `Driver: ${order.driver_name || 'Pending Dispatch'}\n`;
-    text += "-".repeat(32) + "\n";
-    
-    text += padBoth("Item", "Qty   Total") + "\n";
-    text += "-".repeat(32) + "\n";
-    
-    items.forEach(item => {
-      const name = item.name.length > 15 ? item.name.substring(0, 15) : item.name.padEnd(15, ' ');
-      const qty = item.quantity.toString().padStart(3, ' ');
-      const total = formatCurrency(item.price * item.quantity);
-      text += padBoth(`${name}  ${qty}`, total) + "\n";
-    });
-    
-    text += "-".repeat(32) + "\n";
-    text += padBoth("Total Amt:", `${formatCurrency(order.total_price)}`) + "\n";
-    text += "-".repeat(32) + "\n";
-    
-    text += "Customer Details:\n";
-    text += `Name: ${order.customer_name || 'Walk-in'}\n`;
-    text += `Phone: ${order.customer_phone || 'N/A'}\n`;
-    text += `Address:\n${order.delivery_address || 'No address provided'}\n`;
-    text += "-".repeat(32) + "\n";
-    
-    text += `Please collect ${formatCurrency(order.total_price)}\n`;
-    text += `from the customer.\n\n`;
-    text += center("End of Ticket") + "\n\n\n\n";
-
-    try {
-      await invoke("print_receipt_text", { text });
-    } catch (err) {
-      console.error("Failed to generate ticket:", err);
-      showAlert("Error", "Failed to print delivery ticket");
-    }
+    setPrintTicket({ order, driverName, formattedId, date: dateStr, items });
+    setTimeout(() => {
+      if (triggerTicketPrint) triggerTicketPrint();
+    }, 100);
   };
 
   return (
@@ -305,6 +278,25 @@ export default function DeliveryManagement() {
           )}
         </div>
       </main>
+
+      {printTicket && (
+        <div style={{ display: "none" }}>
+          <DeliveryTicketTemplate
+            ref={printRef}
+            restaurantName={restaurantName || "Restaurant Name"}
+            restaurantContact={restaurantContact || undefined}
+            orderId={printTicket.formattedId}
+            date={printTicket.date}
+            driverName={printTicket.driverName}
+            items={printTicket.items}
+            totalPrice={printTicket.order.total_price}
+            customerName={printTicket.order.customer_name}
+            customerPhone={printTicket.order.customer_phone}
+            deliveryAddress={printTicket.order.delivery_address}
+            config={printSettings.deliveryLayout}
+          />
+        </div>
+      )}
 
       <AlertModal 
         isOpen={alertModal.isOpen}

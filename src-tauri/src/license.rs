@@ -1,5 +1,3 @@
-#![allow(dead_code, unused_variables, non_snake_case)]
-
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use chrono::NaiveDate;
 use rsa::pkcs1v15::{Signature, VerifyingKey};

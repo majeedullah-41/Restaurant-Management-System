@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "../lib/api";
 import { formatCurrency, todayLocal } from "../lib/utils";
-import { Plus, Trash2, Landmark, X, Download } from "lucide-react";
+import { Plus, Trash2, Landmark, X, Download, AlertCircle } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
@@ -16,6 +16,7 @@ interface Expense {
   date: string;
   category: string;
   note?: string;
+  reference_type?: string | null;
 }
 
 export default function Expenses() {
@@ -23,10 +24,13 @@ export default function Expenses() {
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [expenseToDelete, setExpenseToDelete] = useState<number | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
 
   // Expense Form State
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("Groceries");
+  const [customCategory, setCustomCategory] = useState("");
   const [note, setNote] = useState("");
   const [expenseDate, setExpenseDate] = useState(todayLocal());
 
@@ -65,17 +69,19 @@ export default function Expenses() {
 
   const handleSaveExpense = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!amount || !category) return;
+    const finalCategory = category === "Other" ? customCategory.trim() : category;
+    if (!amount || !finalCategory) return;
     try {
       await invoke("add_expense", { 
         amount: parseFloat(amount), 
         date: expenseDate, 
-        category, 
+        category: finalCategory, 
         note 
       });
       setIsExpenseModalOpen(false);
       setAmount("");
       setCategory("Groceries");
+      setCustomCategory("");
       setNote("");
       setExpenseDate(todayLocal());
       loadExpenses();
@@ -87,6 +93,13 @@ export default function Expenses() {
 
 
   const handleDeleteExpense = (id: number) => {
+    const expense = expenses.find(e => e.id === id);
+    if (expense?.reference_type === "inventory_purchase") {
+      setBlockedNotice(
+        `This expense is linked to an inventory purchase and cannot be deleted from Expenses. Please go to the Inventory section and delete the purchase there — it will be removed from Expenses automatically.`
+      );
+      return;
+    }
     setExpenseToDelete(id);
     setDeleteModalOpen(true);
   };
@@ -94,11 +107,12 @@ export default function Expenses() {
   const confirmDeleteExpense = async () => {
     if (expenseToDelete === null) return;
     setDeleteModalOpen(false);
+    setDeleteError(null);
     try {
       await invoke("delete_expense", { id: expenseToDelete });
       loadExpenses();
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      setDeleteError(err.toString() || "Failed to delete expense.");
     } finally {
       setExpenseToDelete(null);
     }
@@ -153,8 +167,19 @@ export default function Expenses() {
                   <option value="Utilities">Utilities (Water, Power)</option>
                   <option value="Maintenance">Maintenance & Repairs</option>
                   <option value="Miscellaneous">Miscellaneous</option>
+                  <option value="Other">Other</option>
                 </select>
               </div>
+              {category === "Other" && (
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Custom Category</label>
+                  <input 
+                    type="text" value={customCategory} onChange={(e) => setCustomCategory(e.target.value)}
+                    placeholder="Enter category name"
+                    className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" required
+                  />
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Date</label>
                 <input 
@@ -190,6 +215,31 @@ export default function Expenses() {
         confirmText="Delete"
       />
 
+      {blockedNotice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400">
+                <AlertCircle size={22} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Cannot Delete from Expenses</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Inventory-linked expenses are managed from the Inventory section.</p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-700 dark:text-slate-300">{blockedNotice}</p>
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => setBlockedNotice(null)}
+                className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-sm transition-all cursor-pointer shadow-md"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Sidebar activePage="expenses" />
 
       <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors min-w-0">
@@ -207,6 +257,16 @@ export default function Expenses() {
                  <h2 className="text-3xl font-bold text-slate-900 dark:text-white mt-1">{formatCurrency(totalExpenses)}</h2>
                </div>
             </div>
+
+            {deleteError && (
+              <div className="flex items-start gap-3 p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl text-amber-800 dark:text-amber-200 text-sm font-medium max-w-md shrink-0 animate-in fade-in">
+                <AlertCircle size={18} className="shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                <span className="flex-1">{deleteError}</span>
+                <button onClick={() => setDeleteError(null)} className="text-amber-600 dark:text-amber-400 hover:text-amber-800 cursor-pointer font-bold ml-2">
+                  <X size={16} />
+                </button>
+              </div>
+            )}
 
             <div className="flex items-center space-x-4 shrink-0">
               <DateFilterToolbar 
@@ -237,14 +297,14 @@ export default function Expenses() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
-                  <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Date</th>
-                  <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Category</th>
-                  <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Note</th>
-                  <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Amount</th>
+                  <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Date</th>
+                  <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Category</th>
+                  <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Note</th>
+                  <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-r border-slate-200 dark:border-slate-800">Amount</th>
                   <th className="py-4 px-6 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+              <tbody>
                 {filteredExpenses.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="py-12 text-center text-slate-500">
@@ -253,9 +313,9 @@ export default function Expenses() {
                   </tr>
                 ) : (
                   filteredExpenses.map((expense) => (
-                    <tr key={expense.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
-                      <td className="py-4 px-6 text-sm text-slate-700 dark:text-slate-300 font-medium">{expense.date}</td>
-                      <td className="py-4 px-6">
+                    <tr key={expense.id} className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors last:border-b-0">
+                      <td className="py-4 px-6 text-sm text-slate-700 dark:text-slate-300 font-medium border-r border-slate-200 dark:border-slate-800">{expense.date}</td>
+                      <td className="py-4 px-6 border-r border-slate-200 dark:border-slate-800">
                         <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${
                           expense.category === 'Salaries' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20' :
                           expense.category === 'Groceries' ? 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-500/20' :
@@ -265,8 +325,8 @@ export default function Expenses() {
                           {expense.category}
                         </span>
                       </td>
-                      <td className="py-4 px-6 text-sm text-slate-600 dark:text-slate-400">{expense.note || "-"}</td>
-                      <td className="py-4 px-6 text-sm font-bold text-slate-900 dark:text-white">{formatCurrency(expense.amount)}</td>
+                      <td className="py-4 px-6 text-sm text-slate-600 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{expense.note || "-"}</td>
+                      <td className="py-4 px-6 text-sm font-bold text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800">{formatCurrency(expense.amount)}</td>
                       <td className="py-4 px-6 text-right">
                         <button 
                           onClick={() => handleDeleteExpense(expense.id)}

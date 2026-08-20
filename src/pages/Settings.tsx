@@ -1,13 +1,18 @@
 import { useState, useEffect } from "react";
 import { invoke } from "../lib/api";
-import { Save, ShieldCheck, Copy, CheckCircle, CalendarClock, Clock, Cpu, RefreshCw, Key, XCircle, Loader2, Upload, Trash, DatabaseBackup } from "lucide-react";
+import { Save, ShieldCheck, Copy, CheckCircle, CalendarClock, Clock, Cpu, RefreshCw, Key, XCircle, Loader2, Upload, Trash, DatabaseBackup, Settings as SettingsIcon, Truck, Printer, Database, Menu } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import BackupSection from "../components/BackupSection";
 import DataMigrationSection from "../components/DataMigrationSection";
 import DeliverySettingsSection from "../components/DeliverySettingsSection";
+import PrintSettingsSection from "../components/PrintSettingsSection";
+
+type SettingsTab = 'general' | 'printing' | 'delivery' | 'backup' | 'migration' | 'license';
 
 export default function SettingsPage() {
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [name, setName] = useState("Restaurant Management System");
   const [contact, setContact] = useState("");
   const [address, setAddress] = useState("");
@@ -138,6 +143,15 @@ export default function SettingsPage() {
     }
   };
 
+  const tabs = [
+    { id: 'general', label: 'General Preferences', icon: SettingsIcon },
+    { id: 'printing', label: 'Printing & Receipts', icon: Printer },
+    { id: 'delivery', label: 'Delivery Settings', icon: Truck },
+    { id: 'backup', label: 'Backup & Restore', icon: DatabaseBackup },
+    { id: 'migration', label: 'Data Migration', icon: Database },
+    { id: 'license', label: 'License Information', icon: ShieldCheck },
+  ] as const;
+
   return (
     <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden transition-colors">
       
@@ -146,9 +160,58 @@ export default function SettingsPage() {
       <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 transition-colors min-w-0">
         <Header title="System Settings" subtitle="Global Configurations" />
 
-        <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto space-y-8">
-          <div className="max-w-3xl bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 shadow-sm">
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6">General Preferences</h2>
+        <div className="flex-1 overflow-hidden flex flex-col md:flex-row relative">
+          
+          {/* Mobile Menu Toggle */}
+          <div className="md:hidden bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 p-4 flex justify-between items-center shrink-0">
+            <span className="font-bold text-slate-800 dark:text-slate-200">
+              {tabs.find(t => t.id === activeTab)?.label}
+            </span>
+            <button 
+              onClick={() => setShowMobileMenu(!showMobileMenu)}
+              className="p-2 bg-slate-100 dark:bg-slate-800 rounded-lg text-slate-600 dark:text-slate-400"
+            >
+              <Menu size={20} />
+            </button>
+          </div>
+
+          {/* Inner Sidebar */}
+          <div className={`
+            absolute md:static inset-0 z-20 bg-white dark:bg-slate-900 
+            md:w-64 border-r border-slate-200 dark:border-slate-800 
+            overflow-y-auto transition-transform duration-200
+            ${showMobileMenu ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+            flex flex-col
+          `}>
+            <div className="p-4 md:hidden border-b border-slate-200 dark:border-slate-800 flex justify-between items-center">
+              <span className="font-bold text-slate-900 dark:text-white">Settings Menu</span>
+              <button onClick={() => setShowMobileMenu(false)} className="p-2 text-slate-500"><XCircle size={20} /></button>
+            </div>
+            <nav className="p-4 space-y-1.5 flex-1">
+              {tabs.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => { setActiveTab(t.id); setShowMobileMenu(false); }}
+                  className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all font-semibold text-sm cursor-pointer ${
+                    activeTab === t.id 
+                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border border-blue-100 dark:border-blue-800/30 shadow-sm' 
+                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200 border border-transparent'
+                  }`}
+                >
+                  <t.icon size={18} className={activeTab === t.id ? "text-blue-600 dark:text-blue-500" : "text-slate-400 dark:text-slate-500"} />
+                  <span>{t.label}</span>
+                </button>
+              ))}
+            </nav>
+          </div>
+
+          {/* Main Content Area */}
+          <div className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto custom-scrollbar bg-slate-50 dark:bg-[#0B1120]">
+            
+            <div className="max-w-4xl mx-auto space-y-8">
+              {activeTab === 'general' && (
+                <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6">General Preferences</h2>
             
             <form onSubmit={handleSave} className="space-y-6">
               <div className="space-y-6">
@@ -156,6 +219,7 @@ export default function SettingsPage() {
                   <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Restaurant Name</label>
                   <input 
                     type="text" value={name} onChange={(e) => setName(e.target.value)}
+                    data-testid="restaurant-name-input"
                     className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" required
                   />
                 </div>
@@ -249,39 +313,53 @@ export default function SettingsPage() {
               </div>
 
               {message && (
-                <p className={`text-sm font-bold ${message.startsWith("Error") || message.includes("valid non-negative") ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}>{message}</p>
+                <p data-testid="settings-save-message" className={`text-sm font-bold ${message.startsWith("Error") || message.includes("valid non-negative") ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}>{message}</p>
               )}
 
-              <button type="submit" className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors flex items-center justify-center space-x-2 mt-4 shadow-lg shadow-blue-600/20 cursor-pointer">
+              <button type="submit" className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors flex items-center justify-center space-x-2 mt-4 shadow-lg shadow-blue-600/20 cursor-pointer" data-testid="save-settings-btn">
                 <Save size={18} />
                 <span>Save Settings</span>
               </button>
             </form>
           </div>
-
-          <div className="max-w-3xl">
-            <BackupSection />
-          </div>
-
-          <div className="max-w-3xl">
-            <DataMigrationSection />
-          </div>
-
-          <div className="max-w-3xl">
-            <DeliverySettingsSection />
-          </div>
-
-          {/* License Information Section */}
-          <div className="max-w-3xl bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 shadow-sm">
-            <div className="flex items-center space-x-3 mb-6">
-              <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center border border-blue-100 dark:border-blue-800">
-                <ShieldCheck size={20} className="text-blue-600 dark:text-blue-500" />
+        )}
+            
+            {activeTab === 'backup' && (
+              <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <BackupSection />
               </div>
-              <div>
-                <h2 className="text-xl font-bold text-slate-900 dark:text-white">License Information</h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Your software license details</p>
+            )}
+
+            {activeTab === 'migration' && (
+              <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <DataMigrationSection />
               </div>
-            </div>
+            )}
+
+            {activeTab === 'delivery' && (
+              <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <DeliverySettingsSection />
+              </div>
+            )}
+
+            {activeTab === 'printing' && (
+              <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <PrintSettingsSection />
+              </div>
+            )}
+
+            {/* License Information Section */}
+            {activeTab === 'license' && (
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <div className="flex items-center space-x-3 mb-6">
+                  <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center border border-blue-100 dark:border-blue-800">
+                    <ShieldCheck size={20} className="text-blue-600 dark:text-blue-500" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-900 dark:text-white">License Information</h2>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Your software license details</p>
+                  </div>
+                </div>
 
             {licenseInfo ? (
               <div className="space-y-5">
@@ -392,6 +470,12 @@ export default function SettingsPage() {
                   </span>
                 </div>
 
+                {/* Software Version */}
+                <div className="flex items-center space-x-3">
+                  <span className="text-sm font-semibold text-slate-600 dark:text-slate-400 w-32">Version</span>
+                  <span className="text-sm text-slate-800 dark:text-slate-200 font-medium">1.0.0</span>
+                </div>
+
                 {/* Renew License */}
                 <div className="pt-4 border-t border-slate-200 dark:border-slate-700">
                   {!showRenewForm ? (
@@ -477,9 +561,12 @@ export default function SettingsPage() {
             ) : (
               <p className="text-sm text-slate-500 dark:text-slate-400">Loading license information...</p>
             )}
+            </div>
+          )}
           </div>
         </div>
-      </main>
-    </div>
+      </div>
+    </main>
+  </div>
   );
 }

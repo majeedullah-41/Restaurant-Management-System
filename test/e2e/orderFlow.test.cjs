@@ -2,6 +2,25 @@ const assert = require('assert');
 const Database = require('better-sqlite3');
 const path = require('path');
 
+// The tauri-plugin-wdio-webdriver elementClick runs a programmatic el.click()
+// on the matched <option>, which native <option> elements ignore — so WebdriverIO's
+// selectByVisibleText/selectByIndex leave React's select unchanged. Set the value
+// through the native setter and dispatch a bubbling change event instead.
+async function selectOption(selectIndex, text) {
+    await browser.execute(
+        (idx, optText) => {
+            const select = document.querySelectorAll('select')[idx];
+            const option = Array.from(select.options).find((o) => o.textContent.trim() === optText);
+            if (!option) throw new Error(`option "${optText}" not found in select[${idx}]`);
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+            setter.call(select, option.value);
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+        },
+        selectIndex,
+        text
+    );
+}
+
 /**
  * End-to-end order flow against the running desktop app (rms.exe).
  *
@@ -15,6 +34,12 @@ const path = require('path');
  *     instance is safe to leave open.
  *
  * Run with: npm run test:e2e
+ *
+ * Store-DB safety: `npm run pretest:e2e` snapshots the live store DB
+ * (%LOCALAPPDATA%\RMS\local.db) and `npm run posttest:e2e` kills any autonomous
+ * WebDriver process left behind and restores the store DB from that snapshot
+ * (see scripts/watchdog.cjs). The watchdog also refuses to start the suite while
+ * the store DB is threatened.
  */
 describe('RMS Order Flow E2E Test', () => {
     let db;
@@ -29,15 +54,17 @@ describe('RMS Order Flow E2E Test', () => {
     });
 
     it('should login, create a dine-in order on table 1, add items, and checkout', async () => {
-        // 1. Authentication (admin@restaurant.com credentials seeded by setup.cjs)
-        const emailInput = await $('#email');
-        const passwordInput = await $('#password');
-        const loginBtn = await $('button=LOGIN');
-
-        await emailInput.waitForDisplayed({ timeout: 30000 });
-        await emailInput.setValue('admin');
-        await passwordInput.setValue('admin123');
-        await loginBtn.click();
+        // 1. Authentication (admin@restaurant.com credentials seeded by setup.cjs).
+        //    The tauri-service reuses a single app instance across all specs, so
+        //    the app may already be authenticated (logged in by an earlier spec
+        //    in the same suite). Only show the login form when it is present.
+        const emailField = await $$('#email');
+        if (emailField.length > 0) {
+            await emailField[0].waitForDisplayed({ timeout: 30000 });
+            await emailField[0].setValue('admin@restaurant.com');
+            await $('#password').setValue('admin123');
+            await $('button=LOGIN').click();
+        }
 
         // Wait for the admin layout (sidebar "POS / New Order" is admin-only)
         const posNav = await $('button=POS / New Order');
@@ -48,28 +75,28 @@ describe('RMS Order Flow E2E Test', () => {
         const orderSummary = await $('h2=Order Summary');
         await orderSummary.waitForDisplayed({ timeout: 30000 });
 
-        // 3. Assign table 1 (seeded as "Main 01"). Selecting it navigates to
-        //    /admin/pos/1/new and re-initializes the POS.
-        const tableSelect = await $$('select')[0];
+        // 3. Assign table 1 (seeded as "Main 1"). Selecting it navigates to
+        //    /admin/pos/1/new and re-initializes the POS. Select order in the
+        //    DOM: [0]=sort, [1]=order type, [2]=order taker, [3]=table.
+        const tableSelect = await $$('select')[3];
         await tableSelect.waitForDisplayed({ timeout: 30000 });
-        await tableSelect.selectByVisibleText('Main 01');
+        await selectOption(3, 'Main 1');
 
         // Wait for the POS to finish re-initializing for table 1.
         await browser.waitUntil(
-            async () => (await $$('select')[0].getValue()) === '1',
+            async () => {
+                const url = await browser.getUrl();
+                const v = await $$('select')[3].getValue();
+                return url.includes('/pos/1/') && v === '1';
+            },
             { timeout: 30000, timeoutMsg: 'POS did not switch to table 1' }
         );
 
         // 4. Select the order taker. Dine-in orders refuse to add items until a
         //    table AND an order taker are chosen.
-        const takerSelect = await $$('select')[2];
-        await takerSelect.selectByVisibleText('admin');
+        await selectOption(2, 'admin');
 
-        // 5. Add items: 2x Burger, 1x Coke
-        await (await $('button=Add Item')).click();
-        const selectItems = await $('h2=Select Items');
-        await selectItems.waitForDisplayed({ timeout: 30000 });
-
+        // 5. Add items: 2x Burger, 1x Coke (item cards in the left grid).
         const burger = await $('h3=Burger');
         await burger.waitForDisplayed({ timeout: 30000 });
         await burger.click();
@@ -79,16 +106,20 @@ describe('RMS Order Flow E2E Test', () => {
         await coke.waitForDisplayed({ timeout: 30000 });
         await coke.click();
 
-        // 6. Back to payment view and complete payment (exact amount, no cash change)
-        await (await $('button=Close Menu')).click();
+        // 6. Complete payment (exact amount, no cash change).
         const completeBtn = await $('#complete-payment-btn');
         await completeBtn.waitForEnabled({ timeout: 30000 });
         await completeBtn.click();
 
-        // After a successful checkout the POS navigates back to /pos/0 (~2s).
+        // After checkout the order is Closed. The app also triggers a receipt
+        // print (native print dialog, not webdriver-controllable) and tries to
+        // reset to /pos/0 — the DB is the source of truth, so poll it here.
         await browser.waitUntil(
-            async () => (await $$('select')[0].getValue()) === 'Walk-in Customer',
-            { timeout: 30000, timeoutMsg: 'POS did not reset to walk-in after checkout' }
+            () => {
+                const row = db.prepare('SELECT status FROM orders ORDER BY id DESC LIMIT 1').get();
+                return row && row.status === 'Closed';
+            },
+            { timeout: 30000, timeoutMsg: 'Order was not closed after checkout' }
         );
 
         // 7. Database verification (the critical backend assertion)

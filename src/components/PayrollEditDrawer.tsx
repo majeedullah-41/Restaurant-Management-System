@@ -43,17 +43,18 @@ export default function PayrollEditDrawer({ isOpen, onClose, record, onSave, sav
     return colors[index];
   };
 
-  const adNum = record.status === 'Pending' ? record.advance_balance : record.advance_deduction;
+  const bNum = Math.max(0, Number(bonus) || 0);
+  const dNum = Math.max(0, Number(deduction) || 0);
+  const maxAdvanceDeduction = Math.max(0, record.base_salary + bNum - dNum);
+  const adNum = record.status === 'Pending'
+    ? Math.min(record.advance_balance, maxAdvanceDeduction)
+    : record.advance_deduction;
 
   const handleSave = () => {
-    const b = Math.max(0, Number(bonus) || 0);
-    const d = Math.max(0, Number(deduction) || 0);
-    onSave(record.id, b, d, adNum);
+    onSave(record.id, bNum, dNum, adNum);
   };
 
   // Preview net pay calculation
-  const bNum = Math.max(0, Number(bonus) || 0);
-  const dNum = Math.max(0, Number(deduction) || 0);
   const previewNetPay = Math.max(0, record.base_salary + bNum - dNum - adNum);
 
   return (

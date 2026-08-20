@@ -226,6 +226,7 @@ export default function StaffManagement() {
                 <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Full Name</label>
                 <input
                   type="text" value={name} onChange={(e) => setName(e.target.value)}
+                  data-testid="staff-name-input"
                   className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" required
                 />
               </div>
@@ -240,6 +241,7 @@ export default function StaffManagement() {
                 <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Category</label>
                 <select
                   value={categoryId} onChange={(e) => setCategoryId(e.target.value === "" ? "" : Number(e.target.value))}
+                  data-testid="staff-category-select"
                   className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                 >
                   <option value="">-- No Category --</option>
@@ -252,12 +254,13 @@ export default function StaffManagement() {
                 <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Monthly Salary (Rs.)</label>
                 <MoneyInput
                   value={salary} onChange={setSalary}
+                  data-testid="staff-salary-input"
                   className="w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" required
                 />
               </div>
-              <button type="submit" className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors mt-4 shadow-lg shadow-blue-600/20">
-                {editingStaffId ? "Update Staff" : "Register Staff"}
-              </button>
+<button type="submit" className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors mt-4 shadow-lg shadow-blue-600/20" data-testid="register-staff-btn">
+                  {editingStaffId ? "Update Staff" : "Register Staff"}
+                </button>
             </form>
           </div>
         </div>
@@ -302,7 +305,7 @@ export default function StaffManagement() {
                 <Clock className="text-blue-500" />
                 Staff Attendance
               </h3>
-              <button onClick={() => setIsAttendanceModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"><X size={20} /></button>
+              <button onClick={() => setIsAttendanceModalOpen(false)} data-testid="attendance-close-btn" className="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"><X size={20} /></button>
             </div>
 
             <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
@@ -325,6 +328,7 @@ export default function StaffManagement() {
                           setClockCategoryId(e.target.value === "" ? "" : Number(e.target.value));
                           setClockStaffId("");
                         }}
+                        data-testid="clock-category-select"
                         className="w-full h-11 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-sm shadow-sm transition-all appearance-none"
                       >
                         <option value="">All Categories</option>
@@ -345,6 +349,7 @@ export default function StaffManagement() {
                         required
                         value={clockStaffId}
                         onChange={e => setClockStaffId(Number(e.target.value))}
+                        data-testid="clock-staff-select"
                         className="w-full h-11 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-sm shadow-sm transition-all appearance-none"
                       >
                         <option value="" disabled>Select Staff</option>
@@ -360,7 +365,7 @@ export default function StaffManagement() {
                     </div>
                   </div>
 
-                  <button type="submit" className="w-full h-12 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-2 mt-2 transform hover:-translate-y-0.5 active:translate-y-0">
+                  <button type="submit" className="w-full h-12 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-2 mt-2 transform hover:-translate-y-0.5 active:translate-y-0" data-testid="clock-btn">
                     <Clock size={18} strokeWidth={2.5} />
                     <span>Clock In / Out</span>
                   </button>
@@ -393,7 +398,7 @@ export default function StaffManagement() {
                     </div>
                   ) : (
                     attendanceRecords.map(rec => (
-                      <div key={rec.id} className="flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/50 dark:hover:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transition-colors">
+                      <div key={rec.id} className="flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/50 dark:hover:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transition-colors" data-testid={`attendance-record-${rec.staff_id}`}>
                         <div>
                           <span className="font-bold text-slate-900 dark:text-white block">{rec.staff_name}</span>
                           <span className="text-xs font-medium text-slate-500 flex items-center mt-1">
@@ -431,6 +436,7 @@ export default function StaffManagement() {
           <div className="mb-6 flex justify-end shrink-0 space-x-3">
             <button
               onClick={() => setIsAttendanceModalOpen(true)}
+              data-testid="attendance-btn"
               className="bg-indigo-100 hover:bg-indigo-200 text-indigo-700 dark:bg-indigo-500/10 dark:hover:bg-indigo-500/20 dark:text-indigo-400 px-4 py-2 rounded-lg text-sm font-semibold flex items-center space-x-2 transition-colors shadow-sm"
             >
               <Clock size={16} />
@@ -444,7 +450,7 @@ export default function StaffManagement() {
             </button>
             <button
               onClick={openAddModal}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center space-x-2 transition-colors shadow-lg shadow-blue-600/20"
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center space-x-2 transition-colors shadow-lg shadow-blue-600/20" data-testid="add-staff-btn"
             >
               <Plus size={16} />
               <span>Add Employee</span>
@@ -453,14 +459,14 @@ export default function StaffManagement() {
 
           <div className="flex flex-col gap-4">
             {staff.map((person) => (
-              <div key={person.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex items-center justify-between group hover:border-slate-300 dark:hover:border-slate-700 transition-colors shadow-sm">
+              <div key={person.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex items-center justify-between group hover:border-slate-300 dark:hover:border-slate-700 transition-colors shadow-sm" data-testid={`staff-row-${person.id}`}>
                 <div className="flex items-center space-x-4">
                   <div className={`p-3 rounded-xl border bg-blue-50 border-blue-200 text-blue-600 dark:bg-blue-500/10 dark:border-blue-500/20 dark:text-blue-400 shrink-0`}>
                     <UserCircle size={24} />
                   </div>
                   <div className="flex flex-col sm:flex-row sm:items-center space-y-1 sm:space-y-0 sm:space-x-6">
                     <div className="w-48">
-                      <h3 className="font-bold text-slate-900 dark:text-white text-lg truncate">{person.name}</h3>
+                      <h3 className="font-bold text-slate-900 dark:text-white text-lg truncate" data-testid={`staff-name-${person.id}`}>{person.name}</h3>
                       <div className="flex items-center mt-1">
                         <span className="text-xs text-slate-600 dark:text-slate-400 font-medium bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
                           {person.category_name || person.role || "Uncategorized"}

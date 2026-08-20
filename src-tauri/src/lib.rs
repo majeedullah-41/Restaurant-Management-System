@@ -1,8 +1,7 @@
-#![allow(dead_code, unused_variables, non_snake_case)]
-
 pub mod auth;
 pub mod db;
 pub mod license;
+pub mod print;
 
 /// Authorizes an IPC invoke before it is dispatched to the registered command.
 ///
@@ -86,9 +85,18 @@ where
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    #[cfg(debug_assertions)]
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init());
+    #[cfg(not(debug_assertions))]
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init());
+
+    builder
         .invoke_handler(wrap_handler(tauri::generate_handler![
     db::pay_advance_salary,
     db::update_advance,
@@ -168,6 +176,9 @@ pub fn run() {
     db::get_cashier_dashboard_stats,
     db::save_print_html,
     db::print_receipt_text,
+    print::get_print_settings,
+    print::update_print_settings,
+    print::list_printers,
     db::clock_in_out,
     db::get_attendance,
     db::get_payroll_summary,
@@ -215,6 +226,7 @@ pub fn run() {
     db::record_inventory_purchase,
     db::get_inventory_transactions,
     db::get_inventory_summary,
+    db::delete_inventory_transaction,
 
     license::get_machine_hwid,
     license::check_license_status,

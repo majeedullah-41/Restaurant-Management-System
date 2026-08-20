@@ -60,10 +60,11 @@ export default function ProcessPayroll() {
 
   // Salary slip print state
   const { user } = useAuth();
-  const adminName = user?.display_name || user?.username || '';
+  const adminName = user?.display_name || 'Admin';
   const [slipRow, setSlipRow] = useState<PayrollRecordRow | null>(null);
   const slipRef = useRef<HTMLDivElement>(null);
   const [restaurantName, setRestaurantName] = useState('RESTAURANT');
+  const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
 
   const triggerSlipPrint = useReactToPrint({
     contentRef: slipRef,
@@ -74,6 +75,7 @@ export default function ProcessPayroll() {
     invoke<any>('get_settings')
       .then((settings) => {
         if (settings?.restaurant_name) setRestaurantName(settings.restaurant_name.toUpperCase());
+        if (settings?.logo_path) setRestaurantLogo(settings.logo_path);
       })
       .catch(() => {});
   }, []);
@@ -301,7 +303,7 @@ export default function ProcessPayroll() {
               </div>
             )}
             {successMsg && (
-              <div className="mb-6 bg-emerald-50 text-emerald-700 px-4 py-3 rounded-xl text-sm font-semibold border border-emerald-200 flex justify-between">
+              <div data-testid="payroll-success-msg" className="mb-6 bg-emerald-50 text-emerald-700 px-4 py-3 rounded-xl text-sm font-semibold border border-emerald-200 flex justify-between">
                 <span>{successMsg}</span>
                 <button onClick={() => setSuccessMsg(null)}>✕</button>
               </div>
@@ -393,8 +395,8 @@ export default function ProcessPayroll() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse min-w-[800px]">
                       <thead>
-                        <tr className="bg-slate-50/50 dark:bg-slate-800/20 border-b border-slate-100 dark:border-slate-800 text-slate-500 dark:text-slate-400 text-xs font-semibold">
-                          <th className="py-4 px-6 w-12">
+                        <tr className="bg-slate-50/50 dark:bg-slate-800/20 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 text-xs font-semibold">
+                          <th className="py-4 px-6 w-12 border-r border-slate-200 dark:border-slate-800">
                             <input 
                               type="checkbox" 
                               checked={pendingRows.length > 0 && selectedIds.size === pendingRows.length}
@@ -403,25 +405,25 @@ export default function ProcessPayroll() {
                               className="w-5 h-5 cursor-pointer rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                             />
                           </th>
-                          <th className="py-4 px-4">Staff</th>
-                          <th className="py-4 px-4 text-center">Attendance</th>
-                          <th className="py-4 px-4 text-right">Salary</th>
-                          <th className="py-4 px-4 text-right">Advance</th>
-                          <th className="py-4 px-4 text-right">Net Pay</th>
-                          <th className="py-4 px-4 text-center">Status</th>
+                          <th className="py-4 px-4 border-r border-slate-200 dark:border-slate-800">Staff</th>
+                          <th className="py-4 px-4 text-center border-r border-slate-200 dark:border-slate-800">Attendance</th>
+                          <th className="py-4 px-4 text-right border-r border-slate-200 dark:border-slate-800">Salary</th>
+                          <th className="py-4 px-4 text-right border-r border-slate-200 dark:border-slate-800">Advance</th>
+                          <th className="py-4 px-4 text-right border-r border-slate-200 dark:border-slate-800">Net Pay</th>
+                          <th className="py-4 px-4 text-center border-r border-slate-200 dark:border-slate-800">Status</th>
                           <th className="py-4 px-6 text-center">Action</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
+                      <tbody>
                         {rows.map((row) => (
-                          <tr key={row.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors cursor-pointer" onClick={(e) => {
+                          <tr key={row.id} className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors cursor-pointer" onClick={(e) => {
                             // Don't open drawer if clicking checkbox
                             if ((e.target as HTMLElement).tagName !== 'INPUT' && (e.target as HTMLElement).tagName !== 'BUTTON') {
                               setSelectedRecord(row);
                               setDrawerOpen(true);
                             }
                           }}>
-                            <td className="py-3 px-6">
+                            <td className="py-3 px-6 border-r border-slate-200 dark:border-slate-800">
                               <input 
                                 type="checkbox"
                                 checked={selectedIds.has(row.id)}
@@ -430,7 +432,7 @@ export default function ProcessPayroll() {
                                 className="w-5 h-5 cursor-pointer rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
                               />
                             </td>
-                            <td className="py-3 px-4">
+                            <td className="py-3 px-4 border-r border-slate-200 dark:border-slate-800">
                               <div className="flex items-center space-x-3">
                                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border shrink-0 ${getAvatarColor(row.name)}`}>
                                   {getInitials(row.name)}
@@ -440,15 +442,15 @@ export default function ProcessPayroll() {
                                 </span>
                               </div>
                             </td>
-                            <td className="py-3 px-4 text-center">
+                            <td className="py-3 px-4 text-center border-r border-slate-200 dark:border-slate-800">
                               <span className="text-emerald-600 dark:text-emerald-400 text-xs font-bold bg-emerald-50 dark:bg-emerald-500/10 px-2 py-1 rounded-md">
                                 {row.days_present} / 26
                               </span>
                             </td>
-                            <td className="py-3 px-4 text-right font-mono text-sm text-slate-700 dark:text-slate-300">
+                            <td className="py-3 px-4 text-right font-mono text-sm text-slate-700 dark:text-slate-300 border-r border-slate-200 dark:border-slate-800">
                               {formatCurrency(row.base_salary)}
                             </td>
-                            <td className="py-3 px-4 text-right font-mono text-sm">
+                            <td className="py-3 px-4 text-right font-mono text-sm border-r border-slate-200 dark:border-slate-800">
                               {row.advance_deduction > 0 ? (
                                 <div className="flex flex-col items-end">
                                   <span className="text-red-500">-{formatCurrency(row.advance_deduction)}</span>
@@ -460,10 +462,10 @@ export default function ProcessPayroll() {
                                 <span className="text-slate-300 dark:text-slate-600">—</span>
                               )}
                             </td>
-                            <td className="py-3 px-4 text-right font-mono text-sm font-bold text-slate-900 dark:text-white">
+                            <td className="py-3 px-4 text-right font-mono text-sm font-bold text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800">
                               {formatCurrency(row.net_pay)}
                             </td>
-                            <td className="py-3 px-4 text-center">
+                            <td className="py-3 px-4 text-center border-r border-slate-200 dark:border-slate-800">
                               {row.status === 'Pending' ? (
                                 <span className="text-orange-500 bg-orange-50 dark:bg-orange-500/10 px-3 py-1 rounded-full text-xs font-bold">
                                   Pending
@@ -538,6 +540,7 @@ export default function ProcessPayroll() {
                 <button
                   onClick={executeProcessPayroll}
                   disabled={processing || selectedIds.size === 0}
+                  data-testid="process-payroll-btn"
                   className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-bold px-8 py-3 rounded-xl shadow-lg shadow-blue-600/20 transition-all flex items-center space-x-2"
                 >
                   <span>{processing ? 'Processing...' : 'Process Payroll'}</span>
@@ -590,16 +593,15 @@ export default function ProcessPayroll() {
               <button onClick={() => setSlipRow(null)} className="text-slate-400 hover:text-slate-600">✕</button>
             </div>
 
-            <div className="p-6 overflow-auto max-h-[65vh]">
-              <div className="mx-auto" style={{ width: 302 }}>
-                <PayrollSlipTemplate
-                  ref={slipRef}
-                  visible
-                  payout={slipPayout}
-                  restaurantName={restaurantName}
-                  adminName={adminName}
-                />
-              </div>
+            <div className="p-6 overflow-auto max-h-[65vh] flex justify-center bg-slate-50 dark:bg-slate-900/50">
+              <PayrollSlipTemplate
+                ref={slipRef}
+                visible
+                payout={slipPayout}
+                restaurantName={restaurantName}
+                logoUrl={restaurantLogo || undefined}
+                adminName={adminName}
+              />
             </div>
 
             <div className="bg-white dark:bg-slate-900 px-6 py-4 border-t border-slate-100 dark:border-slate-800 flex justify-end space-x-3">

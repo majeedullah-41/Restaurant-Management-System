@@ -175,11 +175,13 @@ function setupTestDB() {
     db.prepare("INSERT INTO staff (id, name, role, category_id, status) VALUES (1, 'admin', 'Admin', 1, 'Active')").run();
     db.prepare("INSERT INTO staff (id, name, role, category_id, status) VALUES (2, 'cashier', 'Cashier', 1, 'Active')").run();
 
-    // Users (must_change_password = 0 so the test goes straight to the dashboard)
+    // Users (must_change_password = 0 so the test goes straight to the dashboard).
+    // Usernames are email-format to match the real store DB (admin@restaurant.com,
+    // cashier@restaurant.com) and pass the login form's type="email" validation.
     const adminHash = bcrypt.hashSync('admin123', 10);
-    db.prepare('INSERT INTO users (username, password_hash, role_id, must_change_password, display_name) VALUES (?, ?, ?, 0, ?)').run('admin', adminHash, 1, 'admin');
+    db.prepare('INSERT INTO users (username, password_hash, role_id, must_change_password, display_name) VALUES (?, ?, ?, 0, ?)').run('admin@restaurant.com', adminHash, 1, 'admin');
     const cashierHash = bcrypt.hashSync('cashier123', 10);
-    db.prepare('INSERT INTO users (username, password_hash, role_id, must_change_password, display_name) VALUES (?, ?, ?, 0, ?)').run('cashier', cashierHash, 2, 'cashier');
+    db.prepare('INSERT INTO users (username, password_hash, role_id, must_change_password, display_name) VALUES (?, ?, ?, 0, ?)').run('cashier@restaurant.com', cashierHash, 2, 'cashier');
 
     db.prepare('INSERT INTO roles (id, name) VALUES (1, ?)').run('Admin');
     db.prepare('INSERT INTO roles (id, name) VALUES (2, ?)').run('Cashier');

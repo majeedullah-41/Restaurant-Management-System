@@ -255,16 +255,16 @@ export default function AdvanceHistory() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
                     <thead>
-                      <tr className="bg-slate-50/50 dark:bg-slate-800/20 border-b border-slate-100 dark:border-slate-800 text-slate-500 dark:text-slate-400 text-xs font-semibold">
-                        <th className="py-4 px-6">Date</th>
-                        <th className="py-4 px-4">Staff</th>
-                        <th className="py-4 px-4">Note</th>
-                        <th className="py-4 px-4 text-right">Advance Amount</th>
-                        <th className="py-4 px-4 text-center">Status</th>
+                      <tr className="bg-slate-50/50 dark:bg-slate-800/20 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 text-xs font-semibold">
+                        <th className="py-4 px-6 border-r border-slate-200 dark:border-slate-800">Date</th>
+                        <th className="py-4 px-4 border-r border-slate-200 dark:border-slate-800">Staff</th>
+                        <th className="py-4 px-4 border-r border-slate-200 dark:border-slate-800">Note</th>
+                        <th className="py-4 px-4 text-right border-r border-slate-200 dark:border-slate-800">Advance Amount</th>
+                        <th className="py-4 px-4 text-center border-r border-slate-200 dark:border-slate-800">Status</th>
                         <th className="py-4 px-4 text-center">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
+                    <tbody>
                       {groupedHistory.length === 0 ? (
                         <tr>
                           <td colSpan={6} className="py-8 text-center text-slate-500">
@@ -279,11 +279,11 @@ export default function AdvanceHistory() {
                           // Single advance
                           const row = group.advances[0];
                           return (
-                            <tr key={row.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20">
-                              <td className="py-3 px-6 text-sm text-slate-600 dark:text-slate-400 font-medium">
+                            <tr key={row.id} className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-800/20">
+                              <td className="py-3 px-6 text-sm text-slate-600 dark:text-slate-400 font-medium border-r border-slate-200 dark:border-slate-800">
                                 {formatDateTime(row.date)}
                               </td>
-                              <td className="py-3 px-4">
+                              <td className="py-3 px-4 border-r border-slate-200 dark:border-slate-800">
                                 <div className="flex items-center space-x-3">
                                   <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                                     {getInitials(row.staff_name)}
@@ -293,13 +293,13 @@ export default function AdvanceHistory() {
                                   </span>
                                 </div>
                               </td>
-                              <td className="py-3 px-4">
+                              <td className="py-3 px-4 border-r border-slate-200 dark:border-slate-800">
                                 <span className="text-sm text-slate-500">{row.note || '-'}</span>
                               </td>
-                              <td className="py-3 px-4 text-right font-mono text-sm font-bold text-slate-900 dark:text-white">
+                              <td className="py-3 px-4 text-right font-mono text-sm font-bold text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800">
                                 {formatCurrency(row.amount)}
                               </td>
-                              <td className="py-3 px-4 text-center">
+                              <td className="py-3 px-4 text-center border-r border-slate-200 dark:border-slate-800">
                                 {renderStatus(row.is_deducted)}
                               </td>
                               <td className="py-3 px-4 text-center">
@@ -324,16 +324,16 @@ export default function AdvanceHistory() {
                         return (
                           <React.Fragment key={`group-${group.staff_id}`}>
                             <tr 
-                              className={`hover:bg-slate-50/50 dark:hover:bg-slate-800/20 cursor-pointer ${isExpanded ? 'bg-slate-50/50 dark:bg-slate-800/20' : ''}`}
+                              className={`border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 cursor-pointer ${isExpanded ? 'bg-slate-50/50 dark:bg-slate-800/20' : ''}`}
                               onClick={() => toggleExpand(group.staff_id)}
                             >
-                              <td className="py-3 px-6 text-sm text-slate-600 dark:text-slate-400 font-medium">
+                              <td className="py-3 px-6 text-sm text-slate-600 dark:text-slate-400 font-medium border-r border-slate-200 dark:border-slate-800">
                                 <div className="flex flex-col">
                                   <span>{latestDate}</span>
                                   <span className="text-[11px] text-slate-400">+{otherDatesCount} more</span>
                                 </div>
                               </td>
-                              <td className="py-3 px-4">
+                              <td className="py-3 px-4 border-r border-slate-200 dark:border-slate-800">
                                 <div className="flex items-center space-x-3">
                                   <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800">
                                     {getInitials(group.staff_name)}
@@ -343,13 +343,13 @@ export default function AdvanceHistory() {
                                   </span>
                                 </div>
                               </td>
-                              <td className="py-3 px-4">
+                              <td className="py-3 px-4 border-r border-slate-200 dark:border-slate-800">
                                 <span className="text-xs text-slate-400 italic">Multiple</span>
                               </td>
-                              <td className="py-3 px-4 text-right font-mono text-sm font-bold text-slate-900 dark:text-white">
+                              <td className="py-3 px-4 text-right font-mono text-sm font-bold text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800">
                                 {formatCurrency(group.total_amount)}
                               </td>
-                              <td className="py-3 px-4 text-center">
+                              <td className="py-3 px-4 text-center border-r border-slate-200 dark:border-slate-800">
                                 {renderStatus(group.is_all_deducted)}
                               </td>
                               <td className="py-3 px-4 text-center">
@@ -363,20 +363,20 @@ export default function AdvanceHistory() {
                             
                             {/* Expanded individual rows */}
                             {isExpanded && group.advances.map(row => (
-                              <tr key={`child-${row.id}`} className="bg-slate-50/30 dark:bg-slate-800/10 border-t-0">
-                                <td className="py-2.5 px-6 pl-10 text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center space-x-2">
-                                  <CornerDownRight size={14} className="text-slate-300 dark:text-slate-600" />
+                              <tr key={`child-${row.id}`} className="bg-slate-50/30 dark:bg-slate-800/10 border-b border-slate-200 dark:border-slate-800 last:border-b-0">
+                                <td className="py-2.5 px-6 pl-10 text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center space-x-2 border-r border-slate-200 dark:border-slate-800">
+                                  <CornerDownRight size={14} className="text-slate-300 dark:text-slate-600 shrink-0" />
                                   <span>{formatDateTime(row.date)}</span>
                                 </td>
-                                <td className="py-2.5 px-4">
+                                <td className="py-2.5 px-4 border-r border-slate-200 dark:border-slate-800">
                                 </td>
-                                <td className="py-2.5 px-4">
+                                <td className="py-2.5 px-4 border-r border-slate-200 dark:border-slate-800">
                                   <span className="text-xs text-slate-500">{row.note || '-'}</span>
                                 </td>
-                                <td className="py-2.5 px-4 text-right font-mono text-xs text-slate-700 dark:text-slate-300">
+                                <td className="py-2.5 px-4 text-right font-mono text-xs text-slate-700 dark:text-slate-300 border-r border-slate-200 dark:border-slate-800">
                                   {formatCurrency(row.amount)}
                                 </td>
-                                <td className="py-2.5 px-4 text-center scale-90">
+                                <td className="py-2.5 px-4 text-center scale-90 border-r border-slate-200 dark:border-slate-800">
                                   {renderStatus(row.is_deducted)}
                                 </td>
                                 <td className="py-2.5 px-4 text-center">

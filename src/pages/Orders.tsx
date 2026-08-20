@@ -11,7 +11,9 @@ import { MoneyInput } from "../components/MoneyInput";
 import AdminPasswordModal from "../components/AdminPasswordModal";
 import { AlertModal } from "../components/AlertModal";
 import { ReceiptTemplate } from "../components/ReceiptTemplate";
+import { DeliveryReceiptTemplate } from "../components/DeliveryReceiptTemplate";
 import { useReactToPrint } from "react-to-print";
+import { loadPrintSettings, DEFAULT_PRINT_SETTINGS, type PrintSettings } from "../lib/printing";
 
 interface OrderHistory {
   id: number;
@@ -117,6 +119,7 @@ export default function Orders() {
   const [restaurantAddress, setRestaurantAddress] = useState("");
   const [restaurantContact, setRestaurantContact] = useState("");
   const [taxRate, setTaxRate] = useState(0);
+  const [printSettings, setPrintSettings] = useState<PrintSettings>(DEFAULT_PRINT_SETTINGS);
   const printRef = useRef<HTMLDivElement>(null);
 
   const showAlert = (title: string, message: string, type: 'danger' | 'warning' | 'info' | 'success' = 'danger') => {
@@ -235,6 +238,8 @@ export default function Orders() {
       if (settings.contact_number) setRestaurantContact(settings.contact_number);
       if (settings.tax_rate) setTaxRate(settings.tax_rate);
     }).catch(err => console.error("Failed to load settings", err));
+
+    loadPrintSettings().then(setPrintSettings).catch(err => console.error("Failed to load print settings", err));
   }, []);
 
   const totalRevenue = orders.reduce((sum, order) => sum + order.total_price, 0);
@@ -294,14 +299,14 @@ export default function Orders() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 dark:bg-slate-950/50 text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
-                    <th className="p-4 pl-6 font-semibold">Order ID</th>
-                    <th className="p-4 font-semibold">Table</th>
-                    <th className="p-4 font-semibold">Status</th>
-                    <th className="p-4 font-semibold text-center">Items</th>
+                    <th className="p-4 pl-6 font-semibold border-r border-slate-200 dark:border-slate-800">Order ID</th>
+                    <th className="p-4 font-semibold border-r border-slate-200 dark:border-slate-800">Table</th>
+                    <th className="p-4 font-semibold border-r border-slate-200 dark:border-slate-800">Status</th>
+                    <th className="p-4 font-semibold text-center border-r border-slate-200 dark:border-slate-800">Items</th>
                     <th className="p-4 pr-6 font-semibold text-right">Total Amount</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                <tbody>
                   {loading ? (
                     <tr>
                       <td colSpan={5} className="p-8 text-center text-slate-500">Loading history...</td>
@@ -314,17 +319,17 @@ export default function Orders() {
                     filteredOrders.map((order) => (
                       <React.Fragment key={order.id}>
                         <tr 
-                          className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group cursor-pointer"
+                          className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group cursor-pointer"
                           onClick={() => toggleRow(order.id)}
                         >
-                          <td className="p-4 pl-6 font-bold text-slate-900 dark:text-white flex items-center space-x-2">
+                          <td className="p-4 pl-6 font-bold text-slate-900 dark:text-white flex items-center space-x-2 border-r border-slate-200 dark:border-slate-800">
                             {expandedOrderId === order.id ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
                             <span>#{order.order_number || order.id}</span>
                           </td>
-                          <td className="p-4 font-medium text-slate-700 dark:text-slate-300">
+                          <td className="p-4 font-medium text-slate-700 dark:text-slate-300 border-r border-slate-200 dark:border-slate-800">
                             {order.table_number === 0 ? 'Walk-in' : (order.table_category_name ? `${order.table_category_name} - Table ${order.table_number.toString().padStart(2, '0')}` : `Table ${order.table_number.toString().padStart(2, '0')}`)}
                           </td>
-                          <td className="p-4">
+                          <td className="p-4 border-r border-slate-200 dark:border-slate-800">
                             <span className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${
                               order.status === 'Open'
                                 ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400 border-amber-200 dark:border-amber-500/20'
@@ -334,7 +339,7 @@ export default function Orders() {
                               <span>{order.order_type === 'Delivery' && order.status === 'Placed' ? 'Delivery Pending' : order.status}</span>
                             </span>
                           </td>
-                          <td className="p-4 font-medium text-slate-700 dark:text-slate-300 text-center">{order.total_items}</td>
+                          <td className="p-4 font-medium text-slate-700 dark:text-slate-300 text-center border-r border-slate-200 dark:border-slate-800">{order.total_items}</td>
                           <td className="p-4 pr-6 font-bold text-blue-600 dark:text-blue-400 text-right">{formatCurrency(order.total_price)}</td>
                         </tr>
                         {expandedOrderId === order.id && (
@@ -558,28 +563,55 @@ export default function Orders() {
         const order = allOrders.find(o => o.id === printOrderId);
         const items = orderItems[printOrderId] || [];
         if (!order) return null;
+        const isDelivery = order.order_type === 'Delivery';
         return (
           <div style={{ display: "none" }}>
-            <ReceiptTemplate
-              ref={printRef}
-              restaurantName={restaurantName}
-              restaurantAddress={restaurantAddress}
-              orderId={`#ORD-${(order.order_number || order.id).toString().padStart(4, '0')}`}
-              orderType={order.order_type || 'Dine-in'}
-              tableNumber={(order.table_number || 0).toString()}
-              tableCategoryName={order.table_category_name}
-              date={new Date(order.closed_at || order.created_at || new Date()).toLocaleString()}
-              items={items}
-              subtotal={order.subtotal}
-              discount={order.discount_amount}
-              taxAmount={order.tax_amount}
-              taxRate={taxRate}
-              totalAmount={order.total_price}
-              amountReceived={order.amount_received}
-              changeAmount={order.change_due}
-              cashierName={order.cashier_name || 'Admin'}
-              restaurantContact={restaurantContact}
-            />
+            {isDelivery ? (
+              <DeliveryReceiptTemplate
+                ref={printRef}
+                restaurantName={restaurantName}
+                restaurantAddress={restaurantAddress}
+                restaurantContact={restaurantContact}
+                orderId={`#ORD-${(order.order_number || order.id).toString().padStart(4, '0')}`}
+                orderType={order.order_type || 'Dine-in'}
+                date={new Date(order.closed_at || order.created_at || new Date()).toLocaleString()}
+                items={items}
+                subtotal={order.subtotal}
+                discount={order.discount_amount}
+                taxAmount={order.tax_amount}
+                taxRate={taxRate}
+                totalAmount={order.total_price}
+                amountReceived={order.amount_received}
+                changeAmount={order.change_due}
+                deliveryFee={order.delivery_fee || 0}
+                cashierName={order.cashier_name || 'Admin'}
+                customerName={order.customer_name || null}
+                customerPhone={order.customer_phone || null}
+                deliveryAddress={order.delivery_address || null}
+                config={printSettings.deliveryReceiptLayout}
+              />
+            ) : (
+              <ReceiptTemplate
+                ref={printRef}
+                restaurantName={restaurantName}
+                restaurantAddress={restaurantAddress}
+                orderId={`#ORD-${(order.order_number || order.id).toString().padStart(4, '0')}`}
+                orderType={order.order_type || 'Dine-in'}
+                tableNumber={(order.table_number || 0).toString()}
+                tableCategoryName={order.table_category_name}
+                date={new Date(order.closed_at || order.created_at || new Date()).toLocaleString()}
+                items={items}
+                subtotal={order.subtotal}
+                discount={order.discount_amount}
+                taxAmount={order.tax_amount}
+                taxRate={taxRate}
+                totalAmount={order.total_price}
+                amountReceived={order.amount_received}
+                changeAmount={order.change_due}
+                cashierName={order.cashier_name || 'Admin'}
+                restaurantContact={restaurantContact}
+              />
+            )}
           </div>
         );
       })()}

@@ -154,3 +154,74 @@ fn test_mark_kot_printed_tracks_incremental_items() {
 
     let _ = fs::remove_file(db_path);
 }
+
+#[test]
+fn test_new_walkin_order_does_not_reuse_pending_order_with_items() {
+    let _guard = lock_db_tests();
+    let db_path = "backend_pos_new_order_test.db";
+    env::set_var("DB_PATH", db_path);
+    let _ = fs::remove_file(db_path);
+
+    db::init_shared_connection();
+    db::init_db().unwrap();
+
+    let conn = db::get_conn().unwrap();
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            table_number INTEGER,
+            status TEXT,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            closed_at TEXT,
+            order_type TEXT DEFAULT 'Dine-in',
+            subtotal REAL DEFAULT 0.0,
+            tax_amount REAL DEFAULT 0.0,
+            discount_amount REAL DEFAULT 0.0,
+            amount_received REAL DEFAULT 0.0,
+            change_due REAL DEFAULT 0.0,
+            customer_id INTEGER,
+            cashier_name TEXT,
+            order_note TEXT,
+            delivery_status TEXT,
+            delivery_address TEXT,
+            delivery_driver_id INTEGER,
+            delivery_fee REAL DEFAULT 0.0,
+            customer_phone TEXT,
+            service_charge_amount REAL DEFAULT 0.0,
+            order_taker_id INTEGER,
+            order_taker_name TEXT
+        )", []
+    ).unwrap();
+    drop(conn);
+
+    db::init_tables_if_needed().unwrap();
+
+    // Simulate a pending (held) order that already has items.
+    let pending = db::create_walkin_order(
+        "Delivery".to_string(),
+        None,
+        None,
+        None,
+        None,
+    ).expect("Failed to create pending walkin order");
+    db::add_item_to_order(pending.id, 1, "Burger".to_string(), 250.0).expect("Failed to add item");
+
+    // Starting a new order must create a fresh order, NOT reuse the pending one.
+    let fresh = db::create_walkin_order(
+        "Takeaway".to_string(),
+        None,
+        None,
+        None,
+        None,
+    ).expect("Failed to create new walkin order");
+
+    assert_ne!(fresh.id, pending.id, "New order must not reuse a pending order that has items");
+    let fresh_items = db::get_order_items(fresh.id).expect("Failed to get fresh order items");
+    assert!(fresh_items.is_empty(), "Fresh order cart must start empty");
+
+    // Pending order still holds its own items untouched.
+    let pending_items = db::get_order_items(pending.id).expect("Failed to get pending order items");
+    assert_eq!(pending_items.len(), 1, "Pending order items must not be affected");
+
+    let _ = fs::remove_file(db_path);
+}

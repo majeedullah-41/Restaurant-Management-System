@@ -149,7 +149,7 @@ export default function Login() {
                 </button>
               </div>
 
-              {error && <p className="text-red-500 text-sm font-medium bg-red-50 dark:bg-red-500/10 p-3 rounded-lg border border-red-100 dark:border-red-500/20">{error}</p>}
+              {error && <p data-testid="login-error" className="text-red-500 text-sm font-medium bg-red-50 dark:bg-red-500/10 p-3 rounded-lg border border-red-100 dark:border-red-500/20">{error}</p>}
 
               <Button type="submit" className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-md transition-all shadow-lg shadow-blue-600/25 mt-4">
                 LOGIN

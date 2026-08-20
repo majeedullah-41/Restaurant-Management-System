@@ -32,6 +32,8 @@ interface DetailedPayout {
     staff_name: string;
     date: string;
     amount: number;
+    payout_type: string;
+    note?: string | null;
 }
 
 interface DailyTrend {
@@ -208,19 +210,19 @@ export default function Reports() {
                     <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Top Selling Items</h3>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left">
+                    <table className="w-full text-sm text-left border-collapse">
                       <thead className="text-xs text-slate-500 dark:text-slate-400 uppercase bg-slate-50 dark:bg-slate-800/50">
-                        <tr>
-                          <th className="px-6 py-3 font-medium">Item Name</th>
-                          <th className="px-6 py-3 font-medium text-right">Quantity Sold</th>
+                        <tr className="border-b border-slate-200 dark:border-slate-800">
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Item Name</th>
+                          <th className="px-6 py-3 font-medium text-right border-r border-slate-200 dark:border-slate-800">Quantity Sold</th>
                           <th className="px-6 py-3 font-medium text-right">Revenue</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      <tbody>
                         {report.top_items.length > 0 ? report.top_items.map((item, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                            <td className="px-6 py-4 text-slate-900 dark:text-white font-medium">{item.name}</td>
-                            <td className="px-6 py-4 text-right text-slate-500 dark:text-slate-400">{item.quantity}</td>
+                          <tr key={idx} className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 last:border-b-0">
+                            <td className="px-6 py-4 text-slate-900 dark:text-white font-medium border-r border-slate-200 dark:border-slate-800">{item.name}</td>
+                            <td className="px-6 py-4 text-right text-slate-500 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{item.quantity}</td>
                             <td className="px-6 py-4 text-right font-medium text-emerald-500 dark:text-emerald-400">{formatCurrency(item.revenue)}</td>
                           </tr>
                         )) : (
@@ -237,17 +239,17 @@ export default function Reports() {
                     <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Expenses By Category</h3>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left">
+                    <table className="w-full text-sm text-left border-collapse">
                       <thead className="text-xs text-slate-500 dark:text-slate-400 uppercase bg-slate-50 dark:bg-slate-800/50">
-                        <tr>
-                          <th className="px-6 py-3 font-medium">Category Name</th>
+                        <tr className="border-b border-slate-200 dark:border-slate-800">
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Category Name</th>
                           <th className="px-6 py-3 font-medium text-right">Amount Spent</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      <tbody>
                         {report.expenses_by_category.length > 0 ? report.expenses_by_category.map((cat, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                            <td className="px-6 py-4 text-slate-900 dark:text-white font-medium">{cat.name}</td>
+                          <tr key={idx} className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 last:border-b-0">
+                            <td className="px-6 py-4 text-slate-900 dark:text-white font-medium border-r border-slate-200 dark:border-slate-800">{cat.name}</td>
                             <td className="px-6 py-4 text-right font-medium text-red-500 dark:text-red-400">{formatCurrency(cat.value)}</td>
                           </tr>
                         )) : (
@@ -264,23 +266,23 @@ export default function Reports() {
                     <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Daily Performance Trend</h3>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left">
+                    <table className="w-full text-sm text-left border-collapse">
                       <thead className="text-xs text-slate-500 dark:text-slate-400 uppercase bg-slate-50 dark:bg-slate-800/50">
-                        <tr>
-                          <th className="px-6 py-3 font-medium">Date</th>
-                          <th className="px-6 py-3 font-medium text-right">Sales</th>
-                          <th className="px-6 py-3 font-medium text-right">Expenses</th>
+                        <tr className="border-b border-slate-200 dark:border-slate-800">
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Date</th>
+                          <th className="px-6 py-3 font-medium text-right border-r border-slate-200 dark:border-slate-800">Sales</th>
+                          <th className="px-6 py-3 font-medium text-right border-r border-slate-200 dark:border-slate-800">Expenses</th>
                           <th className="px-6 py-3 font-medium text-right">Net Daily</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      <tbody>
                         {report.sales_trend.length > 0 ? report.sales_trend.map((trend, idx) => {
                           const dailyNet = trend.sales - trend.expenses;
                           return (
-                            <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                              <td className="px-6 py-4 text-slate-900 dark:text-white font-medium">{trend.date}</td>
-                              <td className="px-6 py-4 text-right font-medium text-emerald-500 dark:text-emerald-400">{formatCurrency(trend.sales)}</td>
-                              <td className="px-6 py-4 text-right font-medium text-red-500 dark:text-red-400">{formatCurrency(trend.expenses)}</td>
+                            <tr key={idx} className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 last:border-b-0">
+                              <td className="px-6 py-4 text-slate-900 dark:text-white font-medium border-r border-slate-200 dark:border-slate-800">{trend.date}</td>
+                              <td className="px-6 py-4 text-right font-medium text-emerald-500 dark:text-emerald-400 border-r border-slate-200 dark:border-slate-800">{formatCurrency(trend.sales)}</td>
+                              <td className="px-6 py-4 text-right font-medium text-red-500 dark:text-red-400 border-r border-slate-200 dark:border-slate-800">{formatCurrency(trend.expenses)}</td>
                               <td className={`px-6 py-4 text-right font-bold ${dailyNet >= 0 ? 'text-emerald-600 dark:text-emerald-500' : 'text-red-600 dark:text-red-500'}`}>
                                 {formatCurrency(dailyNet)}
                               </td>
@@ -300,25 +302,25 @@ export default function Reports() {
                     <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Orders List</h3>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left">
+                    <table className="w-full text-sm text-left border-collapse">
                       <thead className="text-xs text-slate-500 dark:text-slate-400 uppercase bg-slate-50 dark:bg-slate-800/50">
-                        <tr>
-                          <th className="px-6 py-3 font-medium">Order ID</th>
-                          <th className="px-6 py-3 font-medium">Date & Time</th>
-                          <th className="px-6 py-3 font-medium">Table</th>
-                          <th className="px-6 py-3 font-medium">Cashier</th>
-                          <th className="px-6 py-3 font-medium">Status</th>
+                        <tr className="border-b border-slate-200 dark:border-slate-800">
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Order ID</th>
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Date & Time</th>
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Table</th>
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Cashier</th>
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Status</th>
                           <th className="px-6 py-3 font-medium text-right">Total</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      <tbody>
                         {report.orders.length > 0 ? report.orders.map((order) => (
-                          <tr key={order.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                            <td className="px-6 py-4 text-slate-900 dark:text-white">#{order.id}</td>
-                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{order.created_at}</td>
-                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{order.table_number}</td>
-                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{order.cashier || '-'}</td>
-                            <td className="px-6 py-4">
+                          <tr key={order.id} className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 last:border-b-0">
+                            <td className="px-6 py-4 text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800">#{order.id}</td>
+                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{order.created_at}</td>
+                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{order.table_number}</td>
+                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{order.cashier || '-'}</td>
+                            <td className="px-6 py-4 border-r border-slate-200 dark:border-slate-800">
                               <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
                                 order.status === 'Closed' ? 'bg-emerald-500/10 text-emerald-500' :
                                 order.status === 'Cancelled' ? 'bg-red-500/10 text-red-500' :
@@ -343,23 +345,23 @@ export default function Reports() {
                     <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Expenses List</h3>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left">
+                    <table className="w-full text-sm text-left border-collapse">
                       <thead className="text-xs text-slate-500 dark:text-slate-400 uppercase bg-slate-50 dark:bg-slate-800/50">
-                        <tr>
-                          <th className="px-6 py-3 font-medium">Expense ID</th>
-                          <th className="px-6 py-3 font-medium">Date</th>
-                          <th className="px-6 py-3 font-medium">Category</th>
-                          <th className="px-6 py-3 font-medium">Note</th>
+                        <tr className="border-b border-slate-200 dark:border-slate-800">
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Expense ID</th>
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Date</th>
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Category</th>
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Note</th>
                           <th className="px-6 py-3 font-medium text-right">Amount</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      <tbody>
                         {report.expenses.length > 0 ? report.expenses.map((expense) => (
-                          <tr key={expense.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                            <td className="px-6 py-4 text-slate-900 dark:text-white">#{expense.id}</td>
-                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{expense.date}</td>
-                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{expense.category}</td>
-                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{expense.note || '-'}</td>
+                          <tr key={expense.id} className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 last:border-b-0">
+                            <td className="px-6 py-4 text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800">#{expense.id}</td>
+                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{expense.date}</td>
+                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{expense.category}</td>
+                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{expense.note || '-'}</td>
                             <td className="px-6 py-4 text-right font-medium text-red-500 dark:text-red-400">{formatCurrency(expense.amount)}</td>
                           </tr>
                         )) : (
@@ -376,25 +378,35 @@ export default function Reports() {
                     <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Salary Payouts</h3>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left">
+                    <table className="w-full text-sm text-left border-collapse">
                       <thead className="text-xs text-slate-500 dark:text-slate-400 uppercase bg-slate-50 dark:bg-slate-800/50">
-                        <tr>
-                          <th className="px-6 py-3 font-medium">Payout ID</th>
-                          <th className="px-6 py-3 font-medium">Date</th>
-                          <th className="px-6 py-3 font-medium">Staff Name</th>
+                        <tr className="border-b border-slate-200 dark:border-slate-800">
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Payout ID</th>
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Date</th>
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Staff Name</th>
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Type</th>
+                          <th className="px-6 py-3 font-medium border-r border-slate-200 dark:border-slate-800">Details</th>
                           <th className="px-6 py-3 font-medium text-right">Amount</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      <tbody>
                         {report.payouts.length > 0 ? report.payouts.map((payout) => (
-                          <tr key={payout.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                            <td className="px-6 py-4 text-slate-900 dark:text-white">#{payout.id}</td>
-                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{payout.date}</td>
-                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{payout.staff_name}</td>
+                          <tr key={payout.id} className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 last:border-b-0">
+                            <td className="px-6 py-4 text-slate-900 dark:text-white border-r border-slate-200 dark:border-slate-800">#{payout.id}</td>
+                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{payout.date}</td>
+                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{payout.staff_name}</td>
+                            <td className="px-6 py-4 border-r border-slate-200 dark:border-slate-800">
+                              {payout.payout_type === 'Advance' ? (
+                                <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">Advance</span>
+                              ) : (
+                                <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400">Salary</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400 border-r border-slate-200 dark:border-slate-800">{payout.payout_type === 'Advance' ? (payout.note || '-') : '-'}</td>
                             <td className="px-6 py-4 text-right font-medium text-red-500 dark:text-red-400">{formatCurrency(payout.amount)}</td>
                           </tr>
                         )) : (
-                          <tr><td colSpan={4} className="px-6 py-8 text-center text-slate-500">No payouts found for this period.</td></tr>
+                          <tr><td colSpan={6} className="px-6 py-8 text-center text-slate-500">No payouts found for this period.</td></tr>
                         )}
                       </tbody>
                     </table>

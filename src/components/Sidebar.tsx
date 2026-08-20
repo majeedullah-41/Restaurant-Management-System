@@ -5,10 +5,16 @@ import { useAuth } from "../lib/auth";
 import { 
   LayoutDashboard, MenuSquare, ClipboardList, Table2, Users, 
   UserSquare2, CalendarClock, Receipt, BarChart3, 
-  Settings, LogOut, ShoppingCart, Truck, Package
+  Settings, LogOut, ShoppingCart, Truck, Package,
+  ChevronDown, ChevronRight
 } from "lucide-react";
 
-export default function Sidebar({ activePage }: { activePage: string }) {
+interface SidebarProps {
+  activePage: string;
+  collapsed?: boolean;
+}
+
+export default function Sidebar({ activePage, collapsed = false }: SidebarProps) {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const role = user?.role || "Admin";
@@ -31,7 +37,6 @@ export default function Sidebar({ activePage }: { activePage: string }) {
     const handleSettingsUpdated = () => loadName();
     window.addEventListener("settingsUpdated", handleSettingsUpdated);
     
-    // Restore scroll position
     const savedScroll = sessionStorage.getItem("sidebarScroll");
     if (savedScroll && navRef.current) {
       navRef.current.scrollTop = parseInt(savedScroll, 10);
@@ -50,100 +55,102 @@ export default function Sidebar({ activePage }: { activePage: string }) {
     sessionStorage.setItem("sidebarScroll", e.currentTarget.scrollTop.toString());
   };
 
+  // When collapsed, behave like mobile even on desktop
+  const sidebarTranslateClass = collapsed
+    ? (isOpen ? 'translate-x-0' : '-translate-x-full')
+    : `lg:relative lg:translate-x-0 ${isOpen ? 'translate-x-0' : '-translate-x-full'}`;
+
   return (
     <>
-      {/* Mobile Backdrop */}
+      {/* Backdrop — shown on mobile always, and on desktop when collapsed */}
       {isOpen && (
         <div 
-          className="fixed inset-0 bg-slate-900/50 dark:bg-slate-900/80 z-40 lg:hidden backdrop-blur-sm"
+          className={`fixed inset-0 bg-slate-900/50 dark:bg-slate-900/80 z-40 backdrop-blur-sm ${collapsed ? '' : 'lg:hidden'}`}
           onClick={() => setIsOpen(false)}
         />
       )}
       
-      <aside className={`fixed inset-y-0 left-0 z-50 w-[260px] bg-white dark:bg-[#0B1120] border-r border-slate-200 dark:border-slate-800 flex flex-col transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-      <div className="min-h-[5rem] py-4 flex items-center px-6 border-b border-slate-200 dark:border-slate-800">
-        {restaurantLogo && (
-          <div className="h-10 w-10 shrink-0 bg-white rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden mr-3">
-            <img src={restaurantLogo} alt="Logo" className="h-full w-full object-contain p-0.5" />
+      <aside className={`fixed inset-y-0 left-0 z-50 w-[260px] bg-white dark:bg-[#0B1120] border-r border-slate-200 dark:border-slate-800 flex flex-col transition-transform duration-300 ease-in-out ${sidebarTranslateClass}`}>
+        <div className="min-h-[5rem] py-4 flex items-center px-6 border-b border-slate-200 dark:border-slate-800">
+          {restaurantLogo && (
+            <div className="h-10 w-10 shrink-0 bg-white rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden mr-3">
+              <img src={restaurantLogo} alt="Logo" className="h-full w-full object-contain p-0.5" />
+            </div>
+          )}
+          <div className="flex flex-col min-w-0">
+            <span className="text-base font-bold text-slate-900 dark:text-white tracking-wide leading-tight line-clamp-2" title={restaurantName}>{restaurantName}</span>
+            <span className="text-[10px] text-blue-600 dark:text-blue-500 font-semibold tracking-widest truncate mt-0.5">MANAGEMENT SYSTEM</span>
           </div>
-        )}
-        <div className="flex flex-col min-w-0">
-          <span className="text-base font-bold text-slate-900 dark:text-white tracking-wide leading-tight line-clamp-2" title={restaurantName}>{restaurantName}</span>
-          <span className="text-[10px] text-blue-600 dark:text-blue-500 font-semibold tracking-widest truncate mt-0.5">MANAGEMENT SYSTEM</span>
         </div>
-      </div>
 
-      <div className="flex items-center mt-6 px-3">
-        <div className="w-10 h-10 rounded-full bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-500 font-bold mr-3 shadow-inner">
-          {role === "Admin" ? "AD" : "CA"}
+        <div className="flex items-center mt-6 px-3">
+          <div className="w-10 h-10 rounded-full bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-500 font-bold mr-3 shadow-inner">
+            {role === "Admin" ? "AD" : "CA"}
+          </div>
+          <div className="flex-1">
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">{role === "Admin" ? "Admin User" : role}</h3>
+            <p className="text-xs text-emerald-500 font-medium">Online</p>
+          </div>
         </div>
-        <div className="flex-1">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">{role === "Admin" ? "Admin User" : role}</h3>
-          <p className="text-xs text-emerald-500 font-medium">Online</p>
+        
+        {/* Centralized Navigation */}
+        <nav 
+          ref={navRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto py-4 px-3 space-y-1 custom-scrollbar"
+        >
+          {role === "Cashier" ? (
+            <>
+              <NavItem icon={<LayoutDashboard size={20} />} label="Cashier Dashboard" active={activePage === "cashier_dashboard"} onClick={() => navigate('/cashier/dashboard')} />
+              <NavItem icon={<ShoppingCart size={20} />} label="POS / New Order" active={activePage === "pos"} onClick={() => navigate('/cashier/pos/0')} />
+              <NavItem icon={<ClipboardList size={20} />} label="Orders" active={activePage === "orders"} onClick={() => navigate('/cashier/orders')} />
+              <NavItem icon={<Truck size={20} />} label="Deliveries" active={activePage === "deliveries"} onClick={() => navigate('/cashier/deliveries')} />
+              <NavItem icon={<Users size={20} />} label="Customers" active={activePage === "customers"} onClick={() => navigate('/cashier/customers')} />
+              <NavItem icon={<CalendarClock size={20} />} label="Order History" active={activePage === "history"} onClick={() => navigate('/cashier/history')} />
+              <NavItem icon={<Table2 size={20} />} label="Table Reservation" active={activePage === "tables"} onClick={() => navigate('/cashier/tables')} />
+            </>
+          ) : (
+            <>
+              <NavItem icon={<LayoutDashboard size={20} />} label="Dashboard" active={activePage === "dashboard"} onClick={() => navigate('/admin/dashboard')} />
+              <NavItem icon={<ShoppingCart size={20} />} label="POS / New Order" active={activePage === "pos"} onClick={() => navigate('/admin/pos/0')} />
+              <NavItem icon={<MenuSquare size={20} />} label="Menu Management" active={activePage === "menu"} onClick={() => navigate('/admin/menu')} />
+              <NavItem icon={<ClipboardList size={20} />} label="Orders" active={activePage === "orders"} onClick={() => navigate('/admin/orders')} />
+              <NavItem icon={<Truck size={20} />} label="Deliveries" active={activePage === "deliveries"} onClick={() => navigate('/admin/deliveries')} />
+              <NavItem icon={<CalendarClock size={20} />} label="Order History" active={activePage === "history"} onClick={() => navigate('/admin/history')} />
+              <NavItem icon={<Table2 size={20} />} label="Table Management" active={activePage === "tables"} onClick={() => navigate('/admin/tables')} />
+              <NavItem icon={<Users size={20} />} label="Customers" active={activePage === "customers"} onClick={() => navigate('/admin/customers')} />
+              <NavItem icon={<UserSquare2 size={20} />} label="Staff Management" active={activePage === "staff"} onClick={() => navigate('/admin/staff')} />
+              
+              <NavGroup 
+                icon={<Receipt size={20} />} 
+                label="Payroll" 
+                isActive={activePage.startsWith("payroll")}
+                defaultExpanded={activePage.startsWith("payroll")}
+              >
+                <NavItem label="Process Payroll" active={activePage === "payroll_process"} onClick={() => navigate('/admin/payroll/process')} isSubItem />
+                <NavItem label="Payroll History" active={activePage === "payroll_history"} onClick={() => navigate('/admin/payroll/history')} isSubItem />
+                <NavItem label="Advance History" active={activePage === "payroll_advance"} onClick={() => navigate('/admin/payroll/advance')} isSubItem />
+              </NavGroup>
+
+              <NavItem icon={<Receipt size={20} />} label="Expenses" active={activePage === "expenses"} onClick={() => navigate('/admin/expenses')} />
+              <NavItem icon={<Package size={20} />} label="Inventory" active={activePage === "inventory"} onClick={() => navigate('/admin/inventory')} />
+              <NavItem icon={<BarChart3 size={20} />} label="Reports" active={activePage === "reports"} onClick={() => navigate('/admin/reports')} />
+              <NavItem icon={<Settings size={20} />} label="Settings" active={activePage === "settings"} onClick={() => navigate('/admin/settings')} />
+              <NavItem icon={<UserSquare2 size={20} />} label="User Profile" active={activePage === "profile"} onClick={() => navigate('/admin/profile')} />
+            </>
+          )}
+        </nav>
+
+        <div className="p-4 border-t border-slate-200 dark:border-slate-800 space-y-2">
+          <button onClick={async () => { await logout(); navigate('/', { replace: true }); }} className="flex items-center space-x-3 text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 w-full px-3 py-2 rounded-lg transition-colors">
+            <LogOut size={20} />
+            <span>Logout</span>
+          </button>
         </div>
-      </div>
-      
-      {/* Centralized Navigation */}
-      <nav 
-        ref={navRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto py-4 px-3 space-y-1 custom-scrollbar"
-      >
-        {role === "Cashier" ? (
-          <>
-            <NavItem icon={<LayoutDashboard size={20} />} label="Cashier Dashboard" active={activePage === "cashier_dashboard"} onClick={() => navigate('/cashier/dashboard')} />
-            <NavItem icon={<ShoppingCart size={20} />} label="POS / New Order" active={activePage === "pos"} onClick={() => navigate('/cashier/pos/0')} />
-            <NavItem icon={<ClipboardList size={20} />} label="Orders" active={activePage === "orders"} onClick={() => navigate('/cashier/orders')} />
-            <NavItem icon={<Truck size={20} />} label="Deliveries" active={activePage === "deliveries"} onClick={() => navigate('/cashier/deliveries')} />
-            <NavItem icon={<Users size={20} />} label="Customers" active={activePage === "customers"} onClick={() => navigate('/cashier/customers')} />
-            <NavItem icon={<CalendarClock size={20} />} label="Order History" active={activePage === "history"} onClick={() => navigate('/cashier/history')} />
-            <NavItem icon={<Table2 size={20} />} label="Table Reservation" active={activePage === "tables"} onClick={() => navigate('/cashier/tables')} />
-          </>
-        ) : (
-          <>
-            <NavItem icon={<LayoutDashboard size={20} />} label="Dashboard" active={activePage === "dashboard"} onClick={() => navigate('/admin/dashboard')} />
-            <NavItem icon={<ShoppingCart size={20} />} label="POS / New Order" active={activePage === "pos"} onClick={() => navigate('/admin/pos/0')} />
-            <NavItem icon={<MenuSquare size={20} />} label="Menu Management" active={activePage === "menu"} onClick={() => navigate('/admin/menu')} />
-            <NavItem icon={<ClipboardList size={20} />} label="Orders" active={activePage === "orders"} onClick={() => navigate('/admin/orders')} />
-            <NavItem icon={<Truck size={20} />} label="Deliveries" active={activePage === "deliveries"} onClick={() => navigate('/admin/deliveries')} />
-            <NavItem icon={<CalendarClock size={20} />} label="Order History" active={activePage === "history"} onClick={() => navigate('/admin/history')} />
-            <NavItem icon={<Table2 size={20} />} label="Table Management" active={activePage === "tables"} onClick={() => navigate('/admin/tables')} />
-            <NavItem icon={<Users size={20} />} label="Customers" active={activePage === "customers"} onClick={() => navigate('/admin/customers')} />
-            <NavItem icon={<UserSquare2 size={20} />} label="Staff Management" active={activePage === "staff"} onClick={() => navigate('/admin/staff')} />
-            
-            <NavGroup 
-              icon={<Receipt size={20} />} 
-              label="Payroll" 
-              isActive={activePage.startsWith("payroll")}
-              defaultExpanded={activePage.startsWith("payroll")}
-            >
-              <NavItem label="Process Payroll" active={activePage === "payroll_process"} onClick={() => navigate('/admin/payroll/process')} isSubItem />
-              <NavItem label="Payroll History" active={activePage === "payroll_history"} onClick={() => navigate('/admin/payroll/history')} isSubItem />
-              <NavItem label="Advance History" active={activePage === "payroll_advance"} onClick={() => navigate('/admin/payroll/advance')} isSubItem />
-            </NavGroup>
-
-            <NavItem icon={<Receipt size={20} />} label="Expenses" active={activePage === "expenses"} onClick={() => navigate('/admin/expenses')} />
-            <NavItem icon={<Package size={20} />} label="Inventory" active={activePage === "inventory"} onClick={() => navigate('/admin/inventory')} />
-            <NavItem icon={<BarChart3 size={20} />} label="Reports" active={activePage === "reports"} onClick={() => navigate('/admin/reports')} />
-            <NavItem icon={<Settings size={20} />} label="Settings" active={activePage === "settings"} onClick={() => navigate('/admin/settings')} />
-            <NavItem icon={<UserSquare2 size={20} />} label="User Profile" active={activePage === "profile"} onClick={() => navigate('/admin/profile')} />
-          </>
-        )}
-      </nav>
-
-      <div className="p-4 border-t border-slate-200 dark:border-slate-800 space-y-2">
-        <button onClick={async () => { await logout(); navigate('/', { replace: true }); }} className="flex items-center space-x-3 text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 w-full px-3 py-2 rounded-lg transition-colors">
-          <LogOut size={20} />
-          <span>Logout</span>
-        </button>
-      </div>
-    </aside>
+      </aside>
     </>
   );
 }
-
-// Helper components
-import { ChevronDown, ChevronRight } from "lucide-react";
 
 function NavGroup({ icon, label, isActive, defaultExpanded, children }: { icon: React.ReactNode, label: string, isActive: boolean, defaultExpanded: boolean, children: React.ReactNode }) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
