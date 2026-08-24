@@ -1,0 +1,35 @@
+              MY RESTAURANT
+            MAIN ROAD, SWAT
+               0345-1234567
+    *** PAYMENT RECEIPT ***
+--------------------------------
+ORDER NO.                   1024
+DATE/TIME    2026-08-22 14:33:10
+TYPE                     Dine-in
+TABLE                         T4
+CASHIER                   Salman
+# ITEM   QTY               TOTAL
+--------------------------------
+1. Gold    1  Rs. 999,999,999.00
+   Plate
+   d
+   Birya
+   ni
+--------------------------------
+SUBTOTAL      Rs. 999,999,999.00
+TAX (5)        Rs. 49,999,999.95
+DISCOUNT     -Rs. 999,999,999.00
+--------------------------------
+GRAND TOTAL   Rs. 999,999,999.00
+--------------------------------
+CASH
+RECEIVED    Rs. 9,999,999,999.90
+CHANGE DUE  Rs. 8,999,999,999.90
+--------------------------------
+         Software Provided by
+         Eaglenest Creations
+             (0346-4451505)
+     *** END OF RECEIPT ***
+--------------------------------
+
+--- profile: 58mm / 32 columns ---

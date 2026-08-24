@@ -1,0 +1,19 @@
+              KOT
+      *** KITCHEN COPY ***
+--------------------------------
+ORDER NO.                   1025
+DATE/TIME    2026-08-22 14:33:10
+TYPE                     Dine-in
+TABLE                         T4
+CASHIER                   Salman
+ORDER TAKER           Waiter Ali
+# ITEM                       QTY
+--------------------------------
+1. Chicken Cheese Zinger       2
+   Burger With Extra Cheese
+2. Extra Mayo                  1
+--------------------------------
+       *** END OF KOT ***
+--------------------------------
+
+--- profile: 58mm / 32 columns ---

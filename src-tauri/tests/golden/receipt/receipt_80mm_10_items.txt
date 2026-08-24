@@ -1,0 +1,37 @@
+                          MY RESTAURANT
+                        MAIN ROAD, SWAT
+                           0345-1234567
+            *** PAYMENT RECEIPT ***
+------------------------------------------------
+ORDER NO.                                   1026
+DATE/TIME                    2026-08-22 14:33:10
+TYPE                                     Dine-in
+TABLE                                         T4
+CASHIER                                   Salman
+# ITEM                        QTY          TOTAL
+------------------------------------------------
+1. Dish Number 1                1     Rs. 100.00
+2. Dish Number 2                2     Rs. 400.00
+3. Dish Number 3                3     Rs. 900.00
+4. Dish Number 4                4   Rs. 1,600.00
+5. Dish Number 5                5   Rs. 2,500.00
+6. Dish Number 6                6   Rs. 3,600.00
+7. Dish Number 7                7   Rs. 4,900.00
+8. Dish Number 8                8   Rs. 6,400.00
+9. Dish Number 9                9   Rs. 8,100.00
+10.Dish Number 10              10  Rs. 10,000.00
+------------------------------------------------
+SUBTOTAL                           Rs. 38,500.00
+TAX (0)                                 Rs. 0.00
+------------------------------------------------
+GRAND TOTAL                        Rs. 38,500.00
+------------------------------------------------
+CASH RECEIVED                       Rs. 5,000.00
+CHANGE DUE                        -Rs. 33,500.00
+------------------------------------------------
+                     Software Provided by
+          Eaglenest Creations (0346-4451505)
+             *** END OF RECEIPT ***
+------------------------------------------------
+
+--- profile: 80mm / 48 columns ---

@@ -1,16 +1,19 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "../lib/api";
 import { formatCurrency } from "../lib/utils";
 import { Truck, CheckCircle2, MapPin, Clock, User, Phone, Navigation, ChevronDown, Printer } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { AlertModal } from "../components/AlertModal";
-import { DeliveryTicketTemplate } from "../components/DeliveryTicketTemplate";
-import { useReactToPrint } from "react-to-print";
+import { DeliveryReceiptTemplate } from "../components/DeliveryReceiptTemplate";
 import {
   loadPrintSettings,
+  printTicketDocument,
+  assetFileUrl,
+  buildDeliveryReceiptText,
   DEFAULT_PRINT_SETTINGS,
   type PrintSettings,
+  type ReceiptDocument,
 } from "../lib/printing";
 
 interface DeliveryOrder {
@@ -38,10 +41,11 @@ export default function DeliveryManagement() {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [selectedDriver, setSelectedDriver] = useState<Record<number, number>>({});
   const [restaurantName, setRestaurantName] = useState<string>("");
+  const [restaurantAddress, setRestaurantAddress] = useState<string>("");
   const [restaurantContact, setRestaurantContact] = useState<string>("");
+  const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
+  const [taxRate, setTaxRate] = useState(0);
   const [printSettings, setPrintSettings] = useState<PrintSettings>(DEFAULT_PRINT_SETTINGS);
-  const printRef = useRef<HTMLDivElement>(null);
-  const [printTicket, setPrintTicket] = useState<{ order: DeliveryOrder; driverName: string; formattedId: string; date: string; items: any[] } | null>(null);
 
   const [alertModal, setAlertModal] = useState<{isOpen: boolean; title: string; message: string; type: 'danger' | 'warning' | 'info' | 'success'}>({
     isOpen: false, title: '', message: '', type: 'danger'
@@ -50,11 +54,6 @@ export default function DeliveryManagement() {
   const showAlert = (title: string, message: string, type: 'danger' | 'warning' | 'info' | 'success' = 'danger') => {
     setAlertModal({ isOpen: true, title, message, type });
   };
-
-  const triggerTicketPrint = useReactToPrint({
-    contentRef: printRef,
-    onAfterPrint: () => showAlert("Success", "Delivery ticket sent to the printer.", "success"),
-  });
 
   const fetchDeliveries = async () => {
     try {
@@ -80,7 +79,10 @@ export default function DeliveryManagement() {
     try {
       const settings: any = await invoke("get_settings");
       if (settings.restaurant_name) setRestaurantName(settings.restaurant_name);
+      if (settings.address) setRestaurantAddress(settings.address);
       if (settings.contact_number) setRestaurantContact(settings.contact_number);
+      if (settings.logo_path) setRestaurantLogo(settings.logo_path);
+      if (settings.tax_rate) setTaxRate(settings.tax_rate);
     } catch (err) {
       console.error("Failed to load settings:", err);
     }
@@ -127,21 +129,101 @@ export default function DeliveryManagement() {
   };
 
   const handlePrintTicket = async (order: DeliveryOrder) => {
-    let items: any[] = [];
+    let items: { id: number; name: string; price: number; quantity: number }[] = [];
     try {
       items = await invoke("get_order_items", { orderId: order.id });
-    } catch(err) {
+    } catch (err) {
       console.error("Failed to fetch items", err);
     }
 
-    const formattedId = `#ORD-${(order.order_number || order.id).toString().padStart(4, '0')}`;
-    const dateStr = order.created_at ? new Date(order.created_at).toLocaleString() : new Date().toLocaleString();
-    const driverName = order.driver_name || "Pending Dispatch";
+    // The delivery receipt shows payment details, so pull the full order row.
+    let full: any = {};
+    try {
+      const history: any[] = await invoke("get_order_history");
+      full = history.find(o => o.id === order.id) || {};
+    } catch (err) {
+      console.error("Failed to load order details", err);
+    }
 
-    setPrintTicket({ order, driverName, formattedId, date: dateStr, items });
-    setTimeout(() => {
-      if (triggerTicketPrint) triggerTicketPrint();
-    }, 100);
+    const formattedId = `#ORD-${(order.order_number || order.id).toString().padStart(4, '0')}`;
+    const dateStr = new Date(full.closed_at || full.created_at || order.created_at || new Date()).toLocaleString();
+
+    try {
+      const text = buildDeliveryReceiptText(
+        {
+          restaurantName: restaurantName || 'Restaurant Name',
+          restaurantAddress: restaurantAddress || undefined,
+          restaurantContact: restaurantContact || undefined,
+          orderId: formattedId,
+          orderType: 'Delivery',
+          date: dateStr,
+          items,
+          cashierName: full.cashier_name || 'Admin',
+          subtotal: full.subtotal ?? order.total_price,
+          taxRate,
+          taxAmount: full.tax_amount ?? 0,
+          discount: full.discount_amount ?? 0,
+          totalAmount: full.total_price ?? order.total_price,
+          amountReceived: full.amount_received ?? 0,
+          changeAmount: full.change_due ?? 0,
+          deliveryFee: order.delivery_fee ?? 0,
+          customerName: order.customer_name,
+          customerPhone: order.customer_phone,
+          deliveryAddress: order.delivery_address,
+        },
+        printSettings.deliveryReceiptLayout
+      );
+      const doc: ReceiptDocument = {
+        kind: "delivery_receipt",
+        restaurant: {
+          name: restaurantName || 'Restaurant Name',
+          address: restaurantAddress || null,
+          contact: restaurantContact || null,
+        },
+        meta: { order_id: formattedId, date_time: dateStr, order_type: 'Delivery', table_label: "", cashier_name: full.cashier_name || 'Admin' },
+        customer: { name: order.customer_name, phone: order.customer_phone, address: order.delivery_address },
+        items,
+        totals: {
+          subtotal: full.subtotal ?? order.total_price,
+          tax_rate: taxRate,
+          tax_amount: full.tax_amount ?? 0,
+          discount: full.discount_amount ?? 0,
+          delivery_fee: order.delivery_fee ?? 0,
+          total_amount: full.total_price ?? order.total_price,
+        },
+        payment: { amount_received: full.amount_received ?? 0, change_amount: full.change_due ?? 0 },
+      };
+      const element = (
+        <DeliveryReceiptTemplate
+          restaurantName={restaurantName || 'Restaurant Name'}
+          restaurantAddress={restaurantAddress || undefined}
+          restaurantContact={restaurantContact || undefined}
+          logoUrl={assetFileUrl(restaurantLogo)}
+          orderId={formattedId}
+          orderType="Delivery"
+          date={dateStr}
+          items={items}
+          subtotal={full.subtotal ?? order.total_price}
+          discount={full.discount_amount ?? 0}
+          taxAmount={full.tax_amount ?? 0}
+          taxRate={taxRate}
+          totalAmount={full.total_price ?? order.total_price}
+          amountReceived={full.amount_received ?? 0}
+          changeAmount={full.change_due ?? 0}
+          deliveryFee={order.delivery_fee ?? 0}
+          cashierName={full.cashier_name || 'Admin'}
+          customerName={order.customer_name}
+          customerPhone={order.customer_phone}
+          deliveryAddress={order.delivery_address}
+          config={printSettings.deliveryReceiptLayout}
+        />
+      );
+      await printTicketDocument("delivery_receipt", element, doc, text, printSettings);
+      showAlert("Success", "Delivery receipt sent to the printer.", "success");
+    } catch (err) {
+      console.error("Failed to print delivery receipt:", err);
+      showAlert("Error", "Failed to print delivery receipt: " + err);
+    }
   };
 
   return (
@@ -278,25 +360,6 @@ export default function DeliveryManagement() {
           )}
         </div>
       </main>
-
-      {printTicket && (
-        <div style={{ display: "none" }}>
-          <DeliveryTicketTemplate
-            ref={printRef}
-            restaurantName={restaurantName || "Restaurant Name"}
-            restaurantContact={restaurantContact || undefined}
-            orderId={printTicket.formattedId}
-            date={printTicket.date}
-            driverName={printTicket.driverName}
-            items={printTicket.items}
-            totalPrice={printTicket.order.total_price}
-            customerName={printTicket.order.customer_name}
-            customerPhone={printTicket.order.customer_phone}
-            deliveryAddress={printTicket.order.delivery_address}
-            config={printSettings.deliveryLayout}
-          />
-        </div>
-      )}
 
       <AlertModal 
         isOpen={alertModal.isOpen}

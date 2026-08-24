@@ -1,7 +1,9 @@
 pub mod auth;
 pub mod db;
+pub mod devtools;
 pub mod license;
 pub mod print;
+pub mod thermal;
 
 /// Authorizes an IPC invoke before it is dispatched to the registered command.
 ///
@@ -175,10 +177,17 @@ pub fn run() {
     db::get_detailed_table_statuses,
     db::get_cashier_dashboard_stats,
     db::save_print_html,
+    db::open_ticket_html,
     db::print_receipt_text,
+    print::print_designed_ticket,
+    print::print_thermal_ticket,
+    devtools::thermal_preview,
+    db::print_html_to_pdf,
     print::get_print_settings,
     print::update_print_settings,
     print::list_printers,
+    print::get_default_printer,
+    print::print_file_to_printer,
     db::clock_in_out,
     db::get_attendance,
     db::get_payroll_summary,

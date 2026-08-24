@@ -13,6 +13,12 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  // Inline the bundled woff2 font files as data URIs so they survive in
+  // standalone HTML exported to PDF (headless Edge reads the temp file at
+  // file://, where a relative /assets/*.woff2 URL cannot resolve).
+  build: {
+    assetsInlineLimit: 100000,
+  },
   // Add this block right here:
   server: {
     port: 1420,

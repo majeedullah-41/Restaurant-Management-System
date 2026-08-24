@@ -692,8 +692,10 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
     }
 
     // 13. Printing system configuration. Single-row table holding per-document
-    //     printer selection, copies, print mode, and receipt/KOT/delivery/
-    //     delivery-receipt layout JSON blobs (see print::PrintSettings).
+    //     printer selection, copies, and receipt/KOT/delivery/delivery-receipt
+    //     layout JSON blobs (see print::PrintSettings). The legacy print_mode
+    //     column is kept for old databases but is no longer used: printing
+    //     always follows the selected printer directly.
     conn.execute(
         "CREATE TABLE IF NOT EXISTS print_settings (
             id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -1757,6 +1759,63 @@ pub fn save_print_html(filename: String, html: String) -> Result<String, String>
     Ok("Success".to_string())
 }
 
+/// Opens a self-generated designed-ticket HTML document with the OS default
+/// handler. Unlike `save_print_html` this deliberately skips `sanitize_html`:
+/// the markup comes from the app's own React templates and embeds the compiled
+/// app stylesheet in `<style>` blocks, which the sanitizer would strip (same
+/// trust rationale as `print_html_to_pdf`).
+#[tauri::command]
+pub fn open_ticket_html(filename: String, html: String) -> Result<String, String> {
+    let safe_name = sanitize_filename(&filename);
+    if safe_name.is_empty() {
+        return Err("Invalid filename.".into());
+    }
+    let path = std::env::temp_dir().join(safe_name);
+    std::fs::write(&path, html).map_err(|e| e.to_string())?;
+    opener::open(&path).map_err(|e| e.to_string())?;
+    Ok("Success".to_string())
+}
+
+/// Renders a standalone report HTML document to a PDF using headless Microsoft
+/// Edge (same Chromium engine as the app, so Tailwind layouts stay intact) and
+/// opens the resulting file. This bypasses the WebView2 print dialog entirely,
+/// so report exports never change the printer remembered for receipt tickets.
+///
+/// The HTML is built by the app's own report components (React escapes all DB
+/// values), so it is trusted and deliberately NOT run through `sanitize_html`:
+/// that sanitizer strips `<style>` blocks (which would remove every report's
+/// styling) and is O(n²) — it hangs for seconds/minutes on a large inlined-CSS
+/// document. The HTML lives in a temp file read only by headless Edge and is
+/// deleted immediately after rendering.
+#[tauri::command]
+pub async fn print_html_to_pdf(filename: String, html: String, output_path: String) -> Result<String, String> {
+    // Run on a blocking thread so Edge rendering / opening the PDF never
+    // freezes the app UI, even though Tauri async commands are off the main
+    // thread already.
+    tauri::async_runtime::spawn_blocking(move || {
+        if output_path.trim().is_empty() {
+            return Err("A PDF output path is required.".into());
+        }
+        let safe_name = sanitize_filename(&filename);
+        if safe_name.is_empty() {
+            return Err("Invalid filename.".into());
+        }
+
+        let tmp_dir = std::env::temp_dir();
+        let html_path = tmp_dir.join(safe_name);
+        std::fs::write(&html_path, &html).map_err(|e| format!("Failed to write temp HTML: {}", e))?;
+
+        let result = crate::print::render_html_to_pdf(&html_path.display().to_string(), &output_path);
+        let _ = std::fs::remove_file(&html_path);
+        result?;
+
+        opener::open(&output_path).map_err(|e| format!("PDF saved but could not be opened: {}", e))?;
+        Ok(output_path)
+    })
+    .await
+    .map_err(|e| format!("PDF export task failed: {}", e))?
+}
+
 /// Removes `<script>`/`<iframe>`/`<object>`/`<embed>`/`<style>` blocks and
 /// `on*`/`javascript:` attributes from HTML so stored/receipt content cannot
 /// execute scripts when opened via the OS default browser.
@@ -1830,9 +1889,15 @@ fn sanitize_html(html: &str) -> String {
 }
 
 #[tauri::command]
-pub async fn print_receipt_text(text: String, printer_name: Option<String>, copies: Option<i32>) -> Result<String, String> {
+pub async fn print_receipt_text(
+    text: String,
+    printer_name: Option<String>,
+    copies: Option<i32>,
+    width_mm: Option<f64>,
+    font_scale: Option<f64>,
+) -> Result<String, String> {
     let copies = copies.unwrap_or(1).max(1) as u32;
-    crate::print::print_text(printer_name.as_deref(), &text, copies)?;
+    crate::print::print_text(printer_name.as_deref(), &text, copies, width_mm, font_scale)?;
     Ok("Print job sent".to_string())
 }
 

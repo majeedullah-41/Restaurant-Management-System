@@ -1,14 +1,16 @@
 import { useState, useEffect } from "react";
+import type { ReactElement } from "react";
 import { invoke } from "../lib/api";
 import { Save, Loader2, Printer, TestTube2, LayoutTemplate, FileCode2, RefreshCw } from "lucide-react";
 import {
   fetchPrinters,
   loadPrintSettings,
   savePrintSettings,
-  printTextDocument,
+  printTicketDocument,
+  kindConfig,
+  assetFileUrl,
   buildReceiptText,
   buildKotText,
-  buildDeliveryText,
   buildDeliveryReceiptText,
   DEFAULT_PRINT_SETTINGS,
   type PrintSettings,
@@ -17,6 +19,7 @@ import {
   type KotLayoutConfig,
   type DeliveryReceiptLayoutConfig,
   type TicketKind,
+  type ReceiptDocument,
 } from "../lib/printing";
 import { ReceiptTemplate } from "./ReceiptTemplate";
 import { KOTTemplate } from "./KOTTemplate";
@@ -48,6 +51,7 @@ const SAMPLE_RECEIPT_DATA = {
   amountReceived: 2000,
   changeAmount: 406.4,
   cashierName: "Admin",
+  orderTakerName: "Ali",
 };
 
 const SAMPLE_KOT_DATA = {
@@ -158,12 +162,93 @@ export default function PrintSettingsSection() {
     setTesting(kind);
     setTestMsg(null);
     try {
+      const logoUrl = assetFileUrl(restaurant.logo);
       let text = "";
+      let doc: ReceiptDocument;
+      let element: ReactElement;
+
       if (kind === "receipt") {
         text = buildReceiptText(SAMPLE_RECEIPT_DATA, settings.receiptLayout);
+        doc = {
+          kind: "receipt",
+          restaurant: { name: restaurant.name, address: restaurant.address || null, contact: restaurant.contact || null },
+          meta: {
+            order_id: SAMPLE_RECEIPT_DATA.orderId,
+            date_time: SAMPLE_RECEIPT_DATA.date,
+            order_type: SAMPLE_RECEIPT_DATA.orderType,
+            table_label: SAMPLE_RECEIPT_DATA.tableLabel,
+            cashier_name: SAMPLE_RECEIPT_DATA.cashierName,
+            order_taker_name: SAMPLE_RECEIPT_DATA.orderTakerName || null,
+          },
+          items: SAMPLE_RECEIPT_DATA.items,
+          totals: {
+            subtotal: SAMPLE_RECEIPT_DATA.subtotal,
+            tax_rate: SAMPLE_RECEIPT_DATA.taxRate,
+            tax_amount: SAMPLE_RECEIPT_DATA.taxAmount,
+            discount: SAMPLE_RECEIPT_DATA.discount,
+            total_amount: SAMPLE_RECEIPT_DATA.totalAmount,
+          },
+          payment: { amount_received: SAMPLE_RECEIPT_DATA.amountReceived, change_amount: SAMPLE_RECEIPT_DATA.changeAmount },
+        };
+        element = (
+          <ReceiptTemplate
+            restaurantName={restaurant.name}
+            restaurantAddress={restaurant.address || undefined}
+            restaurantContact={restaurant.contact || undefined}
+            logoUrl={logoUrl}
+            orderId={SAMPLE_RECEIPT_DATA.orderId}
+            orderType={SAMPLE_RECEIPT_DATA.orderType}
+            tableNumber={SAMPLE_RECEIPT_DATA.tableNumber}
+            tableCategoryName={SAMPLE_RECEIPT_DATA.tableCategoryName}
+            date={SAMPLE_RECEIPT_DATA.date}
+            items={SAMPLE_RECEIPT_DATA.items}
+            subtotal={SAMPLE_RECEIPT_DATA.subtotal}
+            discount={SAMPLE_RECEIPT_DATA.discount}
+            taxAmount={SAMPLE_RECEIPT_DATA.taxAmount}
+            taxRate={SAMPLE_RECEIPT_DATA.taxRate}
+            totalAmount={SAMPLE_RECEIPT_DATA.totalAmount}
+            amountReceived={SAMPLE_RECEIPT_DATA.amountReceived}
+            changeAmount={SAMPLE_RECEIPT_DATA.changeAmount}
+            cashierName={SAMPLE_RECEIPT_DATA.cashierName}
+            orderTakerName={SAMPLE_RECEIPT_DATA.orderTakerName}
+            config={settings.receiptLayout}
+          />
+        );
       } else if (kind === "kot") {
         text = buildKotText(SAMPLE_KOT_DATA, settings.kotLayout);
-      } else if (kind === "delivery_receipt") {
+        doc = {
+          kind: "kot",
+          restaurant: { name: restaurant.name, contact: restaurant.contact || null },
+          meta: {
+            order_id: SAMPLE_KOT_DATA.orderId,
+            date_time: SAMPLE_KOT_DATA.date,
+            order_type: SAMPLE_KOT_DATA.orderType,
+            table_label: SAMPLE_KOT_DATA.tableLabel,
+            cashier_name: SAMPLE_KOT_DATA.cashierName,
+            order_taker_name: SAMPLE_KOT_DATA.orderTakerName || null,
+          },
+          items: SAMPLE_KOT_DATA.items.map(i => ({ name: i.name, price: 0, quantity: i.printQty })),
+          totals: { subtotal: 0, tax_rate: 0, tax_amount: 0, discount: 0, total_amount: 0 },
+          payment: { amount_received: 0, change_amount: 0 },
+        };
+        element = (
+          <KOTTemplate
+            orderId={SAMPLE_KOT_DATA.orderId}
+            orderType={SAMPLE_KOT_DATA.orderType}
+            tableNumber={SAMPLE_KOT_DATA.tableNumber}
+            tableCategoryName={SAMPLE_KOT_DATA.tableCategoryName}
+            date={SAMPLE_KOT_DATA.date}
+            items={SAMPLE_KOT_DATA.items}
+            cashierName={SAMPLE_KOT_DATA.cashierName}
+            orderTakerName={SAMPLE_KOT_DATA.orderTakerName}
+            restaurantName={restaurant.name}
+            restaurantContact={restaurant.contact || undefined}
+            logoUrl={logoUrl}
+            config={settings.kotLayout}
+          />
+        );
+      } else {
+        // kind === "delivery_receipt"
         text = buildDeliveryReceiptText(
           {
             restaurantName: restaurant.name,
@@ -188,25 +273,67 @@ export default function PrintSettingsSection() {
           },
           settings.deliveryReceiptLayout
         );
-      } else {
-        text = buildDeliveryText(
-          {
-            restaurantName: restaurant.name,
-            restaurantContact: restaurant.contact || undefined,
-            orderId: "#ORD-0001",
-            date: "15/08/2026 12:30",
-            driverName: "Ahmed",
-            items: SAMPLE_RECEIPT_DATA.items,
-            totalPrice: 1593.6,
-            customerName: "John Doe",
-            customerPhone: "0300-1234567",
-            deliveryAddress: "House 12, Street 5, Main Boulevard",
+        doc = {
+          kind: "delivery_receipt",
+          restaurant: { name: restaurant.name, address: restaurant.address || null, contact: restaurant.contact || null },
+          meta: {
+            order_id: SAMPLE_DR_DATA.orderId,
+            date_time: SAMPLE_DR_DATA.date,
+            order_type: SAMPLE_DR_DATA.orderType,
+            table_label: "",
+            cashier_name: SAMPLE_DR_DATA.cashierName,
           },
-          settings.deliveryLayout
+          customer: { name: SAMPLE_DR_DATA.customerName, phone: SAMPLE_DR_DATA.customerPhone, address: SAMPLE_DR_DATA.deliveryAddress },
+          items: SAMPLE_DR_DATA.items,
+          totals: {
+            subtotal: SAMPLE_DR_DATA.subtotal,
+            tax_rate: SAMPLE_DR_DATA.taxRate,
+            tax_amount: SAMPLE_DR_DATA.taxAmount,
+            discount: SAMPLE_DR_DATA.discount,
+            delivery_fee: SAMPLE_DR_DATA.deliveryFee,
+            total_amount: SAMPLE_DR_DATA.totalAmount,
+          },
+          payment: { amount_received: SAMPLE_DR_DATA.amountReceived, change_amount: SAMPLE_DR_DATA.changeAmount },
+        };
+        element = (
+          <DeliveryReceiptTemplate
+            restaurantName={restaurant.name}
+            restaurantAddress={restaurant.address || undefined}
+            restaurantContact={restaurant.contact || undefined}
+            logoUrl={logoUrl}
+            orderId={SAMPLE_DR_DATA.orderId}
+            orderType={SAMPLE_DR_DATA.orderType}
+            date={SAMPLE_DR_DATA.date}
+            items={SAMPLE_DR_DATA.items}
+            subtotal={SAMPLE_DR_DATA.subtotal}
+            discount={SAMPLE_DR_DATA.discount}
+            taxAmount={SAMPLE_DR_DATA.taxAmount}
+            taxRate={SAMPLE_DR_DATA.taxRate}
+            totalAmount={SAMPLE_DR_DATA.totalAmount}
+            amountReceived={SAMPLE_DR_DATA.amountReceived}
+            changeAmount={SAMPLE_DR_DATA.changeAmount}
+            deliveryFee={SAMPLE_DR_DATA.deliveryFee}
+            cashierName={SAMPLE_DR_DATA.cashierName}
+            customerName={SAMPLE_DR_DATA.customerName}
+            customerPhone={SAMPLE_DR_DATA.customerPhone}
+            deliveryAddress={SAMPLE_DR_DATA.deliveryAddress}
+            config={settings.deliveryReceiptLayout}
+          />
         );
       }
-      await printTextDocument(kind, text, settings);
-      setTestMsg({ type: "success", text: "Test print sent to the printer queue." });
+
+      await printTicketDocument(kind, element, doc, text, settings);
+
+      const { printer } = kindConfig(settings, kind);
+      const successText =
+        printer === "dialog"
+          ? "Print window opened — choose a printer."
+          : printer === "browser"
+            ? "Designed ticket opened in your browser."
+            : printer.toLowerCase().includes("pdf")
+              ? "Designed ticket PDF created and opened."
+              : "Test print sent to the printer queue.";
+      setTestMsg({ type: "success", text: successText });
     } catch (err: any) {
       setTestMsg({ type: "error", text: err.toString() });
     } finally {
@@ -250,7 +377,7 @@ export default function PrintSettingsSection() {
             { id: "printers", label: "Printers & Copies", icon: <Printer size={16} /> },
             { id: "receipt", label: "Receipt Design", icon: <FileCode2 size={16} /> },
             { id: "kot", label: "KOT Design", icon: <LayoutTemplate size={16} /> },
-            { id: "dr", label: "DR Design", icon: <FileCode2 size={16} /> },
+            { id: "dr", label: "Delivery Design", icon: <FileCode2 size={16} /> },
           ] as { id: Tab; label: string; icon: React.ReactNode }[]
         ).map((t) => (
           <button
@@ -275,7 +402,9 @@ export default function PrintSettingsSection() {
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <p className="text-sm text-slate-500 dark:text-slate-400">
-                Choose which printer each ticket is sent to. A blank selection uses the Windows default printer.
+                Choose which printer each ticket is sent to. Tickets print directly on the selected printer — no dialog.
+                A blank selection uses the Windows default printer, "Open Print Window" lets you pick a printer at print
+                time, and "Open in Browser" shows the designed ticket as an HTML preview.
               </p>
               <button
                 type="button"
@@ -291,9 +420,8 @@ export default function PrintSettingsSection() {
               [
                 { key: "receipt", kind: "receipt", label: "Receipt Printer", sub: "Customer payment receipt" },
                 { key: "kot", kind: "kot", label: "KOT Printer", sub: "Kitchen order ticket" },
-                { key: "delivery", kind: "delivery", label: "Delivery Ticket Printer", sub: "Delivery / dispatch ticket" },
-                { key: "deliveryReceipt", kind: "delivery_receipt", label: "Delivery Receipt Printer", sub: "Customer receipt for delivery orders" },
-              ] as { key: "receipt" | "kot" | "delivery" | "deliveryReceipt"; kind: TicketKind; label: string; sub: string }[]
+                { key: "deliveryReceipt", kind: "delivery_receipt", label: "Delivery Printer", sub: "Delivery order receipt (checkout & Delivery Management)" },
+              ] as { key: "receipt" | "kot" | "deliveryReceipt"; kind: TicketKind; label: string; sub: string }[]
             ).map((row) => (
               <div key={row.key} className="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20">
                 <div className="md:col-span-4">
@@ -308,6 +436,7 @@ export default function PrintSettingsSection() {
                     className={selectCls(settings[`${row.key}Printer`])}
                   >
                     <option value="">Default printer</option>
+                    <option value="dialog">Open Print Window</option>
                     <option value="browser">Open in Browser</option>
                     {printers
                       .filter((p) => {
@@ -352,24 +481,6 @@ export default function PrintSettingsSection() {
               </div>
             ))}
 
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20">
-              <div className="md:col-span-4">
-                <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">Print Mode</p>
-                <p className="text-xs text-slate-400 mt-0.5">Direct to the printer, or open a preview dialog first</p>
-              </div>
-              <div className="md:col-span-5">
-                <select
-                  data-testid="print-mode"
-                  value={settings.printMode}
-                  onChange={(e) => updateSettings({ printMode: e.target.value as "auto" | "preview" })}
-                  className={selectCls(settings.printMode)}
-                >
-                  <option value="auto">Direct to printer (no dialog)</option>
-                  <option value="preview">Show print preview dialog</option>
-                </select>
-              </div>
-            </div>
-
             {testMsg && (
               <p data-testid="print-test-message" className={`text-sm font-bold ${testMsg.type === "success" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
                 {testMsg.text}
@@ -381,7 +492,7 @@ export default function PrintSettingsSection() {
         {tab === "receipt" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div className="space-y-5">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Paper Width (mm)</label>
                   <input
@@ -405,6 +516,23 @@ export default function PrintSettingsSection() {
                     onChange={(e) => updateReceipt({ fontScale: Math.max(60, Math.min(150, parseInt(e.target.value) || 100)) })}
                     className={inputCls}
                   />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Characters / line</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={72}
+                    step={1}
+                    value={settings.receiptLayout.charsPerLine || ""}
+                    placeholder="Auto"
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value);
+                      updateReceipt({ charsPerLine: Number.isNaN(n) ? 0 : Math.max(0, Math.min(72, n)) });
+                    }}
+                    className={inputCls}
+                  />
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">0 = automatic. If print clips on the right, lower this (try 42).</p>
                 </div>
               </div>
 
@@ -451,6 +579,7 @@ export default function PrintSettingsSection() {
                 <ToggleRow label="Order type" testId="toggle-receipt-showOrderType" checked={settings.receiptLayout.showOrderType} onChange={(v) => updateReceipt({ showOrderType: v })} />
                 <ToggleRow label="Table number" testId="toggle-receipt-showTable" checked={settings.receiptLayout.showTable} onChange={(v) => updateReceipt({ showTable: v })} />
                 <ToggleRow label="Cashier name" testId="toggle-receipt-showCashier" checked={settings.receiptLayout.showCashier} onChange={(v) => updateReceipt({ showCashier: v })} />
+                <ToggleRow label="Order taker" testId="toggle-receipt-showOrderTaker" checked={settings.receiptLayout.showOrderTaker} onChange={(v) => updateReceipt({ showOrderTaker: v })} />
                 <ToggleRow label="Tax line" testId="toggle-receipt-showTax" checked={settings.receiptLayout.showTax} onChange={(v) => updateReceipt({ showTax: v })} />
                 <ToggleRow label="Discount line" testId="toggle-receipt-showDiscount" checked={settings.receiptLayout.showDiscount} onChange={(v) => updateReceipt({ showDiscount: v })} />
                 <ToggleRow label="Cash received" testId="toggle-receipt-showCashReceived" checked={settings.receiptLayout.showCashReceived} onChange={(v) => updateReceipt({ showCashReceived: v })} />
@@ -483,6 +612,7 @@ export default function PrintSettingsSection() {
                     amountReceived={SAMPLE_RECEIPT_DATA.amountReceived}
                     changeAmount={SAMPLE_RECEIPT_DATA.changeAmount}
                     cashierName={SAMPLE_RECEIPT_DATA.cashierName}
+                    orderTakerName={SAMPLE_RECEIPT_DATA.orderTakerName}
                     config={settings.receiptLayout}
                   />
                 </div>
@@ -494,7 +624,7 @@ export default function PrintSettingsSection() {
         {tab === "kot" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div className="space-y-5">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Paper Width (mm)</label>
                   <input
@@ -518,6 +648,23 @@ export default function PrintSettingsSection() {
                     onChange={(e) => updateKot({ fontScale: Math.max(60, Math.min(150, parseInt(e.target.value) || 100)) })}
                     className={inputCls}
                   />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Characters / line</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={72}
+                    step={1}
+                    value={settings.kotLayout.charsPerLine || ""}
+                    placeholder="Auto"
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value);
+                      updateKot({ charsPerLine: Number.isNaN(n) ? 0 : Math.max(0, Math.min(72, n)) });
+                    }}
+                    className={inputCls}
+                  />
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">0 = automatic. Match the receipt tab value.</p>
                 </div>
               </div>
 
@@ -571,7 +718,7 @@ export default function PrintSettingsSection() {
         {tab === "dr" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div className="space-y-5">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Paper Width (mm)</label>
                   <input
@@ -595,6 +742,23 @@ export default function PrintSettingsSection() {
                     onChange={(e) => updateDr({ fontScale: Math.max(60, Math.min(150, parseInt(e.target.value) || 100)) })}
                     className={inputCls}
                   />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Characters / line</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={72}
+                    step={1}
+                    value={settings.deliveryReceiptLayout.charsPerLine || ""}
+                    placeholder="Auto"
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value);
+                      updateDr({ charsPerLine: Number.isNaN(n) ? 0 : Math.max(0, Math.min(72, n)) });
+                    }}
+                    className={inputCls}
+                  />
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">0 = automatic. Match the receipt tab value.</p>
                 </div>
               </div>
 

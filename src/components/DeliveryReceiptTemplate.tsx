@@ -81,7 +81,9 @@ export const DeliveryReceiptTemplate = React.forwardRef<HTMLDivElement, Delivery
         ref={ref}
         className="bg-white text-black p-2 mx-auto font-sans font-bold"
         style={{
-          width: `${config.widthMm / zoom}mm`,
+          // 3mm narrower than the paper so rounding and printer hardware
+          // margins can never clip the content at the edges.
+          width: `${(config.widthMm - 3) / zoom}mm`,
           zoom,
           printColorAdjust: 'exact',
           WebkitPrintColorAdjust: 'exact'
@@ -95,10 +97,12 @@ export const DeliveryReceiptTemplate = React.forwardRef<HTMLDivElement, Delivery
                 margin: 0;
               }
               html, body {
-                height: max-content !important;
+                height: auto !important;
                 min-height: 0 !important;
-                margin: 0;
-                padding: 0;
+                max-height: none !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                overflow: visible !important;
               }
             }
           `}

@@ -28,6 +28,7 @@ interface ReceiptProps {
   amountReceived: number;
   changeAmount: number;
   cashierName: string;
+  orderTakerName?: string;
   config?: Partial<ReceiptLayoutConfig>;
 }
 
@@ -78,7 +79,9 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
         ref={ref}
         className="bg-white text-black p-2 mx-auto font-sans font-bold"
         style={{
-          width: `${config.widthMm / zoom}mm`,
+          // 3mm narrower than the paper so rounding and printer hardware
+          // margins can never clip the content at the edges.
+          width: `${(config.widthMm - 3) / zoom}mm`,
           zoom,
           printColorAdjust: 'exact',
           WebkitPrintColorAdjust: 'exact'
@@ -92,10 +95,12 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
                 margin: 0;
               }
               html, body {
-                height: max-content !important;
+                height: auto !important;
                 min-height: 0 !important;
-                margin: 0;
-                padding: 0;
+                max-height: none !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                overflow: visible !important;
               }
             }
           `}
@@ -129,6 +134,7 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptProps>((p
           {config.showOrderType && <div><span className="font-bold">TYPE:</span> {props.orderType}</div>}
           {config.showTable && <div><span className="font-bold">TBL:</span> {props.tableNumber === "0" ? "Walk-in" : (props.tableCategoryName ? `${props.tableCategoryName.trim()} ${props.tableNumber.padStart(2, '0')}` : `Table ${props.tableNumber.padStart(2, '0')}`)}</div>}
           {config.showCashier && <div><span className="font-bold">CASHIER:</span> {props.cashierName}</div>}
+          {config.showOrderTaker && props.orderTakerName && <div><span className="font-bold">ORDER TAKER:</span> {props.orderTakerName}</div>}
         </div>
 
         <table className="w-full text-left border-collapse border border-black mb-1">

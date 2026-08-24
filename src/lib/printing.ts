@@ -1,5 +1,11 @@
 import { invoke } from "./api";
 import { formatCurrency } from "./utils";
+import type { ReactElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { join, tempDir } from "@tauri-apps/api/path";
+// The app's compiled Tailwind CSS, inlined at build time so standalone ticket
+// HTML (browser / PDF / print window) keeps every utility class intact.
+import compiledCss from "../App.css?inline";
 
 export interface PrinterInfo {
   name: string;
@@ -29,14 +35,13 @@ export interface ReceiptLayoutConfig extends BaseLayoutConfig {
   showCashReceived: boolean;
   showChange: boolean;
   itemNameWidthPct: number;
+  showOrderTaker: boolean;
+  charsPerLine: number;
 }
 
 export interface KotLayoutConfig extends BaseLayoutConfig {
   showOrderTaker: boolean;
-}
-
-export interface DeliveryLayoutConfig extends BaseLayoutConfig {
-  showCustomerDetails: boolean;
+  charsPerLine: number;
 }
 
 export interface DeliveryReceiptLayoutConfig extends BaseLayoutConfig {
@@ -50,25 +55,68 @@ export interface DeliveryReceiptLayoutConfig extends BaseLayoutConfig {
   itemNameWidthPct: number;
   showCustomerDetails: boolean;
   showDeliveryAddress: boolean;
+  charsPerLine: number;
 }
 
 export interface PrintSettings {
   receiptPrinter: string;
   kotPrinter: string;
-  deliveryPrinter: string;
   deliveryReceiptPrinter: string;
   receiptCopies: number;
   kotCopies: number;
-  deliveryCopies: number;
   deliveryReceiptCopies: number;
-  printMode: "auto" | "preview";
   receiptLayout: ReceiptLayoutConfig;
   kotLayout: KotLayoutConfig;
-  deliveryLayout: DeliveryLayoutConfig;
   deliveryReceiptLayout: DeliveryReceiptLayoutConfig;
 }
 
-export type TicketKind = "receipt" | "kot" | "delivery" | "delivery_receipt";
+export type TicketKind = "receipt" | "kot" | "delivery_receipt";
+
+// ─── Logical receipt document (shared source of truth) ──────────────────────
+// Serialized straight into the Rust `ReceiptDocument` model (snake_case keys
+// match serde). Both the thermal ESC/POS renderer and the HTML renderer
+// consume the same logical data.
+
+export interface ReceiptDocumentItem {
+  name: string;
+  price: number;
+  quantity: number;
+}
+
+export interface ReceiptDocument {
+  kind: TicketKind;
+  restaurant: {
+    name: string;
+    address?: string | null;
+    contact?: string | null;
+  };
+  meta: {
+    order_id: string;
+    date_time: string;
+    order_type: string;
+    table_label: string;
+    cashier_name: string;
+    order_taker_name?: string | null;
+  };
+  customer?: {
+    name?: string | null;
+    phone?: string | null;
+    address?: string | null;
+  } | null;
+  items: ReceiptDocumentItem[];
+  totals: {
+    subtotal: number;
+    tax_rate: number;
+    tax_amount: number;
+    discount: number;
+    delivery_fee?: number | null;
+    total_amount: number;
+  };
+  payment: {
+    amount_received: number;
+    change_amount: number;
+  };
+}
 
 export const DEFAULT_RECEIPT_LAYOUT: ReceiptLayoutConfig = {
   widthMm: 80,
@@ -88,6 +136,8 @@ export const DEFAULT_RECEIPT_LAYOUT: ReceiptLayoutConfig = {
   showCashReceived: true,
   showChange: true,
   itemNameWidthPct: 40,
+  showOrderTaker: true,
+  charsPerLine: 0,
 };
 
 export const DEFAULT_KOT_LAYOUT: KotLayoutConfig = {
@@ -101,19 +151,7 @@ export const DEFAULT_KOT_LAYOUT: KotLayoutConfig = {
   footerMessage: "",
   showEndMarker: true,
   showOrderTaker: true,
-};
-
-export const DEFAULT_DELIVERY_LAYOUT: DeliveryLayoutConfig = {
-  widthMm: 80,
-  fontScale: 100,
-  showLogo: true,
-  showDate: true,
-  showTime: false,
-  showTable: false,
-  showCashier: false,
-  footerMessage: "Please collect the total amount from the customer.",
-  showEndMarker: true,
-  showCustomerDetails: true,
+  charsPerLine: 0,
 };
 
 export const DEFAULT_DR_LAYOUT: DeliveryReceiptLayoutConfig = {
@@ -136,21 +174,18 @@ export const DEFAULT_DR_LAYOUT: DeliveryReceiptLayoutConfig = {
   itemNameWidthPct: 40,
   showCustomerDetails: true,
   showDeliveryAddress: true,
+  charsPerLine: 0,
 };
 
 export const DEFAULT_PRINT_SETTINGS: PrintSettings = {
   receiptPrinter: "",
   kotPrinter: "",
-  deliveryPrinter: "",
   deliveryReceiptPrinter: "",
   receiptCopies: 1,
   kotCopies: 1,
-  deliveryCopies: 1,
   deliveryReceiptCopies: 1,
-  printMode: "auto",
   receiptLayout: DEFAULT_RECEIPT_LAYOUT,
   kotLayout: DEFAULT_KOT_LAYOUT,
-  deliveryLayout: DEFAULT_DELIVERY_LAYOUT,
   deliveryReceiptLayout: DEFAULT_DR_LAYOUT,
 };
 
@@ -178,16 +213,12 @@ export async function loadPrintSettings(): Promise<PrintSettings> {
     return {
       receiptPrinter: data.receipt_printer || "",
       kotPrinter: data.kot_printer || "",
-      deliveryPrinter: data.delivery_printer || "",
       deliveryReceiptPrinter: data.delivery_receipt_printer || "",
       receiptCopies: data.receipt_copies ?? 1,
       kotCopies: data.kot_copies ?? 1,
-      deliveryCopies: data.delivery_copies ?? 1,
       deliveryReceiptCopies: data.delivery_receipt_copies ?? 1,
-      printMode: data.print_mode === "preview" ? "preview" : "auto",
       receiptLayout: parseLayout<ReceiptLayoutConfig>(data.receipt_layout, DEFAULT_RECEIPT_LAYOUT),
       kotLayout: parseLayout<KotLayoutConfig>(data.kot_layout, DEFAULT_KOT_LAYOUT),
-      deliveryLayout: parseLayout<DeliveryLayoutConfig>(data.delivery_layout, DEFAULT_DELIVERY_LAYOUT),
       deliveryReceiptLayout: parseLayout<DeliveryReceiptLayoutConfig>(data.delivery_receipt_layout, DEFAULT_DR_LAYOUT),
     };
   } catch {
@@ -199,16 +230,12 @@ export async function savePrintSettings(settings: PrintSettings): Promise<void> 
   await invoke("update_print_settings", {
     receiptPrinter: settings.receiptPrinter || null,
     kotPrinter: settings.kotPrinter || null,
-    deliveryPrinter: settings.deliveryPrinter || null,
     deliveryReceiptPrinter: settings.deliveryReceiptPrinter || null,
     receiptCopies: settings.receiptCopies,
     kotCopies: settings.kotCopies,
-    deliveryCopies: settings.deliveryCopies,
     deliveryReceiptCopies: settings.deliveryReceiptCopies,
-    printMode: settings.printMode,
     receiptLayout: JSON.stringify(settings.receiptLayout),
     kotLayout: JSON.stringify(settings.kotLayout),
-    deliveryLayout: JSON.stringify(settings.deliveryLayout),
     deliveryReceiptLayout: JSON.stringify(settings.deliveryReceiptLayout),
   });
 }
@@ -219,55 +246,178 @@ export function kindConfig(settings: PrintSettings, kind: TicketKind): {
 } {
   if (kind === "receipt") return { printer: settings.receiptPrinter, copies: settings.receiptCopies };
   if (kind === "kot") return { printer: settings.kotPrinter, copies: settings.kotCopies };
-  if (kind === "delivery_receipt")
-    return { printer: settings.deliveryReceiptPrinter, copies: settings.deliveryReceiptCopies };
-  return { printer: settings.deliveryPrinter, copies: settings.deliveryCopies };
+  return { printer: settings.deliveryReceiptPrinter, copies: settings.deliveryReceiptCopies };
 }
 
 /**
- * Sends a plain-text ticket to the configured printer (native path). When no
- * printer is configured the OS default printer is used. Uses spawn() so PDF
- * printers waiting on a 'Save As' dialog never block the UI.
+ * Prints a plain-text ticket. The selected printer drives the behaviour:
+ * a real printer (or blank = OS default) receives the ticket directly with
+ * no dialog; "browser" opens an HTML preview in the system browser instead.
+ * Uses spawn() so PDF printers waiting on a 'Save As' dialog never block the UI.
  */
 export function layoutForKind(settings: PrintSettings, kind: TicketKind): BaseLayoutConfig {
   if (kind === "receipt") return settings.receiptLayout;
   if (kind === "kot") return settings.kotLayout;
-  if (kind === "delivery_receipt") return settings.deliveryReceiptLayout;
-  return settings.deliveryLayout;
+  return settings.deliveryReceiptLayout;
 }
 
-function escapeHtml(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+/** Converts a local absolute path (e.g. a logo file) to a file:// URI so it loads in standalone HTML. */
+export function assetFileUrl(path?: string | null): string | undefined {
+  if (!path) return undefined;
+  if (/^(data:|https?:|blob:|file:)/i.test(path)) return path;
+  if (!/^[a-zA-Z]:[\\/]/.test(path)) return path;
+  return "file:///" + path.replace(/\\/g, "/");
 }
 
-export async function printTextDocument(kind: TicketKind, text: string, settings: PrintSettings): Promise<void> {
-  const { printer, copies } = kindConfig(settings, kind);
-  const preview = printer === "browser" || settings.printMode === "preview";
-
-  if (preview) {
-    const widthMm = layoutForKind(settings, kind).widthMm || 80;
-    const html = `<!DOCTYPE html>
-<html style="background: #e2e8f0; font-family: 'Courier New', Courier, monospace;">
+/**
+ * Renders the designed ticket template into a self-contained HTML document:
+ * inlines the compiled app stylesheet and un-hides the template wrapper, so
+ * the output looks exactly like the live preview in Settings.
+ */
+function buildTicketHtml(element: ReactElement): string {
+  const body = renderToStaticMarkup(element);
+  return `<!DOCTYPE html>
+<html>
 <head>
 <meta charset="utf-8">
-<title>Receipt Preview</title>
+<title>Ticket</title>
+<style>${compiledCss}</style>
+<style>
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    min-height: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  .hidden { display: block !important; }
+</style>
 </head>
-<body style="display: flex; justify-content: center; margin: 0; padding: 16px;">
-<div style="background: white; color: black; width: ${widthMm}mm; padding: 8px 4px; border: 1px solid #cbd5e1; box-shadow: 0 4px 12px rgba(0,0,0,0.15); white-space: pre-wrap; word-wrap: break-word; font-size: 12px; font-weight: bold;">${escapeHtml(text)}</div>
-</body>
+<body>${body}</body>
 </html>`;
-    await invoke("save_print_html", {
+}
+
+/**
+ * Opens the OS print window for `html` via a hidden iframe, letting the user
+ * pick any installed printer (WebView2 shows the native print dialog).
+ */
+function printViaDialog(html: string): void {
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.position = "fixed";
+  frame.style.right = "0";
+  frame.style.bottom = "0";
+  frame.style.width = "0";
+  frame.style.height = "0";
+  frame.style.border = "0";
+  frame.srcdoc = html;
+  frame.onload = () => {
+    const win = frame.contentWindow;
+    if (!win) {
+      frame.remove();
+      return;
+    }
+    win.addEventListener("afterprint", () => frame.remove());
+    setTimeout(() => {
+      try {
+        win.focus();
+        win.print();
+      } catch (err) {
+        console.error("Failed to open the print window:", err);
+        frame.remove();
+      }
+    }, 100);
+  };
+  document.body.appendChild(frame);
+  // Safety cleanup in case the print is cancelled without afterprint firing.
+  setTimeout(() => {
+    if (frame.isConnected) frame.remove();
+  }, 120000);
+}
+
+/**
+ * Prints a ticket following the selected printer option:
+ *  - "browser"  → opens the designed ticket in the system browser
+ *  - "dialog"   → opens the OS print window with the designed ticket
+ *  - PDF printer → renders the designed ticket to a PDF and opens it
+ *  - a real printer (or blank = OS default) → deterministic ESC/POS thermal
+ *    output first (`print_thermal_ticket`); if that pipeline fails, falls
+ *    back to the designed HTML→PDF route, then to plain-text ESC/POS.
+ * `element` is the designed template exactly as previewed in Settings;
+ * `document` is the logical receipt shared by both renderers; `text` is its
+ * plain-text last-resort form. Every fallback fires at most once — never
+ * recursively (master spec Fallback Rule).
+ */
+export async function printTicketDocument(
+  kind: TicketKind,
+  element: ReactElement,
+  document: ReceiptDocument,
+  text: string,
+  settings: PrintSettings
+): Promise<void> {
+  const { printer, copies } = kindConfig(settings, kind);
+
+  if (printer === "browser") {
+    await invoke("open_ticket_html", { filename: `ticket-${Date.now()}.html`, html: buildTicketHtml(element) });
+    return;
+  }
+
+  if (printer === "dialog") {
+    printViaDialog(buildTicketHtml(element));
+    return;
+  }
+
+  // Resolve a blank selection to the OS default so a PDF default printer is detected.
+  let target = printer;
+  if (!target) {
+    try {
+      target = (await invoke<string>("get_default_printer")) || "";
+    } catch {
+      target = "";
+    }
+  }
+
+  if (/pdf/i.test(target.toLowerCase())) {
+    const outputPath = await join(await tempDir(), `ticket-${Date.now()}.pdf`);
+    await invoke("print_html_to_pdf", {
       filename: `ticket-${Date.now()}.html`,
-      html
+      html: buildTicketHtml(element),
+      outputPath,
     });
     return;
   }
 
-  await invoke("print_receipt_text", {
-    text,
-    printerName: printer || null,
-    copies: Math.max(1, copies),
-  });
+  // Physical receipt printer: deterministic thermal output first.
+  const layout = layoutForKind(settings, kind);
+  try {
+    await invoke("print_thermal_ticket", {
+      document,
+      layoutJson: JSON.stringify(layout),
+      printerName: printer || null,
+      copies: Math.max(1, copies),
+    });
+    return;
+  } catch (thermalErr) {
+    console.error("Thermal print failed; falling back to the designed HTML→PDF route:", thermalErr);
+  }
+
+  try {
+    await invoke("print_designed_ticket", {
+      html: buildTicketHtml(element),
+      printerName: printer || null,
+      copies: Math.max(1, copies),
+    });
+  } catch (designedErr) {
+    console.error("Designed print failed; falling back to plain-text ticket:", designedErr);
+    await invoke("print_receipt_text", {
+      text,
+      printerName: printer || null,
+      copies: Math.max(1, copies),
+      widthMm: layout.widthMm || 80,
+      fontScale: layout.fontScale || 100,
+    });
+  }
 }
 
 // ─── Text layout helpers ─────────────────────────────────────────────────────
@@ -317,6 +467,7 @@ export interface ReceiptTextData {
   date: string;
   items: { name: string; price: number; quantity: number }[];
   cashierName: string;
+  orderTakerName?: string;
   subtotal: number;
   taxRate: number;
   taxAmount: number;
@@ -349,6 +500,7 @@ export function buildReceiptText(data: ReceiptTextData, layout: ReceiptLayoutCon
   if (layout.showOrderType) lines.push(padBoth("TYPE", data.orderType, width));
   if (layout.showTable) lines.push(padBoth("TABLE", data.tableLabel, width));
   if (layout.showCashier) lines.push(padBoth("CASHIER", data.cashierName, width));
+  if (layout.showOrderTaker && data.orderTakerName) lines.push(padBoth("ORDER TAKER", data.orderTakerName, width));
 
   lines.push(ruleLine("-", width));
 
@@ -440,72 +592,6 @@ export function buildKotText(data: KotTextData, layout: KotLayoutConfig): string
   if (layout.footerMessage.trim()) lines.push(centerText(layout.footerMessage.trim().toUpperCase(), width));
   if (layout.showEndMarker) {
     lines.push(centerText("*** END OF KOT ***", width));
-    lines.push(ruleLine("-", width));
-  }
-
-  return lines.join("\n") + "\n";
-}
-
-// ─── Delivery text builder ───────────────────────────────────────────────────
-
-export interface DeliveryTicketData {
-  restaurantName: string;
-  restaurantContact?: string;
-  orderId: string;
-  date: string;
-  driverName: string;
-  items: { name: string; price: number; quantity: number }[];
-  totalPrice: number;
-  customerName: string | null;
-  customerPhone: string | null;
-  deliveryAddress: string | null;
-}
-
-export function buildDeliveryText(data: DeliveryTicketData, layout: DeliveryLayoutConfig): string {
-  const width = charsForLine(layout.widthMm, layout.fontScale);
-  const lines: string[] = [];
-
-  if (layout.showLogo) {
-    lines.push(centerText(data.restaurantName.toUpperCase(), width));
-    if (data.restaurantContact) lines.push(centerText(data.restaurantContact, width));
-  }
-  lines.push(centerText("*** DELIVERY TICKET ***", width));
-  lines.push(ruleLine("-", width));
-
-  lines.push(padBoth("ORDER NO.", data.orderId, width));
-  if (layout.showDate) lines.push(padBoth("DATE", data.date, width));
-  lines.push(padBoth("DRIVER", data.driverName || "PENDING DISPATCH", width));
-  lines.push(ruleLine("-", width));
-
-  const qtyW = 3;
-  const totalW = 11;
-  const prefixW = 3;
-  const nameW = Math.max(6, width - prefixW - 1 - qtyW - 2 - totalW);
-  lines.push(padBoth("# " + "ITEM", "QTY".padStart(qtyW) + "  " + "TOTAL".padStart(totalW), width));
-  lines.push(ruleLine("-", width));
-  data.items.forEach((item, i) => {
-    const name = item.name.length > nameW ? item.name.substring(0, nameW - 1) + "~" : item.name.padEnd(nameW);
-    const qty = item.quantity.toString().padStart(qtyW);
-    const total = money(item.price * item.quantity).padStart(totalW);
-    lines.push(`${(i + 1).toString()}. `.padEnd(prefixW) + name + " " + qty + "  " + total);
-  });
-
-  lines.push(ruleLine("-", width));
-  lines.push(padBoth("TOTAL AMOUNT", money(data.totalPrice), width));
-  lines.push(ruleLine("-", width));
-
-  if (layout.showCustomerDetails) {
-    lines.push("CUSTOMER DETAILS:");
-    lines.push(`NAME: ${data.customerName || "WALK-IN"}`);
-    lines.push(`PHONE: ${data.customerPhone || "N/A"}`);
-    lines.push("ADDRESS:");
-    lines.push(data.deliveryAddress || "NO ADDRESS PROVIDED");
-    lines.push(ruleLine("-", width));
-  }
-
-  if (layout.footerMessage.trim()) lines.push(centerText(layout.footerMessage.trim().toUpperCase(), width));
-  if (layout.showEndMarker) {
-    lines.push(centerText("*** END OF DELIVERY TICKET ***", width));
     lines.push(ruleLine("-", width));
   }
 

@@ -11,7 +11,7 @@ import { ConfirmModal } from "../components/ConfirmModal";
 import AdminPasswordModal from "../components/AdminPasswordModal";
 import DateFilterToolbar from "../components/DateFilterToolbar";
 import { MoneyInput } from "../components/MoneyInput";
-import { useReactToPrint } from "react-to-print";
+import { exportReportAsPdf } from "../lib/pdfExport";
 import { InventoryReportTemplate } from "../components/InventoryReportTemplate";
 
 // ── Types ─────────────────────────────────────────────
@@ -78,6 +78,7 @@ export default function Inventory() {
   const printRef = useRef<HTMLDivElement>(null);
   const [restaurantName, setRestaurantName] = useState("Restaurant POS");
   const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   // ── Usage Form ──
   const [usageItemId, setUsageItemId] = useState<number | "">("");
@@ -166,10 +167,18 @@ export default function Inventory() {
     }
   }, [activeTab, dateRange, historyItemFilter, historyTypeFilter]);
 
-  const handlePrint = useReactToPrint({
-    contentRef: printRef,
-    documentTitle: `Inventory_Report_${dateRange.startDate}_to_${dateRange.endDate}`,
-  });
+  const handlePrint = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      await exportReportAsPdf(
+        `Inventory_Report_${dateRange.startDate}_to_${dateRange.endDate}`,
+        printRef.current
+      );
+    } finally {
+      setExporting(false);
+    }
+  };
 
   // ── Add / Edit Item ──
   const openAddItemModal = () => {
@@ -471,10 +480,11 @@ export default function Inventory() {
               />
               <button
                 onClick={() => handlePrint()}
-                className="px-4 py-2.5 h-[42px] bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-2 border border-slate-200 dark:border-slate-700 shadow-sm"
+                disabled={exporting}
+                className="px-4 py-2.5 h-[42px] bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-2 border border-slate-200 dark:border-slate-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Download size={16} />
-                <span className="hidden sm:inline">Export PDF</span>
+                <span className="hidden sm:inline">{exporting ? "Exporting…" : "Export PDF"}</span>
               </button>
             </div>
           </div>

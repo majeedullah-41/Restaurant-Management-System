@@ -292,6 +292,9 @@ pub const ADMIN_COMMANDS: &[&str] = &[
     "get_analytics_report",
     "get_detailed_report",
     "save_text_report",
+    // Report PDF export / printing (report pages are admin-only)
+    "print_html_to_pdf",
+    "print_file_to_printer",
     // Backup (copies the entire live database to disk)
     "check_and_run_auto_backup",
     // Attendance exposes all staff HR data (names, clock in/out)

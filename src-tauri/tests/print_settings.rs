@@ -11,36 +11,28 @@ fn test_print_settings_round_trip_and_validation() {
     db::init_shared_connection();
     db::init_db().unwrap();
 
-    // Defaults: no printers configured, single copies, auto mode.
+    // Defaults: no printers configured, single copies.
     let settings = print::get_print_settings().expect("Failed to get print settings");
     assert_eq!(settings.receipt_printer, None);
     assert_eq!(settings.kot_printer, None);
-    assert_eq!(settings.delivery_printer, None);
     assert_eq!(settings.delivery_receipt_printer, None);
     assert_eq!(settings.receipt_copies, 1);
     assert_eq!(settings.kot_copies, 1);
-    assert_eq!(settings.delivery_copies, 1);
     assert_eq!(settings.delivery_receipt_copies, 1);
-    assert_eq!(settings.print_mode, "auto");
     assert!(settings.receipt_layout.is_some());
     assert!(settings.kot_layout.is_some());
-    assert!(settings.delivery_layout.is_some());
     assert!(settings.delivery_receipt_layout.is_some());
 
-    // Round trip: persist printers, copies, mode and layout JSON.
+    // Round trip: persist printers, copies and layout JSON.
     print::update_print_settings(
         Some("Black Copper 80".into()),
         Some("EPSON TM-T20".into()),
         Some("Black Copper 80".into()),
-        Some("Black Copper 80".into()),
         2,
         3,
-        1,
         4,
-        "preview".into(),
         Some("{\"showTax\":false}".into()),
         Some("{\"showOrderTaker\":true}".into()),
-        Some("{}".into()),
         Some("{\"showDeliveryAddress\":true}".into()),
     )
     .expect("Failed to update print settings");
@@ -51,9 +43,7 @@ fn test_print_settings_round_trip_and_validation() {
     assert_eq!(settings.delivery_receipt_printer.as_deref(), Some("Black Copper 80"));
     assert_eq!(settings.receipt_copies, 2);
     assert_eq!(settings.kot_copies, 3);
-    assert_eq!(settings.delivery_copies, 1);
     assert_eq!(settings.delivery_receipt_copies, 4);
-    assert_eq!(settings.print_mode, "preview");
     let layout: serde_json::Value =
         serde_json::from_str(settings.receipt_layout.as_deref().unwrap()).unwrap();
     assert_eq!(layout["showTax"], serde_json::Value::Bool(false));
@@ -61,13 +51,12 @@ fn test_print_settings_round_trip_and_validation() {
         serde_json::from_str(settings.delivery_receipt_layout.as_deref().unwrap()).unwrap();
     assert_eq!(dr_layout["showDeliveryAddress"], serde_json::Value::Bool(true));
 
-    // Validation: bad mode and out-of-range copies rejected.
-    assert!(print::update_print_settings(None, None, None, None, 1, 1, 1, 1, "bogus".into(), None, None, None, None).is_err());
-    assert!(print::update_print_settings(None, None, None, None, 0, 1, 1, 1, "auto".into(), None, None, None, None).is_err());
-    assert!(print::update_print_settings(None, None, None, None, 1, 100, 1, 1, "auto".into(), None, None, None, None).is_err());
+    // Validation: out-of-range copies rejected.
+    assert!(print::update_print_settings(None, None, None, 0, 1, 1, None, None, None).is_err());
+    assert!(print::update_print_settings(None, None, None, 1, 100, 1, None, None, None).is_err());
 
     // Blank printer names normalize to None.
-    print::update_print_settings(Some("   ".into()), None, None, None, 1, 1, 1, 1, "auto".into(), None, None, None, None).expect("ok");
+    print::update_print_settings(Some("   ".into()), None, None, 1, 1, 1, None, None, None).expect("ok");
     let settings = print::get_print_settings().expect("ok");
     assert_eq!(settings.receipt_printer, None);
 

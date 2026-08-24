@@ -16,14 +16,19 @@ import {
 
 import { ConfirmModal } from "../components/ConfirmModal";
 import { AlertModal } from "../components/AlertModal";
-import { useReactToPrint } from "react-to-print";
 import { ReceiptTemplate } from "../components/ReceiptTemplate";
 import { KOTTemplate } from "../components/KOTTemplate";
 import { DeliveryReceiptTemplate } from "../components/DeliveryReceiptTemplate";
 import {
   loadPrintSettings,
+  printTicketDocument,
+  assetFileUrl,
+  buildReceiptText,
+  buildKotText,
+  buildDeliveryReceiptText,
   DEFAULT_PRINT_SETTINGS,
   type PrintSettings,
+  type ReceiptDocument,
 } from "../lib/printing";
 
 interface MenuItem { id: number; name: string; category_id: number; price: number; is_active: boolean; }
@@ -42,46 +47,6 @@ export default function POS() {
   const returnUrl = role === "Cashier" ? "/cashier/dashboard" : "/admin/dashboard";
 
   // Core Data
-  const receiptRef = useRef<HTMLDivElement>(null);
-  const kotRef = useRef<HTMLDivElement>(null);
-  const drRef = useRef<HTMLDivElement>(null);
-  const [kotPrintItems, setKotPrintItems] = useState<{name: string, printQty: number}[]>([]);
-  const kotPrintTriggered = useRef(false);
-
-  const triggerReceiptPrint = useReactToPrint({
-    contentRef: receiptRef,
-    onAfterPrint: () => {
-      setTimeout(() => navigate(`${basePath}/pos/0`), 500);
-    }
-  });
-
-  const triggerDRPrint = useReactToPrint({
-    contentRef: drRef,
-    onAfterPrint: () => {
-      setTimeout(() => navigate(`${basePath}/pos/0`), 500);
-    }
-  });
-
-  const triggerKOTPrint = useReactToPrint({
-    contentRef: kotRef,
-    onAfterPrint: async () => {
-      kotPrintTriggered.current = false;
-      try {
-        await invoke("mark_kot_printed", { orderId });
-        if (orderId) refreshCart(orderId);
-        navigate(`${basePath}/pos/0`);
-      } catch (err) {
-         console.error(err);
-      }
-    }
-  });
-
-  useEffect(() => {
-     if (kotPrintTriggered.current && kotPrintItems.length > 0) {
-       if (triggerKOTPrint) triggerKOTPrint();
-     }
-  }, [kotPrintItems, triggerKOTPrint]);
-
   const [categories, setCategories] = useState<Category[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
@@ -631,19 +596,142 @@ export default function POS() {
     ? `#ORD-${orderNumber.toString().padStart(4, '0')}`
     : `#ORD-${orderId?.toString().padStart(4, '0')}`;
 
+  const ticketTableLabel = [tableCategoryName, actualTableNumber].filter(Boolean).join(" ") || "-";
+
   const handlePrint = async () => {
     if (!orderId || cartItems.length === 0) return;
     try {
+      const dateStr = `${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`;
+      const items = cartItems.map(({ name, price, quantity }) => ({ name, price, quantity }));
+      const received = parseFloat(amountReceived) || totalAmount;
+      const change = parseFloat(amountReceived) ? parseFloat(amountReceived) - totalAmount : 0;
+      const logoUrl = assetFileUrl(restaurantLogo);
+
       if (orderType === "Delivery") {
-        triggerDRPrint();
+        const customerName = selectedCustomerId
+          ? customers.find(c => c.id === selectedCustomerId)?.name || null
+          : customerSearch.trim() || null;
+        const text = buildDeliveryReceiptText(
+          {
+            restaurantName,
+            restaurantAddress: restaurantAddress || undefined,
+            restaurantContact: restaurantContact || undefined,
+            orderId: formattedOrderNumber,
+            orderType,
+            date: dateStr,
+            items,
+            cashierName: displayName,
+            subtotal,
+            taxRate,
+            taxAmount,
+            discount: effectiveDiscount,
+            totalAmount,
+            amountReceived: received,
+            changeAmount: change,
+            deliveryFee,
+            customerName,
+            customerPhone: deliveryPhone.trim() || null,
+            deliveryAddress: deliveryAddress.trim() || null,
+          },
+          printSettings.deliveryReceiptLayout
+        );
+        const doc: ReceiptDocument = {
+          kind: "delivery_receipt",
+          restaurant: { name: restaurantName, address: restaurantAddress || null, contact: restaurantContact || null },
+          meta: { order_id: formattedOrderNumber, date_time: dateStr, order_type: orderType, table_label: "", cashier_name: displayName },
+          customer: { name: customerName, phone: deliveryPhone.trim() || null, address: deliveryAddress.trim() || null },
+          items,
+          totals: { subtotal, tax_rate: taxRate, tax_amount: taxAmount, discount: effectiveDiscount, delivery_fee: deliveryFee, total_amount: totalAmount },
+          payment: { amount_received: received, change_amount: change },
+        };
+        const element = (
+          <DeliveryReceiptTemplate
+            restaurantName={restaurantName}
+            restaurantAddress={restaurantAddress || undefined}
+            restaurantContact={restaurantContact || undefined}
+            logoUrl={logoUrl}
+            orderId={formattedOrderNumber}
+            orderType={orderType}
+            date={dateStr}
+            items={cartItems}
+            subtotal={subtotal}
+            discount={effectiveDiscount}
+            taxAmount={taxAmount}
+            taxRate={taxRate}
+            totalAmount={totalAmount}
+            amountReceived={received}
+            changeAmount={change}
+            deliveryFee={deliveryFee}
+            cashierName={displayName}
+            customerName={customerName}
+            customerPhone={deliveryPhone.trim() || null}
+            deliveryAddress={deliveryAddress.trim() || null}
+            config={printSettings.deliveryReceiptLayout}
+          />
+        );
+        await printTicketDocument("delivery_receipt", element, doc, text, printSettings);
       } else {
-        triggerReceiptPrint();
+        const text = buildReceiptText(
+          {
+            restaurantName,
+            restaurantAddress: restaurantAddress || undefined,
+            restaurantContact: restaurantContact || undefined,
+            orderId: formattedOrderNumber,
+            orderType,
+            tableLabel: ticketTableLabel,
+            date: dateStr,
+            items,
+            cashierName: displayName,
+            orderTakerName: orderTakerName || undefined,
+            subtotal,
+            taxRate,
+            taxAmount,
+            discount: effectiveDiscount,
+            totalAmount,
+            amountReceived: received,
+            changeAmount: change,
+          },
+          printSettings.receiptLayout
+        );
+        const doc: ReceiptDocument = {
+          kind: "receipt",
+          restaurant: { name: restaurantName, address: restaurantAddress || null, contact: restaurantContact || null },
+          meta: { order_id: formattedOrderNumber, date_time: dateStr, order_type: orderType, table_label: ticketTableLabel, cashier_name: displayName, order_taker_name: orderTakerName || null },
+          items,
+          totals: { subtotal, tax_rate: taxRate, tax_amount: taxAmount, discount: effectiveDiscount, total_amount: totalAmount },
+          payment: { amount_received: received, change_amount: change },
+        };
+        const element = (
+          <ReceiptTemplate
+            restaurantName={restaurantName}
+            restaurantAddress={restaurantAddress || undefined}
+            restaurantContact={restaurantContact || undefined}
+            logoUrl={logoUrl}
+            orderId={formattedOrderNumber}
+            orderType={orderType}
+            tableNumber={actualTableNumber}
+            tableCategoryName={tableCategoryName}
+            date={dateStr}
+            items={cartItems}
+            subtotal={subtotal}
+            discount={effectiveDiscount}
+            taxAmount={taxAmount}
+            taxRate={taxRate}
+            totalAmount={totalAmount}
+            amountReceived={received}
+            changeAmount={change}
+            cashierName={displayName}
+            orderTakerName={orderTakerName || undefined}
+            config={printSettings.receiptLayout}
+          />
+        );
+        await printTicketDocument("receipt", element, doc, text, printSettings);
       }
-      setTimeout(() => navigate(`${basePath}/pos/0`), 800);
     } catch (err) {
       console.error("Failed to generate receipt:", err);
       showAlert("Print Error", String(err));
-      setTimeout(() => navigate(`${basePath}/pos/0`), 2000);
+    } finally {
+      setTimeout(() => navigate(`${basePath}/pos/0`), 500);
     }
   };
 
@@ -731,8 +819,61 @@ export default function POS() {
 
   const printKotText = async (items: { name: string; printQty: number }[]) => {
     if (!orderId || items.length === 0) return;
-    setKotPrintItems(items);
-    kotPrintTriggered.current = true;
+    try {
+      const dateStr = `${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`;
+      const text = buildKotText(
+        {
+          restaurantName,
+          restaurantContact: restaurantContact || undefined,
+          orderId: formattedOrderNumber,
+          orderType,
+          tableLabel: ticketTableLabel,
+          date: dateStr,
+          items,
+          cashierName: displayName,
+          orderTakerName: orderTakerName || undefined,
+        },
+        printSettings.kotLayout
+      );
+      const doc: ReceiptDocument = {
+        kind: "kot",
+        restaurant: { name: restaurantName, contact: restaurantContact || null },
+        meta: {
+          order_id: formattedOrderNumber,
+          date_time: dateStr,
+          order_type: orderType,
+          table_label: ticketTableLabel,
+          cashier_name: displayName,
+          order_taker_name: orderTakerName || null,
+        },
+        items: items.map(i => ({ name: i.name, price: 0, quantity: i.printQty })),
+        totals: { subtotal: 0, tax_rate: 0, tax_amount: 0, discount: 0, total_amount: 0 },
+        payment: { amount_received: 0, change_amount: 0 },
+      };
+      const element = (
+        <KOTTemplate
+          orderId={formattedOrderNumber}
+          orderType={orderType}
+          tableNumber={actualTableNumber}
+          tableCategoryName={tableCategoryName}
+          date={dateStr}
+          items={items}
+          cashierName={displayName}
+          orderTakerName={orderTakerName || undefined}
+          restaurantName={restaurantName}
+          restaurantContact={restaurantContact || undefined}
+          logoUrl={assetFileUrl(restaurantLogo)}
+          config={printSettings.kotLayout}
+        />
+      );
+      await printTicketDocument("kot", element, doc, text, printSettings);
+      await invoke("mark_kot_printed", { orderId });
+      refreshCart(orderId);
+      navigate(`${basePath}/pos/0`);
+    } catch (err) {
+      console.error(err);
+      showAlert("KOT Print Failed", String(err));
+    }
   };
 
   const handlePrintKOT = async () => {
@@ -951,7 +1092,7 @@ export default function POS() {
                 <h3 className="text-[13.5px] font-bold text-slate-900 dark:text-white leading-tight w-full pr-5 line-clamp-2">{item.name}</h3>
                 <div className="w-full flex items-end justify-between mt-auto">
                   {item.is_active ? (
-                    <span className="text-slate-900 dark:text-white font-black text-[13px]">Rs. {item.price.toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                    <div />
                   ) : (
                     <span className="text-red-500 font-bold text-[9px] uppercase tracking-wider bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 rounded-full mb-1">Out of Stock</span>
                   )}
@@ -1180,11 +1321,11 @@ export default function POS() {
                     <tbody>
                       {cartItems.map((item, index) => (
                         <tr key={item.id} className="border-b border-slate-200 dark:border-slate-800 last:border-b-0 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
-                          <td className="px-2 py-3 text-center text-slate-700 dark:text-slate-300 font-bold border-r border-slate-200 dark:border-slate-800">{index + 1}</td>
-                          <td className="px-3 py-3 border-r border-slate-200 dark:border-slate-800">
+                          <td className="px-2 py-1.5 text-center text-slate-700 dark:text-slate-300 font-bold border-r border-slate-200 dark:border-slate-800">{index + 1}</td>
+                          <td className="px-3 py-1.5 border-r border-slate-200 dark:border-slate-800">
                             <span className="block whitespace-nowrap overflow-hidden text-ellipsis text-slate-800 dark:text-slate-200 font-medium" title={item.name}>{item.name}</span>
                           </td>
-                          <td className="px-2 py-3 border-r border-slate-200 dark:border-slate-800">
+                          <td className="px-2 py-1.5 border-r border-slate-200 dark:border-slate-800">
                             <div className="flex items-center justify-center gap-2">
                               <button
                                 onClick={() => handleDecrementItem(item.item_id)}
@@ -1201,8 +1342,8 @@ export default function POS() {
                               </button>
                             </div>
                           </td>
-                          <td className="px-2 py-3 text-center font-bold text-slate-800 dark:text-slate-200 border-r border-slate-200 dark:border-slate-800">Rs. {formatAmount(item.price * item.quantity)}</td>
-                          <td className="px-2 py-3 text-center">
+                          <td className="px-2 py-1.5 text-center font-bold text-slate-800 dark:text-slate-200 border-r border-slate-200 dark:border-slate-800">Rs. {formatAmount(item.price * item.quantity)}</td>
+                          <td className="px-2 py-1.5 text-center">
                             <button
                               onClick={() => handleDeleteItem(item.item_id)}
                               className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors inline-flex items-center justify-center"
@@ -1358,70 +1499,6 @@ export default function POS() {
         .custom-scrollbar:hover::-webkit-scrollbar-thumb { background: #94A3B8; }
         .dark .custom-scrollbar:hover::-webkit-scrollbar-thumb { background: #475569; }
       `}</style>
-
-      <div style={{ display: "none" }}>
-        <ReceiptTemplate
-          ref={receiptRef}
-          restaurantName={restaurantName}
-          restaurantAddress={restaurantAddress}
-          logoUrl={restaurantLogo || undefined}
-          orderId={formattedOrderNumber}
-          orderType={orderType}
-          tableNumber={actualTableNumber}
-          tableCategoryName={tableCategoryName}
-          date={new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString()}
-          items={cartItems}
-          subtotal={subtotal}
-          discount={effectiveDiscount}
-          taxAmount={taxAmount}
-          taxRate={taxRate}
-          totalAmount={totalAmount}
-          amountReceived={parseFloat(amountReceived) || totalAmount}
-          changeAmount={parseFloat(amountReceived) ? parseFloat(amountReceived) - totalAmount : 0}
-          cashierName={displayName}
-          restaurantContact={restaurantContact}
-          config={printSettings.receiptLayout}
-        />
-        <KOTTemplate
-          ref={kotRef}
-          orderId={formattedOrderNumber}
-          orderType={orderType}
-          tableNumber={actualTableNumber}
-          tableCategoryName={tableCategoryName}
-          date={new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString()}
-          items={kotPrintItems}
-          cashierName={displayName}
-          orderTakerName={orderTakerName || undefined}
-          restaurantName={restaurantName}
-          restaurantContact={restaurantContact}
-          logoUrl={restaurantLogo || undefined}
-          config={printSettings.kotLayout}
-        />
-        <DeliveryReceiptTemplate
-          ref={drRef}
-          restaurantName={restaurantName}
-          restaurantAddress={restaurantAddress}
-          restaurantContact={restaurantContact}
-          logoUrl={restaurantLogo || undefined}
-          orderId={formattedOrderNumber}
-          orderType={orderType}
-          date={new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString()}
-          items={cartItems}
-          subtotal={subtotal}
-          discount={effectiveDiscount}
-          taxAmount={taxAmount}
-          taxRate={taxRate}
-          totalAmount={totalAmount}
-          amountReceived={parseFloat(amountReceived) || totalAmount}
-          changeAmount={parseFloat(amountReceived) ? parseFloat(amountReceived) - totalAmount : 0}
-          deliveryFee={deliveryFee}
-          cashierName={displayName}
-          customerName={selectedCustomerId ? customers.find(c => c.id === selectedCustomerId)?.name || null : customerSearch.trim() || null}
-          customerPhone={deliveryPhone.trim() || null}
-          deliveryAddress={deliveryAddress.trim() || null}
-          config={printSettings.deliveryReceiptLayout}
-        />
-      </div>
 
       <ConfirmModal
         isOpen={confirmModal.isOpen}

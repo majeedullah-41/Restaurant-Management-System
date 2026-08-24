@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "../lib/api";
 import { formatCurrency, todayLocal } from "../lib/utils";
 import { Plus, Trash2, Landmark, X, Download, AlertCircle } from "lucide-react";
-import { useReactToPrint } from "react-to-print";
+import { exportReportAsPdf } from "../lib/pdfExport";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -39,6 +39,7 @@ export default function Expenses() {
   const printRef = useRef<HTMLDivElement>(null);
   const [restaurantName, setRestaurantName] = useState('Restaurant POS');
   const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     invoke<any>('get_settings')
@@ -49,10 +50,18 @@ export default function Expenses() {
       .catch(() => {});
   }, []);
 
-  const handlePrint = useReactToPrint({
-    contentRef: printRef,
-    documentTitle: `Expense_Report_${dateRange.startDate || 'all'}_to_${dateRange.endDate || 'all'}`,
-  });
+  const handlePrint = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      await exportReportAsPdf(
+        `Expense_Report_${dateRange.startDate || 'all'}_to_${dateRange.endDate || 'all'}`,
+        printRef.current
+      );
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const loadExpenses = async () => {
     try {
@@ -276,11 +285,11 @@ export default function Expenses() {
 
               <button 
                 onClick={() => handlePrint()}
-                disabled={filteredExpenses.length === 0}
+                disabled={exporting || filteredExpenses.length === 0}
                 className="h-10 px-4 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-sm font-semibold rounded-lg transition-colors flex items-center space-x-2 border border-slate-200 dark:border-slate-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Download size={16} />
-                <span>Export PDF</span>
+                <span>{exporting ? "Exporting…" : "Export PDF"}</span>
               </button>
 
               <button 

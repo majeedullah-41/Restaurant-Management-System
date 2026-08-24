@@ -23,6 +23,7 @@ import UserProfile from "./pages/UserProfile";
 import Reports from "./pages/Reports";
 import DeliveryManagement from "./pages/DeliveryManagement";
 import Inventory from "./pages/Inventory";
+import ThermalSimulator from "./pages/ThermalSimulator";
 import './App.css';
 
 interface LicenseStatus {
@@ -210,6 +211,9 @@ function App() {
         <Route path="/admin/profile" element={<ProtectedRoute adminOnly><UserProfile /></ProtectedRoute>} />
         <Route path="/cashier/profile" element={<ProtectedRoute><UserProfile /></ProtectedRoute>} />
         <Route path="/admin/reports" element={<ProtectedRoute adminOnly><Reports /></ProtectedRoute>} />
+
+        {/* Development-only tool (docs/05 §16): no sidebar entry, reachable by URL. */}
+        <Route path="/admin/thermal-simulator" element={<ProtectedRoute adminOnly><ThermalSimulator /></ProtectedRoute>} />
         
         {/* Wildcard catch-all route should usually be at the very bottom */}
         <Route path="*" element={<Navigate to={user ? homePath : "/"} replace />} />

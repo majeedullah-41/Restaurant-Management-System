@@ -41,10 +41,10 @@ async function setNativeValue(selector, value) {
  * End-to-end test for the Printing & Receipts settings section.
  *
  * Runs against the real app (rms.exe) on an ISOLATED test database (see
- * wdio.conf.cjs). Covers: printer discovery, printer/copies/print-mode
- * controls, test print, receipt + KOT design toggles with the live preview,
- * and persisting the settings. The "Test" button sends a real ticket to the
- * selected printer (default: the thermal "Black Copper 80").
+ * wdio.conf.cjs). Covers: printer discovery, printer/copies controls, test
+ * print, receipt + KOT design toggles with the live preview, and persisting
+ * the settings. The "Test" button sends a real ticket to the selected printer
+ * (default: the thermal "Black Copper 80").
  *
  * Run with: npm run test:e2e
  */
@@ -82,7 +82,7 @@ describe('RMS Printing & Receipts E2E Test', () => {
         );
     });
 
-    it('printer selection, copies and print mode controls work', async () => {
+    it('printer selection and copies controls work', async () => {
         const printerSelect = await $('[data-testid="printer-receipt"]');
         await selectOption('[data-testid="printer-receipt"]', 'Black Copper 80');
         assert.strictEqual(await printerSelect.getValue(), 'Black Copper 80');
@@ -90,12 +90,6 @@ describe('RMS Printing & Receipts E2E Test', () => {
         const copies = await $('[data-testid="copies-receipt"]');
         await setNativeValue('[data-testid="copies-receipt"]', 2);
         assert.strictEqual(await copies.getValue(), '2');
-
-        const mode = await $('[data-testid="print-mode"]');
-        await selectOption('[data-testid="print-mode"]', 'Show print preview dialog');
-        assert.strictEqual(await mode.getValue(), 'preview');
-        await selectOption('[data-testid="print-mode"]', 'Direct to printer (no dialog)');
-        assert.strictEqual(await mode.getValue(), 'auto');
     });
 
     it('test print fires the real PowerShell print pipeline', async () => {

@@ -1,0 +1,77 @@
+                          MY RESTAURANT
+                        MAIN ROAD, SWAT
+                           0345-1234567
+            *** PAYMENT RECEIPT ***
+------------------------------------------------
+ORDER NO.                                   1027
+DATE/TIME                    2026-08-22 14:33:10
+TYPE                                     Dine-in
+TABLE                                         T4
+CASHIER                                   Salman
+# ITEM                            QTY      TOTAL
+------------------------------------------------
+1. Party Platter Item 01            1  Rs. 50.00
+2. Party Platter Item 02            1  Rs. 50.00
+3. Party Platter Item 03            1  Rs. 50.00
+4. Party Platter Item 04            1  Rs. 50.00
+5. Party Platter Item 05            1  Rs. 50.00
+6. Party Platter Item 06            1  Rs. 50.00
+7. Party Platter Item 07            1  Rs. 50.00
+8. Party Platter Item 08            1  Rs. 50.00
+9. Party Platter Item 09            1  Rs. 50.00
+10.Party Platter Item 10            1  Rs. 50.00
+11.Party Platter Item 11            1  Rs. 50.00
+12.Party Platter Item 12            1  Rs. 50.00
+13.Party Platter Item 13            1  Rs. 50.00
+14.Party Platter Item 14            1  Rs. 50.00
+15.Party Platter Item 15            1  Rs. 50.00
+16.Party Platter Item 16            1  Rs. 50.00
+17.Party Platter Item 17            1  Rs. 50.00
+18.Party Platter Item 18            1  Rs. 50.00
+19.Party Platter Item 19            1  Rs. 50.00
+20.Party Platter Item 20            1  Rs. 50.00
+21.Party Platter Item 21            1  Rs. 50.00
+22.Party Platter Item 22            1  Rs. 50.00
+23.Party Platter Item 23            1  Rs. 50.00
+24.Party Platter Item 24            1  Rs. 50.00
+25.Party Platter Item 25            1  Rs. 50.00
+26.Party Platter Item 26            1  Rs. 50.00
+27.Party Platter Item 27            1  Rs. 50.00
+28.Party Platter Item 28            1  Rs. 50.00
+29.Party Platter Item 29            1  Rs. 50.00
+30.Party Platter Item 30            1  Rs. 50.00
+31.Party Platter Item 31            1  Rs. 50.00
+32.Party Platter Item 32            1  Rs. 50.00
+33.Party Platter Item 33            1  Rs. 50.00
+34.Party Platter Item 34            1  Rs. 50.00
+35.Party Platter Item 35            1  Rs. 50.00
+36.Party Platter Item 36            1  Rs. 50.00
+37.Party Platter Item 37            1  Rs. 50.00
+38.Party Platter Item 38            1  Rs. 50.00
+39.Party Platter Item 39            1  Rs. 50.00
+40.Party Platter Item 40            1  Rs. 50.00
+41.Party Platter Item 41            1  Rs. 50.00
+42.Party Platter Item 42            1  Rs. 50.00
+43.Party Platter Item 43            1  Rs. 50.00
+44.Party Platter Item 44            1  Rs. 50.00
+45.Party Platter Item 45            1  Rs. 50.00
+46.Party Platter Item 46            1  Rs. 50.00
+47.Party Platter Item 47            1  Rs. 50.00
+48.Party Platter Item 48            1  Rs. 50.00
+49.Party Platter Item 49            1  Rs. 50.00
+50.Party Platter Item 50            1  Rs. 50.00
+------------------------------------------------
+SUBTOTAL                            Rs. 2,500.00
+TAX (0)                                 Rs. 0.00
+------------------------------------------------
+GRAND TOTAL                         Rs. 2,500.00
+------------------------------------------------
+CASH RECEIVED                       Rs. 3,000.00
+CHANGE DUE                            Rs. 500.00
+------------------------------------------------
+                     Software Provided by
+          Eaglenest Creations (0346-4451505)
+             *** END OF RECEIPT ***
+------------------------------------------------
+
+--- profile: 80mm / 48 columns ---

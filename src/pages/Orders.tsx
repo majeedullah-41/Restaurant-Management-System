@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { invoke } from "../lib/api";
 import { formatCurrency } from "../lib/utils";
 import { useAuth } from "../lib/auth";
@@ -12,8 +12,16 @@ import AdminPasswordModal from "../components/AdminPasswordModal";
 import { AlertModal } from "../components/AlertModal";
 import { ReceiptTemplate } from "../components/ReceiptTemplate";
 import { DeliveryReceiptTemplate } from "../components/DeliveryReceiptTemplate";
-import { useReactToPrint } from "react-to-print";
-import { loadPrintSettings, DEFAULT_PRINT_SETTINGS, type PrintSettings } from "../lib/printing";
+import {
+  loadPrintSettings,
+  printTicketDocument,
+  assetFileUrl,
+  buildReceiptText,
+  buildDeliveryReceiptText,
+  DEFAULT_PRINT_SETTINGS,
+  type PrintSettings,
+  type ReceiptDocument,
+} from "../lib/printing";
 
 interface OrderHistory {
   id: number;
@@ -31,6 +39,7 @@ interface OrderHistory {
   change_due: number;
   customer_name: string | null;
   cashier_name: string | null;
+  order_taker_name?: string | null;
   order_note: string | null;
   order_type: string | null;
   created_at: string | null;
@@ -114,21 +123,16 @@ export default function Orders() {
   const [deleteOrderId, setDeleteOrderId] = useState<number | null>(null);
   const [showDeletePassword, setShowDeletePassword] = useState(false);
   const [alertModal, setAlertModal] = useState<{isOpen: boolean; title: string; message: string; type: 'danger' | 'warning' | 'info' | 'success'}>({ isOpen: false, title: '', message: '', type: 'danger' });
-  const [printOrderId, setPrintOrderId] = useState<number | null>(null);
   const [restaurantName, setRestaurantName] = useState("RMS");
   const [restaurantAddress, setRestaurantAddress] = useState("");
   const [restaurantContact, setRestaurantContact] = useState("");
+  const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
   const [taxRate, setTaxRate] = useState(0);
   const [printSettings, setPrintSettings] = useState<PrintSettings>(DEFAULT_PRINT_SETTINGS);
-  const printRef = useRef<HTMLDivElement>(null);
 
   const showAlert = (title: string, message: string, type: 'danger' | 'warning' | 'info' | 'success' = 'danger') => {
     setAlertModal({ isOpen: true, title, message, type });
   };
-
-  const triggerReceiptPrint = useReactToPrint({
-    contentRef: printRef,
-  });
 
   const handleDiscountUpdated = (orderId: number, discountAmt: number) => {
     setAllOrders(prev => prev.map(o => o.id === orderId ? { ...o, discount_amount: discountAmt, total_price: o.total_price + o.discount_amount - discountAmt } : o));
@@ -148,23 +152,168 @@ export default function Orders() {
     }
   };
 
-  const handlePrintReceipt = async (orderId: number) => {
-    if (!orderItems[orderId]) {
-      setLoadingItems(prev => ({ ...prev, [orderId]: true }));
+  const handlePrintReceipt = async (id: number) => {
+    let items = orderItems[id];
+    if (!items) {
+      setLoadingItems(prev => ({ ...prev, [id]: true }));
       try {
-        const items: OrderItem[] = await invoke("get_order_items", { orderId });
-        setOrderItems(prev => ({ ...prev, [orderId]: items }));
+        items = await invoke("get_order_items", { orderId: id });
+        setOrderItems(prev => ({ ...prev, [id]: items }));
       } catch (err) {
         console.error("Failed to load order items", err);
-        setLoadingItems(prev => ({ ...prev, [orderId]: false }));
         showAlert("Error", "Failed to load order items for printing.");
         return;
+      } finally {
+        setLoadingItems(prev => ({ ...prev, [id]: false }));
       }
     }
-    setPrintOrderId(orderId);
-    setTimeout(() => {
-      if (triggerReceiptPrint) triggerReceiptPrint();
-    }, 100);
+    const order = allOrders.find(o => o.id === id);
+    if (!order) return;
+    const dateStr = new Date(order.closed_at || order.created_at || new Date()).toLocaleString();
+    const label = `#ORD-${(order.order_number || order.id).toString().padStart(4, '0')}`;
+    const logoUrl = assetFileUrl(restaurantLogo);
+    try {
+      if ((order.order_type || '') === 'Delivery') {
+        const text = buildDeliveryReceiptText(
+          {
+            restaurantName,
+            restaurantAddress: restaurantAddress || undefined,
+            restaurantContact: restaurantContact || undefined,
+            orderId: label,
+            orderType: order.order_type || 'Dine-in',
+            date: dateStr,
+            items: items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity })),
+            cashierName: order.cashier_name || 'Admin',
+            subtotal: order.subtotal,
+            taxRate,
+            taxAmount: order.tax_amount,
+            discount: order.discount_amount,
+            totalAmount: order.total_price,
+            amountReceived: order.amount_received,
+            changeAmount: order.change_due,
+            deliveryFee: order.delivery_fee || 0,
+            customerName: order.customer_name || null,
+            customerPhone: order.customer_phone || null,
+            deliveryAddress: order.delivery_address || null,
+          },
+          printSettings.deliveryReceiptLayout
+        );
+        const doc: ReceiptDocument = {
+          kind: "delivery_receipt",
+          restaurant: { name: restaurantName, address: restaurantAddress || null, contact: restaurantContact || null },
+          meta: { order_id: label, date_time: dateStr, order_type: order.order_type || 'Dine-in', table_label: "", cashier_name: order.cashier_name || 'Admin' },
+          customer: { name: order.customer_name || null, phone: order.customer_phone || null, address: order.delivery_address || null },
+          items: items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity })),
+          totals: {
+            subtotal: order.subtotal,
+            tax_rate: taxRate,
+            tax_amount: order.tax_amount,
+            discount: order.discount_amount,
+            delivery_fee: order.delivery_fee || 0,
+            total_amount: order.total_price,
+          },
+          payment: { amount_received: order.amount_received, change_amount: order.change_due },
+        };
+        const element = (
+          <DeliveryReceiptTemplate
+            restaurantName={restaurantName}
+            restaurantAddress={restaurantAddress || undefined}
+            restaurantContact={restaurantContact || undefined}
+            logoUrl={logoUrl}
+            orderId={label}
+            orderType={order.order_type || 'Dine-in'}
+            date={dateStr}
+            items={items}
+            subtotal={order.subtotal}
+            discount={order.discount_amount}
+            taxAmount={order.tax_amount}
+            taxRate={taxRate}
+            totalAmount={order.total_price}
+            amountReceived={order.amount_received}
+            changeAmount={order.change_due}
+            deliveryFee={order.delivery_fee || 0}
+            cashierName={order.cashier_name || 'Admin'}
+            customerName={order.customer_name || null}
+            customerPhone={order.customer_phone || null}
+            deliveryAddress={order.delivery_address || null}
+            config={printSettings.deliveryReceiptLayout}
+          />
+        );
+        await printTicketDocument("delivery_receipt", element, doc, text, printSettings);
+      } else {
+        const text = buildReceiptText(
+          {
+            restaurantName,
+            restaurantAddress: restaurantAddress || undefined,
+            restaurantContact: restaurantContact || undefined,
+            orderId: label,
+            orderType: order.order_type || 'Dine-in',
+            tableLabel: [order.table_category_name, (order.table_number || 0).toString()].filter(Boolean).join(' ') || '-',
+            date: dateStr,
+            items: items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity })),
+            cashierName: order.cashier_name || 'Admin',
+            orderTakerName: order.order_taker_name || undefined,
+            subtotal: order.subtotal,
+            taxRate,
+            taxAmount: order.tax_amount,
+            discount: order.discount_amount,
+            totalAmount: order.total_price,
+            amountReceived: order.amount_received,
+            changeAmount: order.change_due,
+          },
+          printSettings.receiptLayout
+        );
+        const doc: ReceiptDocument = {
+          kind: "receipt",
+          restaurant: { name: restaurantName, address: restaurantAddress || null, contact: restaurantContact || null },
+          meta: {
+            order_id: label,
+            date_time: dateStr,
+            order_type: order.order_type || 'Dine-in',
+            table_label: [order.table_category_name, (order.table_number || 0).toString()].filter(Boolean).join(' ') || '-',
+            cashier_name: order.cashier_name || 'Admin',
+            order_taker_name: order.order_taker_name || null,
+          },
+          items: items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity })),
+          totals: {
+            subtotal: order.subtotal,
+            tax_rate: taxRate,
+            tax_amount: order.tax_amount,
+            discount: order.discount_amount,
+            total_amount: order.total_price,
+          },
+          payment: { amount_received: order.amount_received, change_amount: order.change_due },
+        };
+        const element = (
+          <ReceiptTemplate
+            restaurantName={restaurantName}
+            restaurantAddress={restaurantAddress || undefined}
+            restaurantContact={restaurantContact || undefined}
+            logoUrl={logoUrl}
+            orderId={label}
+            orderType={order.order_type || 'Dine-in'}
+            tableNumber={(order.table_number || 0).toString()}
+            tableCategoryName={order.table_category_name}
+            date={dateStr}
+            items={items}
+            subtotal={order.subtotal}
+            discount={order.discount_amount}
+            taxAmount={order.tax_amount}
+            taxRate={taxRate}
+            totalAmount={order.total_price}
+            amountReceived={order.amount_received}
+            changeAmount={order.change_due}
+            cashierName={order.cashier_name || 'Admin'}
+            orderTakerName={order.order_taker_name || undefined}
+            config={printSettings.receiptLayout}
+          />
+        );
+        await printTicketDocument("receipt", element, doc, text, printSettings);
+      }
+    } catch (err) {
+      console.error("Failed to print receipt:", err);
+      showAlert("Error", "Failed to print receipt: " + err);
+    }
   };
 
   // Filter orders based on the current page
@@ -236,6 +385,7 @@ export default function Orders() {
       if (settings.restaurant_name) setRestaurantName(settings.restaurant_name);
       if (settings.address) setRestaurantAddress(settings.address);
       if (settings.contact_number) setRestaurantContact(settings.contact_number);
+      if (settings.logo_path) setRestaurantLogo(settings.logo_path);
       if (settings.tax_rate) setTaxRate(settings.tax_rate);
     }).catch(err => console.error("Failed to load settings", err));
 
@@ -558,63 +708,6 @@ export default function Orders() {
         type={alertModal.type}
         onClose={() => setAlertModal({ ...alertModal, isOpen: false })}
       />
-
-      {printOrderId && (() => {
-        const order = allOrders.find(o => o.id === printOrderId);
-        const items = orderItems[printOrderId] || [];
-        if (!order) return null;
-        const isDelivery = order.order_type === 'Delivery';
-        return (
-          <div style={{ display: "none" }}>
-            {isDelivery ? (
-              <DeliveryReceiptTemplate
-                ref={printRef}
-                restaurantName={restaurantName}
-                restaurantAddress={restaurantAddress}
-                restaurantContact={restaurantContact}
-                orderId={`#ORD-${(order.order_number || order.id).toString().padStart(4, '0')}`}
-                orderType={order.order_type || 'Dine-in'}
-                date={new Date(order.closed_at || order.created_at || new Date()).toLocaleString()}
-                items={items}
-                subtotal={order.subtotal}
-                discount={order.discount_amount}
-                taxAmount={order.tax_amount}
-                taxRate={taxRate}
-                totalAmount={order.total_price}
-                amountReceived={order.amount_received}
-                changeAmount={order.change_due}
-                deliveryFee={order.delivery_fee || 0}
-                cashierName={order.cashier_name || 'Admin'}
-                customerName={order.customer_name || null}
-                customerPhone={order.customer_phone || null}
-                deliveryAddress={order.delivery_address || null}
-                config={printSettings.deliveryReceiptLayout}
-              />
-            ) : (
-              <ReceiptTemplate
-                ref={printRef}
-                restaurantName={restaurantName}
-                restaurantAddress={restaurantAddress}
-                orderId={`#ORD-${(order.order_number || order.id).toString().padStart(4, '0')}`}
-                orderType={order.order_type || 'Dine-in'}
-                tableNumber={(order.table_number || 0).toString()}
-                tableCategoryName={order.table_category_name}
-                date={new Date(order.closed_at || order.created_at || new Date()).toLocaleString()}
-                items={items}
-                subtotal={order.subtotal}
-                discount={order.discount_amount}
-                taxAmount={order.tax_amount}
-                taxRate={taxRate}
-                totalAmount={order.total_price}
-                amountReceived={order.amount_received}
-                changeAmount={order.change_due}
-                cashierName={order.cashier_name || 'Admin'}
-                restaurantContact={restaurantContact}
-              />
-            )}
-          </div>
-        );
-      })()}
     </div>
   );
 }
