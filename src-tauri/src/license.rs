@@ -13,8 +13,8 @@ use std::sync::Mutex;
 static HWID_CACHE: Mutex<Option<String>> = Mutex::new(None);
 
 /// Generates a hardware-bound identifier from strictly permanent machine
-/// hardware: the CPU ProcessorId, motherboard serial, BIOS serial and the
-/// SMBIOS system UUID. Unlike hostname / MAC / MachineGuid these values never
+/// hardware: the CPU ProcessorId, boot-disk serial number and the SMBIOS
+/// system UUID. Unlike hostname / MAC / MachineGuid these values never
 /// change when Windows is reinstalled, the machine is renamed, or network
 /// adapters are swapped, so a license stays bound to the physical device.
 ///
@@ -81,7 +81,11 @@ fn compute_hwid() -> String {
     hasher.update(components.join("|"));
     let result = hasher.finalize();
 
-    let hex: String = result.iter().take(16).map(|b| format!("{:02X}", b)).collect();
+    let hex: String = result
+        .iter()
+        .take(16)
+        .map(|b| format!("{:02X}", b))
+        .collect();
 
     format!(
         "{}-{}-{}-{}",
@@ -96,7 +100,9 @@ fn compute_hwid() -> String {
 fn load_persisted_hwid() -> Option<String> {
     let conn = crate::db::get_conn().ok()?;
     let hwid: Option<String> = conn
-        .query_row("SELECT hwid FROM license WHERE id = 1", [], |row| row.get(0))
+        .query_row("SELECT hwid FROM license WHERE id = 1", [], |row| {
+            row.get(0)
+        })
         .ok()?;
     hwid.filter(|h| !h.trim().is_empty())
 }
@@ -116,40 +122,63 @@ fn persist_hwid(hwid: &str) {
 
 /// Reads the strictly permanent hardware identifiers from WMI in a single
 /// PowerShell invocation (avoids spawning one process per identifier).
-/// Returns them in a fixed, deterministic order:
-///   [CPU ProcessorId, Motherboard Serial, BIOS Serial, System UUID]
+///
+/// Uses the three most stable identifiers available:
+///   [CPU ProcessorId, Boot-Disk Serial Number, SMBIOS System UUID]
+///
+/// - CPU ProcessorId is burned into the processor (changes only on CPU swap).
+/// - The boot-disk serial is assigned at manufacturing (changes only when the
+///   system drive is replaced). Querying by index ensures we always take the
+///   physical drive Windows boots from, not an arbitrary secondary disk.
+/// - The SMBIOS UUID lives in BIOS/UEFI firmware (changes only on
+///   motherboard replacement or a firmware flash that regenerates it).
+///
+/// Motherboard/BIOS serials are intentionally not used: many OEM boards ship
+/// placeholder values ("Default string", "To be filled by O.E.M.") which would
+/// silently drop out of the hash and make the HWID differ between identical
+/// boards or across firmware updates.
 fn get_permanent_hardware_ids() -> Vec<String> {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+        // DiskDrive.Index == 0 is the boot drive on typical single-OS systems;
+        // partition ordering (Index 0 hosting the EFI/C: partitions) follows.
+        // -WarningAction SilentlyContinue keeps null property concatenation quiet.
         let script = r#"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
-$mb  = Get-CimInstance Win32_BaseBoard | Select-Object -First 1
-$bios = Get-CimInstance Win32_BIOS | Select-Object -First 1
+$disk = Get-CimInstance Win32_DiskDrive | Where-Object { $_.Index -eq 0 } | Select-Object -First 1
+if (-not $disk) { $disk = Get-CimInstance Win32_DiskDrive | Select-Object -First 1 }
 $sys = Get-CimInstance Win32_ComputerSystemProduct | Select-Object -First 1
 Write-Output ("CPU=" + $cpu.ProcessorId)
-Write-Output ("MB=" + $mb.SerialNumber)
-Write-Output ("BIOS=" + $bios.SerialNumber)
+Write-Output ("DISK=" + $disk.SerialNumber)
 Write-Output ("UUID=" + $sys.UUID)
 "#;
 
         let mut cmd = std::process::Command::new("powershell.exe");
-        cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script]);
+        cmd.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ]);
         cmd.creation_flags(CREATE_NO_WINDOW);
 
-        if let Ok(output) = cmd.output() {
+        // WMI is often cold for minutes right after boot; without a deadline
+        // this call would freeze the app at startup (see proc_util docs).
+        const HWID_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+        if let Some(output) = crate::proc_util::output_with_timeout(cmd, HWID_QUERY_TIMEOUT) {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let mut ids: Vec<String> = Vec::new();
             for line in stdout.lines() {
                 let line = line.trim();
                 if let Some(value) = line.strip_prefix("CPU=") {
                     push_hardware_id(&mut ids, value);
-                } else if let Some(value) = line.strip_prefix("MB=") {
-                    push_hardware_id(&mut ids, value);
-                } else if let Some(value) = line.strip_prefix("BIOS=") {
+                } else if let Some(value) = line.strip_prefix("DISK=") {
                     push_hardware_id(&mut ids, value);
                 } else if let Some(value) = line.strip_prefix("UUID=") {
                     push_hardware_id(&mut ids, value);
@@ -208,12 +237,13 @@ fn get_primary_mac() -> Option<String> {
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        
+
         let mut cmd = std::process::Command::new("getmac");
         cmd.args(["/FO", "CSV", "/NH"]);
         cmd.creation_flags(CREATE_NO_WINDOW);
-        
-        if let Ok(output) = cmd.output() {
+
+        const GETMAC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+        if let Some(output) = crate::proc_util::output_with_timeout(cmd, GETMAC_TIMEOUT) {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 let parts: Vec<&str> = line.split(',').collect();
@@ -242,10 +272,16 @@ fn get_windows_machine_guid() -> Option<String> {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         let mut cmd = std::process::Command::new("reg");
-        cmd.args(["query", "HKLM\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"]);
+        cmd.args([
+            "query",
+            "HKLM\\SOFTWARE\\Microsoft\\Cryptography",
+            "/v",
+            "MachineGuid",
+        ]);
         cmd.creation_flags(CREATE_NO_WINDOW);
 
-        if let Ok(output) = cmd.output() {
+        const REG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+        if let Some(output) = crate::proc_util::output_with_timeout(cmd, REG_TIMEOUT) {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 if line.contains("MachineGuid") {
@@ -260,10 +296,18 @@ fn get_windows_machine_guid() -> Option<String> {
     None
 }
 
-// ─── Embedded Public Key ────────────────────────────────────────────────────
-// This public key is used to verify license keys signed by the owner's private key.
-// Replace this with your actual public key generated by the keygen script.
+// ─── Owner Password (license secret) ────────────────────────────────────────
+// License codes are derived from the owner password + the customer's HWID,
+// so issuing a license means running the generator with a short password you
+// can actually remember — no more long .pem blobs.
+//
+// ⚠️ IMPORTANT: change BOTH constants together whenever you rotate the
+// password. They must stay in sync or every generated code stops verifying.
+const OWNER_PASSWORD: &str = "my-name-2005";
+const LICENSE_SECRET: &str = concat!("RMSv1::", "my-name-2005");
 
+// ─── Legacy RSA public key (kept for pre-migration keys/backups) ────────────
+// No longer used for new licenses; do not regenerate this for new installs.
 const PUBLIC_KEY_PEM: &str = "-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnfpuwXZ872GX2c/qE4KT
 8UnLHDR+BfJuW8aT/bNEU6Q9EEi9/qFAdV/jPtud/IJNSfBY/jUyFszSSDAiFuyI
@@ -281,6 +325,91 @@ wwIDAQAB
 //
 // Where PAYLOAD is: HWID|EXPIRY_DATE (e.g., "A1B2-C3D4-E5F6-G7H8|2025-12-31")
 // And SIGNATURE is the RSA-SHA256 signature of PAYLOAD, also Base64 encoded.
+
+// ─── License Code Format (password-based) ───────────────────────────────────
+// A license code is 16 hex chars formatted as XXXX-XXXX-XXXX-XXXX, derived
+// from HMAC-SHA256(LICENSE_SECRET, HWID|expiry). Verification recomputes the
+// expected code on-device and compares in constant time. The expiry date is
+// packed into the input so renewal = issuing a new code with a later date.
+//
+// Trade-off vs. the old RSA scheme: the secret is embedded in the binary, so
+// a determined cracker could extract it and mint codes. For this product's
+// threat model (small restaurant POS, offline) that is acceptable; RSA
+// verification is kept below for keys issued under the old scheme.
+
+use hmac::{Hmac, Mac};
+type HmacSha256 = Hmac<Sha256>;
+
+/// Uppercases and strips everything except A–Z/0–9 so users can paste a code
+/// with lowercase letters, dashes or stray whitespace without failing.
+fn normalize_code(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_uppercase())
+        .collect()
+}
+
+/// Computes the license code for `hwid` expiring on `expiry` ("YYYY-MM-DD").
+fn compute_license_code(hwid: &str, expiry: &str) -> String {
+    let mut mac =
+        HmacSha256::new_from_slice(LICENSE_SECRET.as_bytes()).expect("HMAC accepts any key length");
+    mac.update(format!("{}|{}", normalize_code(hwid), expiry).as_bytes());
+    let result = mac.finalize().into_bytes();
+
+    // First 8 bytes → 16 hex chars, same visual style as the HWID.
+    let hex: String = result
+        .iter()
+        .take(8)
+        .map(|b| format!("{:02X}", b))
+        .collect();
+    format!(
+        "{}-{}-{}-{}",
+        &hex[0..4],
+        &hex[4..8],
+        &hex[8..12],
+        &hex[12..16]
+    )
+}
+
+/// Constant-time comparison so timing cannot leak how many chars matched.
+fn codes_match(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.bytes()
+        .zip(b.bytes())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
+/// Generates a customer's license code. Only callable with the owner password,
+/// which is checked against OWNER_PASSWORD (case-insensitive, trimmed).
+pub fn generate_license_code_for(
+    password: &str,
+    hwid: &str,
+    expiry: &str,
+) -> Result<String, String> {
+    let pw_ok = password.trim().eq_ignore_ascii_case(OWNER_PASSWORD);
+    if !pw_ok {
+        return Err("Owner password is incorrect.".to_string());
+    }
+    // Validate the expiry up front so a typo can't produce a permanently
+    // unparseable code (verification rejects dates it can't parse).
+    NaiveDate::parse_from_str(expiry.trim(), "%Y-%m-%d")
+        .map_err(|_| "Expiry must be in YYYY-MM-DD format.".to_string())?;
+    Ok(compute_license_code(hwid, expiry))
+}
+
+/// Tauri command wrapper — lets the owner generate a code from inside the app
+/// (e.g. a debug/dev build) by entering their password + the customer's HWID.
+#[tauri::command]
+pub fn generate_license_code(
+    password: String,
+    hwid: String,
+    expiry_date: String,
+) -> Result<String, String> {
+    generate_license_code_for(&password, &hwid, &expiry_date)
+}
 
 #[derive(Serialize)]
 pub struct LicenseStatus {
@@ -300,7 +429,80 @@ pub fn verify_license_key(key_string: &str) -> LicenseStatus {
 /// used to check a license stored inside a backup file: the backup belongs to
 /// another machine, so it must be validated against the HWID embedded in the
 /// backup (not the current machine's), using today's real date for expiry.
+///
+/// Accepts both formats:
+/// - New: bare XXXX-XXXX-XXXX-XXXX code derived from the owner password.
+/// - Legacy: Base64 RSA-signed blob issued before the password scheme.
 pub fn verify_license_key_for_hwid(key_string: &str, expected_hwid: &str) -> LicenseStatus {
+    // New scheme first — a normalized 16-char code is unambiguously ours.
+    if let Some(status) = verify_password_code_for_hwid(key_string, expected_hwid) {
+        return status;
+    }
+    verify_legacy_rsa_key_for_hwid(key_string, expected_hwid)
+}
+
+/// Verifies a new-style password-derived license code against `expected_hwid`.
+/// Returns None when the input doesn't look like a code at all (caller falls
+/// back to the legacy path).
+fn verify_password_code_for_hwid(key_string: &str, expected_hwid: &str) -> Option<LicenseStatus> {
+    let hwid = expected_hwid.to_string();
+    let normalized = normalize_code(key_string);
+
+    if normalized.len() != 16 || !normalized.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    // The expiry is not recoverable from the HMAC output, so we scan plausible
+    // expiry dates: any date from today out to +10 years whose derived code
+    // matches. At most ~3,660 cheap HMACs — imperceptible, and it keeps the
+    // entered code down to just 16 characters for the user.
+    let today = chrono::Local::now().date_naive();
+
+    let invalid = |message: String| {
+        Some(LicenseStatus {
+            valid: false,
+            hwid: hwid.clone(),
+            message,
+            expiry_date: None,
+            days_remaining: None,
+        })
+    };
+
+    // Try every candidate expiry; if none matches, the code itself is wrong
+    // (or belongs to a different machine) — same message either way so we do
+    // not leak which part failed.
+    for offset in 0..=3650i64 {
+        let expiry = (today + chrono::Duration::days(offset))
+            .format("%Y-%m-%d")
+            .to_string();
+        let expected = compute_license_code(expected_hwid, &expiry);
+        if codes_match(&normalized, &normalize_code(&expected)) {
+            return Some(finish_valid_license(hwid, expiry));
+        }
+    }
+
+    invalid("Invalid license code for this machine. Please check the code and HWID.".to_string())
+}
+
+/// Shared success path: computes days remaining and builds the valid status.
+fn finish_valid_license(hwid: String, expiry: String) -> LicenseStatus {
+    let expiry_date = NaiveDate::parse_from_str(&expiry, "%Y-%m-%d").ok();
+    let days_remaining =
+        expiry_date.map(|exp| (exp - chrono::Local::now().date_naive()).num_days());
+    LicenseStatus {
+        valid: true,
+        hwid,
+        message: format!(
+            "License is active. {} days remaining.",
+            days_remaining.unwrap_or(0).max(0)
+        ),
+        expiry_date: Some(expiry),
+        days_remaining,
+    }
+}
+
+/// Legacy RSA verification, kept so pre-migration keys and backups still work.
+fn verify_legacy_rsa_key_for_hwid(key_string: &str, expected_hwid: &str) -> LicenseStatus {
     let hwid = expected_hwid.to_string();
 
     // Decode the key from Base64
@@ -386,11 +588,16 @@ pub fn verify_license_key_for_hwid(key_string: &str, expected_hwid: &str) -> Lic
         }
     };
 
-    if verifying_key.verify(payload.as_bytes(), &signature).is_err() {
+    if verifying_key
+        .verify(payload.as_bytes(), &signature)
+        .is_err()
+    {
         return LicenseStatus {
             valid: false,
             hwid,
-            message: "License key signature verification failed. This key is invalid or tampered with.".to_string(),
+            message:
+                "License key signature verification failed. This key is invalid or tampered with."
+                    .to_string(),
             expiry_date: None,
             days_remaining: None,
         };
@@ -521,11 +728,9 @@ pub fn check_license_status() -> Result<LicenseStatus, String> {
 
     // Try to read the current key from the license table
     let key: Option<String> = conn
-        .query_row(
-            "SELECT current_key FROM license WHERE id = 1",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT current_key FROM license WHERE id = 1", [], |row| {
+            row.get(0)
+        })
         .ok();
 
     match key {
@@ -552,7 +757,10 @@ pub fn check_license_status() -> Result<LicenseStatus, String> {
                         ) {
                             if today_date < prev_date {
                                 let expiry_date = status.expiry_date.clone();
-                                let days_remaining = expiry_date.as_deref().and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()).map(|exp| (exp - today_date).num_days());
+                                let days_remaining = expiry_date
+                                    .as_deref()
+                                    .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+                                    .map(|exp| (exp - today_date).num_days());
                                 return Ok(LicenseStatus {
                                     valid: false,
                                     hwid,
@@ -616,7 +824,11 @@ fn hwid_from_key_payload(key_string: &str) -> Option<String> {
     let s = String::from_utf8(decoded).ok()?;
     let payload = s.splitn(2, '\n').next()?;
     let hwid = payload.splitn(2, '|').next()?.trim();
-    if hwid.is_empty() { None } else { Some(hwid.to_string()) }
+    if hwid.is_empty() {
+        None
+    } else {
+        Some(hwid.to_string())
+    }
 }
 
 /// Restores a license from a backup database file, for moving to a new device.
@@ -631,7 +843,10 @@ fn hwid_from_key_payload(key_string: &str) -> Option<String> {
 ///   machine. Restores are tracked (original HWID + restore count) so a vendor
 ///   can detect license sharing across machines.
 #[tauri::command]
-pub fn restore_license_from_backup(file_path: String, password: String) -> Result<LicenseStatus, String> {
+pub fn restore_license_from_backup(
+    file_path: String,
+    password: String,
+) -> Result<LicenseStatus, String> {
     // Defense in depth: this command is reachable without a session (it is
     // PUBLIC so the pre-login License screen can use it), so it must not be able
     // to silently overwrite an installation that already has a valid license.
@@ -719,7 +934,14 @@ pub fn get_license_info() -> Result<LicenseInfo, String> {
         .ok();
 
     match result {
-        Some((license_key, expiry_date, activated_at, original_hwid, hwid_restored_at, restore_count)) => {
+        Some((
+            license_key,
+            expiry_date,
+            activated_at,
+            original_hwid,
+            hwid_restored_at,
+            restore_count,
+        )) => {
             let (days_remaining, status) = if let Some(ref exp) = expiry_date {
                 if let Ok(expiry) = NaiveDate::parse_from_str(exp, "%Y-%m-%d") {
                     let today = chrono::Local::now().date_naive();

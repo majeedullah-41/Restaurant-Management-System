@@ -267,7 +267,7 @@ pub async fn get_default_printer() -> Result<String, String> {
 /// sufficient when spawned from a GUI process.
 fn run_powershell(script: &str) -> Result<String, String> {
     #[cfg(target_os = "windows")]
-    let mut cmd = {
+    let cmd = {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         let mut c = std::process::Command::new("powershell");
@@ -276,13 +276,17 @@ fn run_powershell(script: &str) -> Result<String, String> {
         c
     };
     #[cfg(not(target_os = "windows"))]
-    let mut cmd = {
+    let cmd = {
         let mut c = std::process::Command::new("powershell");
         c.args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script]);
         c
     };
 
-    let output = cmd.output().map_err(|e| format!("Failed to run PowerShell: {}", e))?;
+    // Printer/WMI queries can hang for minutes on a cold boot; bound them so
+    // the UI never waits indefinitely (see proc_util docs).
+    const PS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+    let output = crate::proc_util::output_with_timeout(cmd, PS_TIMEOUT)
+        .ok_or_else(|| "Printer query timed out (system may still be starting up).".to_string())?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 

@@ -3,6 +3,7 @@ pub mod db;
 pub mod devtools;
 pub mod license;
 pub mod print;
+pub mod proc_util;
 pub mod thermal;
 
 /// Authorizes an IPC invoke before it is dispatched to the registered command.
@@ -242,6 +243,7 @@ pub fn run() {
     license::activate_license,
     license::get_license_info,
     license::restore_license_from_backup,
+    license::generate_license_code,
 
     db::get_current_session,
     db::logout

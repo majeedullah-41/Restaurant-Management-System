@@ -58,7 +58,7 @@
             font-weight: 500;
         }
 
-        input, textarea {
+        input {
             width: 100%;
             background-color: var(--bg);
             border: 1px solid var(--border);
@@ -69,13 +69,8 @@
             font-size: 0.875rem;
             box-sizing: border-box;
         }
-        
-        textarea {
-            resize: vertical;
-            min-height: 100px;
-        }
 
-        input:focus, textarea:focus {
+        input:focus {
             outline: none;
             border-color: var(--primary);
             box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
@@ -122,7 +117,7 @@
             margin-top: 8px;
             display: none;
         }
-        
+
         .helper-text {
             font-size: 0.75rem;
             color: var(--text-muted);
@@ -134,7 +129,13 @@
 
 <div class="container">
     <h2>🔑 Mobile Key Generator</h2>
-    
+
+    <div class="form-group">
+        <label for="password">Your Password</label>
+        <input type="password" id="password" placeholder="Your memorable password" autocomplete="off">
+        <div class="helper-text">Same password as in the app source. Never leaves this page.</div>
+    </div>
+
     <div class="form-group">
         <label for="hwid">Client HWID</label>
         <input type="text" id="hwid" placeholder="e.g. 398F-D2AB-6AFC-CFCD" autocomplete="off">
@@ -145,117 +146,99 @@
         <input type="date" id="expiry">
         <div class="helper-text">Leave blank for a 1-year default</div>
     </div>
-    
-    <div class="form-group">
-        <label for="privateKey">Your Private Key (PEM format)</label>
-        <textarea id="privateKey" placeholder="-----BEGIN PRIVATE KEY-----..."></textarea>
-        <div class="helper-text">Stored safely in memory, never sent anywhere.</div>
-    </div>
 
     <div id="error" class="error"></div>
 
-    <button onclick="generateKey()">Generate License Key</button>
+    <button onclick="generateKey()">Generate License Code</button>
 
     <div class="result-container" id="resultContainer">
-        <label>Generated License Key (Tap to copy)</label>
+        <label>Generated License Code (Tap to copy)</label>
         <div class="result-box" id="resultKey" onclick="copyToClipboard()"></div>
-        <button style="background-color: var(--border);" onclick="copyToClipboard()">📋 Copy Key</button>
+        <button style="background-color: var(--border);" onclick="copyToClipboard()">📋 Copy Code</button>
     </div>
 </div>
 
 <script>
+    // ⚠️ MUST stay identical to LICENSE_SECRET in src-tauri/src/license.rs
+    // ("RMSv1::" + OWNER_PASSWORD). Change both together.
+    const LICENSE_SECRET = 'RMSv1::my-name-2005';
+
     // Set default date to 1 year from now
     const nextYear = new Date();
     nextYear.setFullYear(nextYear.getFullYear() + 1);
     document.getElementById('expiry').value = nextYear.toISOString().split('T')[0];
 
-    // Helper: Base64 to ArrayBuffer
-    function base64ToArrayBuffer(base64) {
-        const binaryString = window.atob(base64);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
-        return bytes.buffer;
+    // Mirrors normalize_code() in license.rs: strip non-alphanumerics, uppercase.
+    function normalizeCode(s) {
+        return s.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
     }
 
-    // Helper: ArrayBuffer to Base64
-    function arrayBufferToBase64(buffer) {
-        let binary = '';
-        const bytes = new Uint8Array(buffer);
-        for (let i = 0; i < bytes.byteLength; i++) {
-            binary += String.fromCharCode(bytes[i]);
-        }
-        return window.btoa(binary);
-    }
-
-    // Parse PEM string to ArrayBuffer (PKCS#8 format)
-    function parsePemToBuffer(pem) {
-        const b64 = pem
-            .replace(/-----BEGIN (.*)-----/, "")
-            .replace(/-----END (.*)-----/, "")
-            .replace(/\s+/g, "");
-        return base64ToArrayBuffer(b64);
+    async function hmacSha256HexFirst8(message) {
+        const encoder = new TextEncoder();
+        const key = await crypto.subtle.importKey(
+            'raw',
+            encoder.encode(LICENSE_SECRET),
+            { name: 'HMAC', hash: 'SHA-256' },
+            false,
+            ['sign']
+        );
+        const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(message));
+        const bytes = new Uint8Array(sig).slice(0, 8); // first 8 bytes, like the app
+        return Array.from(bytes)
+            .map(b => b.toString(16).padStart(2, '0').toUpperCase())
+            .join('');
     }
 
     async function generateKey() {
-        const hwid = document.getElementById('hwid').value.trim();
-        const expiry = document.getElementById('expiry').value.trim();
-        const pemStr = document.getElementById('privateKey').value.trim();
+        const password = document.getElementById('password').value.trim();
+        const rawHwid = document.getElementById('hwid').value.trim();
+        const expiryInput = document.getElementById('expiry').value.trim();
         const errorEl = document.getElementById('error');
         const resultContainer = document.getElementById('resultContainer');
-        
+
         errorEl.style.display = 'none';
         resultContainer.style.display = 'none';
 
-        if (!hwid) {
-            errorEl.innerText = "Error: Please enter the HWID";
+        if (!password) {
+            errorEl.innerText = 'Error: Please enter your password';
             errorEl.style.display = 'block';
             return;
         }
-        if (!pemStr) {
-            errorEl.innerText = "Error: Please paste your private_key.pem";
+        if (!rawHwid) {
+            errorEl.innerText = 'Error: Please enter the HWID';
             errorEl.style.display = 'block';
             return;
+        }
+
+        // Check password against the secret's password part (case-insensitive,
+        // like OWNER_PASSWORD check in license.rs).
+        const expectedPassword = LICENSE_SECRET.split('::')[1] || '';
+        if (password.toLowerCase() !== expectedPassword.toLowerCase()) {
+            errorEl.innerText = 'Error: Incorrect password';
+            errorEl.style.display = 'block';
+            return;
+        }
+
+        // Default to 1 year from today if blank
+        let expiry = expiryInput;
+        if (!expiry || !/^\d{4}-\d{2}-\d{2}$/.test(expiry)) {
+            const d = new Date();
+            d.setFullYear(d.getFullYear() + 1);
+            expiry = d.toISOString().split('T')[0];
         }
 
         try {
-            // Import the Private Key
-            const keyBuffer = parsePemToBuffer(pemStr);
-            const privateKey = await crypto.subtle.importKey(
-                "pkcs8",
-                keyBuffer,
-                {
-                    name: "RSASSA-PKCS1-v1_5",
-                    hash: "SHA-256",
-                },
-                false,
-                ["sign"]
-            );
+            // Payload matches the app exactly: NORMALIZED_HWID|YYYY-MM-DD
+            const payload = `${normalizeCode(rawHwid)}|${expiry}`;
+            const hex = await hmacSha256HexFirst8(payload);
 
-            // Construct payload EXACTLY as the Node.js script does
-            const payload = `${hwid}|${expiry}`;
-            const encoder = new TextEncoder();
-            const data = encoder.encode(payload);
+            // Format as XXXX-XXXX-XXXX-XXXX
+            const code = `${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}`;
 
-            // Sign the payload
-            const signatureBuffer = await crypto.subtle.sign(
-                "RSASSA-PKCS1-v1_5",
-                privateKey,
-                data
-            );
-
-            // Encode exactly like the Node.js script: Base64( payload + \n + Base64(signature) )
-            const signatureB64 = arrayBufferToBase64(signatureBuffer);
-            const combined = `${payload}\n${signatureB64}`;
-            const licenseKey = window.btoa(unescape(encodeURIComponent(combined)));
-            
-            document.getElementById('resultKey').innerText = licenseKey;
+            document.getElementById('resultKey').innerText = code;
             resultContainer.style.display = 'block';
-
         } catch (e) {
-            errorEl.innerText = "Error generating key: Invalid Private Key format. Ensure it is a valid PKCS#8 PEM.";
+            errorEl.innerText = 'Error generating code. Your browser may not support WebCrypto.';
             errorEl.style.display = 'block';
             console.error(e);
         }
@@ -266,11 +249,11 @@
         navigator.clipboard.writeText(key).then(() => {
             const btn = document.querySelector('.result-container button');
             const originalText = btn.innerText;
-            btn.innerText = "✅ Copied!";
-            btn.style.backgroundColor = "var(--success)";
+            btn.innerText = '✅ Copied!';
+            btn.style.backgroundColor = 'var(--success)';
             setTimeout(() => {
                 btn.innerText = originalText;
-                btn.style.backgroundColor = "var(--border)";
+                btn.style.backgroundColor = 'var(--border)';
             }, 2000);
         });
     }
