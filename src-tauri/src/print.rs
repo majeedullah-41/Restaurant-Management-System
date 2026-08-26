@@ -189,7 +189,9 @@ pub async fn list_printers(force: Option<bool>) -> Result<Vec<PrinterInfo>, Stri
     let cached = if force {
         None
     } else {
-        let guard = PRINTER_CACHE.lock().unwrap();
+        // Poison-recovery: a panic in any thread must not permanently break the
+        // printer list.
+        let guard = PRINTER_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         match &*guard {
             Some((at, raw)) if at.elapsed() < std::time::Duration::from_secs(10) => Some(raw.clone()),
             _ => None,
@@ -199,7 +201,8 @@ pub async fn list_printers(force: Option<bool>) -> Result<Vec<PrinterInfo>, Stri
         Some(raw) => raw,
         None => {
             let raw = run_powershell(script)?;
-            let mut guard = PRINTER_CACHE.lock().unwrap();
+            // Poison-recovery, same rationale as above.
+            let mut guard = PRINTER_CACHE.lock().unwrap_or_else(|e| e.into_inner());
             *guard = Some((std::time::Instant::now(), raw.clone()));
             raw
         }
@@ -586,11 +589,13 @@ pub fn find_edge() -> Result<String, String> {
             return Ok(path.to_string());
         }
     }
-    // Fall back to PATH resolution.
-    let output = std::process::Command::new("where.exe")
-        .arg("msedge")
-        .output()
-        .map_err(|e| format!("Failed to search for Edge: {}", e))?;
+    // Fall back to PATH resolution. Goes through the hard-timeout wrapper like
+    // every other external spawn: right after boot, `where.exe` can hang on a
+    // cold process lookup and would otherwise freeze the PDF export forever.
+    let mut cmd = std::process::Command::new("where.exe");
+    cmd.arg("msedge");
+    let output = crate::proc_util::output_with_timeout(cmd, std::time::Duration::from_secs(10))
+        .ok_or_else(|| "Microsoft Edge could not be found. Please install Microsoft Edge to export PDFs.".to_string())?;
     let found = String::from_utf8_lossy(&output.stdout)
         .lines()
         .next()

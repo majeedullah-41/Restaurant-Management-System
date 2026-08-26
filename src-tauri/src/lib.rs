@@ -90,12 +90,31 @@ where
 pub fn run() {
     #[cfg(debug_assertions)]
     let builder = tauri::Builder::default()
+        // Single-instance must be the first plugin: it claims its OS-level lock
+        // during init, and a second launch forwards its args here and exits.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // A second launch happened; focus the existing window instead of
+            // opening a duplicate.
+            use tauri::Manager;
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_wdio::init())
         .plugin(tauri_plugin_wdio_webdriver::init());
     #[cfg(not(debug_assertions))]
     let builder = tauri::Builder::default()
+        // Single-instance must be the first plugin (see debug branch above).
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            use tauri::Manager;
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init());
 

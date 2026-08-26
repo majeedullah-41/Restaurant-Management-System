@@ -45,7 +45,10 @@ pub fn init_shared_connection() {
          PRAGMA busy_timeout = 5000;"
     );
 
-    let mut slot = DB_CONN.lock().unwrap_or_else(|e| panic!("DB_CONN poisoned: {}", e));
+    // Poison-recovery: this runs once at startup before other threads exist, but
+    // recovering (rather than panicking) keeps the invariant that DB access can
+    // never be permanently lost to a poisoned lock.
+    let mut slot = DB_CONN.lock().unwrap_or_else(|e| e.into_inner());
     *slot = Some(conn);
 }
 
@@ -214,7 +217,7 @@ pub fn init_db() -> Result<()> {
 /// monotonic, idempotent migration sequence: it runs exactly once per database
 /// (`PRAGMA user_version`), so the expensive per-row backfills no longer re-run
 /// on every app start or backup command.
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 
 pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
     // Only run the migration suite once per database. `user_version` starts at
@@ -720,6 +723,36 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
     conn.execute("ALTER TABLE print_settings ADD COLUMN delivery_receipt_printer TEXT", []).ok();
     conn.execute("ALTER TABLE print_settings ADD COLUMN delivery_receipt_copies INTEGER NOT NULL DEFAULT 1", []).ok();
     conn.execute("ALTER TABLE print_settings ADD COLUMN delivery_receipt_layout TEXT", []).ok();
+
+    // 14. One-time repair of legacy date values recorded as full UTC
+    //     timestamps (e.g. "2026-08-25T20:41:00.000Z" sent by old frontend
+    //     code). Those strings display with a phantom time and land on the
+    //     previous day in UTC+ zones, which made records look "delayed".
+    //     Rewrite them as plain local dates so every stored value matches the
+    //     device calendar day it actually happened on.
+    {
+        let tables: [(&str, &str); 3] = [
+            ("expenses", "date"),
+            ("salary_payouts", "date"),
+            ("advance_salaries", "date"),
+        ];
+        for (table, col) in tables {
+            let sql = format!("SELECT id, {} FROM {} WHERE {} LIKE '%T%'", col, table, col);
+            if let Ok(mut stmt) = conn.prepare(&sql) {
+                let rows: Vec<(i64, String)> = stmt
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .map(|iter| iter.filter_map(Result::ok).collect())
+                    .unwrap_or_default();
+                drop(stmt);
+                for (id, raw) in rows {
+                    let fixed = normalize_date_to_local(&raw);
+                    let update_sql =
+                        format!("UPDATE {} SET {} = ?1 WHERE id = ?2", table, col);
+                    let _ = conn.execute(&update_sql, rusqlite::params![fixed, id]);
+                }
+            }
+        }
+    }
 
     // Persist the completed migration state so the suite does not re-run.
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
@@ -2232,7 +2265,7 @@ pub fn get_or_create_order(table_id: i32) -> Result<ActiveOrder, String> {
     let initial_type = if table_id == 0 { "Takeaway" } else { "Dine-in" };
     
     // Get table_number from table_id
-    let mut tn_stmt = conn.prepare("SELECT table_number FROM table_status WHERE id = ?1").unwrap();
+    let mut tn_stmt = conn.prepare("SELECT table_number FROM table_status WHERE id = ?1").map_err(|e| e.to_string())?;
     let table_number: i32 = tn_stmt.query_row([&table_id], |row| row.get(0)).unwrap_or(0);
 
     let frequency: String = conn
@@ -2252,7 +2285,7 @@ pub fn get_or_create_order(table_id: i32) -> Result<ActiveOrder, String> {
     
     conn.execute("UPDATE table_status SET status = 'Occupied' WHERE id = ?1", [&table_id]).ok();
 
-    let mut cat_stmt = conn.prepare("SELECT c.name FROM table_status ts JOIN table_categories c ON ts.category_id = c.id WHERE ts.id = ?1").unwrap();
+    let mut cat_stmt = conn.prepare("SELECT c.name FROM table_status ts JOIN table_categories c ON ts.category_id = c.id WHERE ts.id = ?1").map_err(|e| e.to_string())?;
     let cat_name: Option<String> = cat_stmt.query_row([&table_id], |row| row.get(0)).unwrap_or(None);
 
     Ok(ActiveOrder {
@@ -2936,6 +2969,30 @@ pub struct Expense {
     pub reference_type: Option<String>,
 }
 
+/// Normalizes any client-supplied date to a plain device-local `YYYY-MM-DD`.
+///
+/// Some screens used to send `new Date().toISOString()` (a UTC timestamp) as
+/// the record date. In UTC+ timezones that string lands on the previous day
+/// between 00:00 and ~05:00 local, which made newly recorded expenses show up
+/// "delayed" by a day and mixed full timestamps into a date-only column. All
+/// expense/payout/advance write sites now pass dates through this helper so
+/// stored values always match the device clock.
+pub fn normalize_date_to_local(date: &str) -> String {
+    let trimmed = date.trim();
+    // A clean YYYY-MM-DD is already local — keep it untouched.
+    if trimmed.len() == 10 && trimmed.as_bytes().get(4) == Some(&b'-') && trimmed.as_bytes().get(7) == Some(&b'-') {
+        if chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d").is_ok() {
+            return trimmed.to_string();
+        }
+    }
+    // Full timestamp (e.g. an ISO/UTC instant): convert to the device-local
+    // calendar day. Unparseable input falls back to today's device date.
+    trimmed
+        .parse::<chrono::DateTime<chrono::FixedOffset>>()
+        .map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|_| chrono::Local::now().format("%Y-%m-%d").to_string())
+}
+
 #[tauri::command]
 pub fn get_expenses() -> Result<Vec<Expense>, String> {
     let conn = get_conn()?;
@@ -2973,6 +3030,7 @@ pub fn get_expenses() -> Result<Vec<Expense>, String> {
 #[tauri::command]
 pub fn add_expense(amount: f64, date: String, category: String, note: Option<String>) -> Result<String, String> {
     let conn = get_conn()?;
+    let date = normalize_date_to_local(&date);
     conn.execute(
         "INSERT INTO expenses (amount, date, category, note) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![amount, date, category, note]
@@ -3601,12 +3659,14 @@ pub fn process_payout(staff_id: i32, amount: f64, bonus: f64, deduction: f64, ad
     if !amount.is_finite() || !bonus.is_finite() || !deduction.is_finite() || !advance_deduction.is_finite() {
         return Err("Invalid payout amount.".into());
     }
+    let date = normalize_date_to_local(&date);
     
     let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
-    
+
     // Mark only as much advance as was actually outstanding as deducted; use the
     // returned (capped) total so an over-large advance_deduction cannot over-charge.
     let actually_deducted = deduct_advances(&tx, staff_id, advance_deduction)?;
+    let date = normalize_date_to_local(&date);
     let net_amount = amount + bonus - deduction - actually_deducted;
     if net_amount < 0.0 {
         return Err(format!(
@@ -3809,6 +3869,7 @@ pub fn pay_advance_salary(staff_id: i32, amount: f64, date: String, note: String
         return Err("Advance amount must be a positive number.".into());
     }
 
+    let date = normalize_date_to_local(&date);
     tx.execute(
         "INSERT INTO advance_salaries (staff_id, amount, date, note) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![staff_id, amount, date, note]
@@ -4204,6 +4265,7 @@ fn restore_advances(tx: &rusqlite::Transaction, staff_id: i32, mut amount: f64) 
 pub fn process_payroll_batch(start_date: String, end_date: String, record_ids: Option<Vec<i32>>) -> Result<String, String> {
     let mut conn_guard = get_conn()?;
     let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
+    let end_date = normalize_date_to_local(&end_date);
 
     // Honor the UI selection: filter the pending records to the chosen ids.
     let filtered_ids: Vec<i32> = record_ids
@@ -4713,9 +4775,15 @@ pub fn save_text_report(filename: String, content: String) -> Result<String, Str
         return Err("Invalid filename.".into());
     }
 
-    let reports_dir = Path::new("../reports");
+    // Write under the app's own data dir (%LOCALAPPDATA%\RMS\reports), not a
+    // CWD-relative path — the old "../reports" landed somewhere different
+    // depending on how the exe was launched.
+    let app_dir = std::env::var("LOCALAPPDATA")
+        .map(|d| Path::new(&d).join("RMS"))
+        .map_err(|_| "Could not resolve the application data directory.".to_string())?;
+    let reports_dir = app_dir.join("reports");
     if !reports_dir.exists() {
-        fs::create_dir_all(reports_dir).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&reports_dir).map_err(|e| e.to_string())?;
     }
     
     let file_path = reports_dir.join(safe_name);

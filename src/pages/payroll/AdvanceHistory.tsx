@@ -24,17 +24,9 @@ export default function AdvanceHistory() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [expandedStaffIds, setExpandedStaffIds] = useState<number[]>([]);
 
-  // Date filters
-  const [startDate, setStartDate] = useState(() => {
-    const d = new Date(todayLocal());
-    d.setDate(1);
-    return d.toISOString().split('T')[0];
-  });
-  const [endDate, setEndDate] = useState(() => {
-    const d = new Date(todayLocal());
-    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-    return `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, "0")}-${String(lastDay.getDate()).padStart(2, "0")}`;
-  });
+  // Date filters — first to last day of the current month from the device clock.
+  const [startDate, setStartDate] = useState(() => `${todayLocal().slice(0, 8)}01`);
+  const [endDate, setEndDate] = useState(todayLocal);
 
   // New Advance Modal State
   const [modalOpen, setModalOpen] = useState(false);
@@ -101,7 +93,7 @@ export default function AdvanceHistory() {
       await invoke('pay_advance_salary', {
         staffId: parseInt(selectedStaffId),
         amount: parseFloat(advanceAmount),
-        date: new Date().toISOString(),
+        date: todayLocal(),
         note: advanceNote,
         staffName: staffName
       });

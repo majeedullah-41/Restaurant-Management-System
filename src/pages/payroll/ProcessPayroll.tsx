@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '../../lib/api';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, todayLocal } from '../../lib/utils';
 import { Users, Banknote, Calendar, ArrowRight, Printer, Trash2 } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
 import { useReactToPrint } from 'react-to-print';
@@ -104,7 +104,7 @@ export default function ProcessPayroll() {
       await invoke('pay_advance_salary', {
         staffId: parseInt(advanceStaffId),
         amount: parseFloat(advanceAmount),
-        date: new Date().toISOString(),
+        date: todayLocal(),
         note: advanceNote,
         staffName: staff?.name || '',
       });

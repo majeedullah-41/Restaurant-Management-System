@@ -127,21 +127,13 @@ export default function Expenses() {
     }
   };
 
+  // Dates are stored as plain local `YYYY-MM-DD` strings (the backend
+  // normalizes them), so an exact lexicographic compare avoids any
+  // timezone/day-boundary drift from `new Date()` parsing.
   const filteredExpenses = expenses.filter(e => {
-    const expenseDate = new Date(e.date);
-    const start = dateRange.startDate ? new Date(dateRange.startDate) : null;
-    const end = dateRange.endDate ? new Date(dateRange.endDate) : null;
-    
-    if (start && end) {
-      const d = new Date(expenseDate.getFullYear(), expenseDate.getMonth(), expenseDate.getDate());
-      const s = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-      const e_dt = new Date(end.getFullYear(), end.getMonth(), end.getDate());
-      if (d < s || d > e_dt) {
-         return false;
-      }
-      return true;
-    }
-    return false; // don't show until range is set
+    if (!dateRange.startDate || !dateRange.endDate) return false; // don't show until range is set
+    const day = e.date.slice(0, 10);
+    return day >= dateRange.startDate && day <= dateRange.endDate;
   });
 
   const totalExpenses = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);

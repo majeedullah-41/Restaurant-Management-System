@@ -37,7 +37,9 @@ fn login_attempts() -> &'static Mutex<HashMap<String, Vec<Instant>>> {
 pub fn is_login_locked(username: &str) -> bool {
     let now = Instant::now();
     let cutoff = now - std::time::Duration::from_secs(LOGIN_WINDOW_SECS);
-    let mut map = login_attempts().lock().unwrap();
+    // Recover from a poisoned lock instead of panicking forever: a panic in one
+    // thread while holding the mutex must not permanently break logins.
+    let mut map = login_attempts().lock().unwrap_or_else(|e| e.into_inner());
     let attempts = map.entry(username.to_string()).or_insert_with(Vec::new);
     attempts.retain(|t| *t > cutoff);
     attempts.len() >= LOGIN_MAX_ATTEMPTS
@@ -47,7 +49,9 @@ pub fn is_login_locked(username: &str) -> bool {
 pub fn record_login_attempt(username: &str) {
     let now = Instant::now();
     let cutoff = now - std::time::Duration::from_secs(LOGIN_WINDOW_SECS);
-    let mut map = login_attempts().lock().unwrap();
+    // Recover from a poisoned lock instead of panicking forever: a panic in one
+    // thread while holding the mutex must not permanently break logins.
+    let mut map = login_attempts().lock().unwrap_or_else(|e| e.into_inner());
     let attempts = map.entry(username.to_string()).or_insert_with(Vec::new);
     attempts.retain(|t| *t > cutoff);
     attempts.push(now);
@@ -78,7 +82,8 @@ fn verify_attempts() -> &'static Mutex<HashMap<String, Vec<Instant>>> {
 pub fn is_verify_locked(username: &str) -> bool {
     let now = Instant::now();
     let cutoff = now - std::time::Duration::from_secs(VERIFY_WINDOW_SECS);
-    let mut map = verify_attempts().lock().unwrap();
+    // Poison-recovery, same rationale as login_attempts above.
+    let mut map = verify_attempts().lock().unwrap_or_else(|e| e.into_inner());
     let attempts = map.entry(username.to_string()).or_insert_with(Vec::new);
     attempts.retain(|t| *t > cutoff);
     attempts.len() >= VERIFY_MAX_ATTEMPTS
@@ -88,7 +93,8 @@ pub fn is_verify_locked(username: &str) -> bool {
 pub fn record_verify_attempt(username: &str) {
     let now = Instant::now();
     let cutoff = now - std::time::Duration::from_secs(VERIFY_WINDOW_SECS);
-    let mut map = verify_attempts().lock().unwrap();
+    // Poison-recovery, same rationale as login_attempts above.
+    let mut map = verify_attempts().lock().unwrap_or_else(|e| e.into_inner());
     let attempts = map.entry(username.to_string()).or_insert_with(Vec::new);
     attempts.retain(|t| *t > cutoff);
     attempts.push(now);
@@ -174,7 +180,8 @@ pub fn create_session(username: String, role: String) -> String {
         expires_at: now + Duration::hours(SESSION_TTL_HOURS),
     };
 
-    let mut map = sessions().lock().unwrap();
+    // Poison-recovery: sessions must survive a panic in any other thread.
+    let mut map = sessions().lock().unwrap_or_else(|e| e.into_inner());
     map.retain(|_, s| s.expires_at > now);
 
     let mut user_tokens: Vec<(String, DateTime<Local>)> = map
@@ -197,7 +204,9 @@ pub fn create_session(username: String, role: String) -> String {
 
 /// Validates a session token, returning the session if it is still valid.
 pub fn validate(token: &str) -> Result<Session, String> {
-    let mut map = sessions().lock().unwrap();
+    // Poison-recovery: validate runs on every IPC call, so a poisoned lock here
+    // would take down the whole app after a single panic.
+    let mut map = sessions().lock().unwrap_or_else(|e| e.into_inner());
     let now = Local::now();
     match map.get(token) {
         Some(s) if s.expires_at > now => Ok(s.clone()),
@@ -413,7 +422,7 @@ mod tests {
     fn expires_sessions_are_invalid() {
         let token = create_session("carol".to_string(), "Admin".to_string());
         {
-            let mut map = sessions().lock().unwrap();
+            let mut map = sessions().lock().unwrap_or_else(|e| e.into_inner());
             let session = map.get_mut(&token).unwrap();
             session.expires_at = Local::now() - Duration::hours(1);
         }

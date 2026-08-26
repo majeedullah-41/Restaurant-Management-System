@@ -8,7 +8,7 @@ import Header from '../../components/Header';
 import DateFilterToolbar from '../../components/DateFilterToolbar';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { PayrollReportTemplate } from '../../components/PayrollReportTemplate';
-import { todayLocal } from '../../lib/utils';
+import { todayLocal, parseDeviceDate } from '../../lib/utils';
 import { PayrollHistoryPeriod } from './types';
 
 export default function PayrollHistory() {
@@ -43,12 +43,8 @@ export default function PayrollHistory() {
     }
   };
 
-  // Date filters
-  const [startDate, setStartDate] = useState(() => {
-    const d = new Date(todayLocal());
-    d.setDate(1);
-    return d.toISOString().split('T')[0];
-  });
+  // Date filters — first of the current month, always from the device clock.
+  const [startDate, setStartDate] = useState(() => `${todayLocal().slice(0, 8)}01`);
   const [endDate, setEndDate] = useState(todayLocal());
 
   useEffect(() => {
@@ -151,7 +147,7 @@ export default function PayrollHistory() {
                         </div>
                         <div>
                           <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                            {new Date(period.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - {new Date(period.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            {parseDeviceDate(period.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - {parseDeviceDate(period.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                           </h3>
                           <p className="text-sm text-slate-500 font-medium">
                             Processed on {period.paid_at ? formatDateTime(period.paid_at) : 'Unknown'}
