@@ -7,11 +7,10 @@ export interface DateFilterToolbarProps {
 }
 
 export default function DateFilterToolbar({ onDateRangeChange, defaultMode = 'month' }: DateFilterToolbarProps) {
-  const today = new Date();
   const [mode, setMode] = useState<'date' | 'month' | 'custom'>(defaultMode);
-  const [selectedDate, setSelectedDate] = useState(today);
-  const [selectedMonth, setSelectedMonth] = useState(today.getMonth());
-  const [selectedYear, setSelectedYear] = useState(today.getFullYear());
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const [selectedMonth, setSelectedMonth] = useState(() => new Date().getMonth());
+  const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear());
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -43,19 +42,21 @@ export default function DateFilterToolbar({ onDateRangeChange, defaultMode = 'mo
   }, [startDate, endDate, mode]);
 
   const isCurrentSelection = () => {
+    const now = new Date();
     if (mode === 'month') {
-      return selectedMonth === today.getMonth() && selectedYear === today.getFullYear();
+      return selectedMonth === now.getMonth() && selectedYear === now.getFullYear();
     } else if (mode === 'date') {
-      return selectedDate.getDate() === today.getDate() && selectedDate.getMonth() === today.getMonth() && selectedDate.getFullYear() === today.getFullYear();
+      return selectedDate.getDate() === now.getDate() && selectedDate.getMonth() === now.getMonth() && selectedDate.getFullYear() === now.getFullYear();
     }
     return false;
   };
 
   const isFutureSelection = () => {
+    const now = new Date();
     if (mode === 'month') {
-      return selectedYear > today.getFullYear() || (selectedYear === today.getFullYear() && selectedMonth >= today.getMonth());
+      return selectedYear > now.getFullYear() || (selectedYear === now.getFullYear() && selectedMonth >= now.getMonth());
     } else if (mode === 'date') {
-      const tDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      const tDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const sDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
       return sDate >= tDate;
     }
@@ -103,12 +104,13 @@ export default function DateFilterToolbar({ onDateRangeChange, defaultMode = 'mo
   };
 
   const goToCurrent = () => {
+    const now = new Date();
     if (mode === 'date') {
-      setSelectedDate(today);
+      setSelectedDate(now);
     } else {
       setMode('month');
-      setSelectedMonth(today.getMonth());
-      setSelectedYear(today.getFullYear());
+      setSelectedMonth(now.getMonth());
+      setSelectedYear(now.getFullYear());
     }
   };
 

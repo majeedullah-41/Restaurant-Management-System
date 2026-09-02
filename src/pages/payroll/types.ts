@@ -1,3 +1,11 @@
+export interface AdvanceTransaction {
+  id: number;
+  date: string;
+  amount: number;
+  deducted_amount: number;
+  note: string | null;
+}
+
 export interface SalaryPayout {
   id: number;
   staff_id: number;
@@ -9,6 +17,11 @@ export interface SalaryPayout {
   payout_type: string;
   note: string | null;
   date: string;
+  status?: string;
+  payroll_id?: string | null;
+  paid_at?: string | null;
+  advance_balance?: number;
+  transactions?: AdvanceTransaction[];
 }
 
 export interface PayrollRecordRow {

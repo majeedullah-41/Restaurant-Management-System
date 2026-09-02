@@ -223,6 +223,7 @@ pub fn run() {
     db::void_payroll,
     db::delete_payroll_record,
     db::delete_payroll_period,
+    db::get_advance_transactions_for_record,
     db::get_advance_history,
     db::get_staff_advance_balance,
     db::get_payroll_history,

@@ -250,6 +250,8 @@ export default function ProcessPayroll() {
     ? new Date(dateRange.startDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
     : 'Payroll';
 
+  const [slipTransactions, setSlipTransactions] = useState<any[]>([]);
+
   const slipPayout: SalaryPayout | null = slipRow ? {
     id: slipRow.id,
     staff_id: slipRow.staff_id,
@@ -260,7 +262,12 @@ export default function ProcessPayroll() {
     advance_deduction: slipRow.advance_deduction,
     payout_type: 'Salary',
     note: null,
-    date: slipRow.paid_at || dateRange.endDate,
+    date: slipRow.paid_at || todayLocal(),
+    status: slipRow.status,
+    payroll_id: slipRow.payroll_id,
+    paid_at: slipRow.paid_at,
+    advance_balance: slipRow.advance_balance,
+    transactions: slipTransactions,
   } : null;
 
   return (
@@ -479,8 +486,15 @@ export default function ProcessPayroll() {
                             <td className="py-3 px-6 text-center">
                               <div className="flex items-center justify-center space-x-2">
                                 <button
-                                  onClick={(e) => {
+                                  onClick={async (e) => {
                                     e.stopPropagation();
+                                    try {
+                                      const txs = await invoke<any[]>('get_advance_transactions_for_record', { recordId: row.id });
+                                      setSlipTransactions(txs);
+                                    } catch (err) {
+                                      console.error("Failed to load transactions", err);
+                                      setSlipTransactions([]);
+                                    }
                                     setSlipRow(row);
                                   }}
                                   title="Print salary slip"

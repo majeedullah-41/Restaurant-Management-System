@@ -14,8 +14,22 @@ interface PayrollSlipProps {
 
 const PayrollSlipTemplate = forwardRef<HTMLDivElement, PayrollSlipProps>(({ payout, restaurantName, adminName, visible, ...props }, ref) => {
   const isAdvance = payout.payout_type === 'Advance';
+  const isPaid = payout.status === 'Paid';
   const config: ReceiptLayoutConfig = { ...DEFAULT_RECEIPT_LAYOUT, ...(props.config ?? {}) };
   const zoom = Math.max(0.4, Math.min(2, (config.fontScale / 100) * (config.widthMm / 80)));
+
+  const formatSlipDate = (dateStr: string) => {
+    if (!dateStr) return '—';
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(dateStr)) {
+      const d = new Date(dateStr);
+      return isNaN(d.getTime()) ? dateStr : d.toLocaleString();
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      const d = new Date(`${dateStr}T12:00:00`);
+      return isNaN(d.getTime()) ? dateStr : d.toLocaleDateString();
+    }
+    return dateStr;
+  };
 
   return (
     <div className={visible ? "bg-white rounded-lg p-2 overflow-auto" : "hidden"}>
@@ -57,7 +71,7 @@ const PayrollSlipTemplate = forwardRef<HTMLDivElement, PayrollSlipProps>(({ payo
           </div>
           <div className="text-center mt-1">
             <p className="font-bold uppercase tracking-widest text-sm">
-              {isAdvance ? "*** ADVANCE SLIP ***" : "*** SALARY SLIP ***"}
+              {isAdvance ? "*** ADVANCE SLIP ***" : isPaid ? "*** SALARY SLIP - PAID ***" : "*** SALARY SLIP - PENDING ***"}
             </p>
           </div>
           <div className="border-b border-dashed border-black mt-4 mb-2"></div>
@@ -68,10 +82,22 @@ const PayrollSlipTemplate = forwardRef<HTMLDivElement, PayrollSlipProps>(({ payo
             <span className="uppercase">Staff:</span>
             <span className="uppercase text-right">{payout.staff_name}</span>
           </div>
+          {!isAdvance && payout.payroll_id && (
+            <div className="flex justify-between">
+              <span className="uppercase">Payroll ID:</span>
+              <span className="text-right font-mono text-xs">{payout.payroll_id}</span>
+            </div>
+          )}
           <div className="flex justify-between">
-            <span className="uppercase">Date:</span>
-            <span className="text-right">{payout.date}</span>
+            <span className="uppercase">{isAdvance ? 'Date:' : isPaid ? 'Paid On:' : 'Period:'}</span>
+            <span className="text-right">{formatSlipDate(payout.date)}</span>
           </div>
+          {!isAdvance && isPaid && payout.paid_at && payout.paid_at !== payout.date && (
+            <div className="flex justify-between">
+              <span className="uppercase">Processed:</span>
+              <span className="text-right">{formatSlipDate(payout.paid_at)}</span>
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="uppercase">Admin:</span>
             <span className="uppercase text-right">{adminName}</span>
@@ -112,10 +138,24 @@ const PayrollSlipTemplate = forwardRef<HTMLDivElement, PayrollSlipProps>(({ payo
                 </div>
               )}
               {payout.advance_deduction > 0 && (
-                <div className="flex justify-between">
-                  <span className="uppercase">Advance Ded.:</span>
-                  <span className="text-right">- {formatCurrency(payout.advance_deduction)}</span>
-                </div>
+                <>
+                  <div className="flex justify-between">
+                    <span className="uppercase">Advance Ded.:</span>
+                    <span className="text-right">- {formatCurrency(payout.advance_deduction)}</span>
+                  </div>
+                  {/* Advance Outstanding line removed as requested */}
+                  {payout.transactions && payout.transactions.length > 0 && (
+                    <div className="mt-2 text-[10px] font-normal border-t border-dashed border-black pt-1">
+                      <div className="font-bold uppercase mb-1">Advance Deductions:</div>
+                      {payout.transactions.map((tx) => (
+                        <div key={tx.id} className="flex justify-between pl-2">
+                          <span>{formatSlipDate(tx.date)}{tx.note ? ` - ${tx.note}` : ''}</span>
+                          <span>{formatCurrency(tx.deducted_amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}
@@ -123,9 +163,17 @@ const PayrollSlipTemplate = forwardRef<HTMLDivElement, PayrollSlipProps>(({ payo
 
         <div className="border-b border-dashed border-black my-3"></div>
 
-        <div className="flex justify-between font-bold text-base mb-8">
-          <span className="uppercase">{isAdvance ? "AMOUNT PAID" : "NET PAY"}</span>
-          <span className="text-right">{formatCurrency(payout.amount)}</span>
+        <div className="flex flex-col mb-8">
+          <div className="flex justify-between font-bold text-base">
+            <span className="uppercase">{isAdvance ? "AMOUNT PAID" : (payout.status === 'Paid' ? "SALARY PAID" : "SALARY TO PAY")}</span>
+            <span className="text-right">{formatCurrency(isAdvance ? payout.amount : payout.amount + payout.advance_deduction)}</span>
+          </div>
+          {!isAdvance && payout.advance_deduction > 0 && (
+            <div className="flex justify-between text-[11px] text-gray-600 mt-1">
+              <span>(Breakdown)</span>
+              <span>Advance {formatCurrency(payout.advance_deduction)} + Cash {formatCurrency(payout.amount)}</span>
+            </div>
+          )}
         </div>
 
         <div className="text-center text-[10px] font-bold mt-8 border-t border-dashed border-black pt-4">

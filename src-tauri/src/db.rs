@@ -3666,7 +3666,6 @@ pub fn process_payout(staff_id: i32, amount: f64, bonus: f64, deduction: f64, ad
     // Mark only as much advance as was actually outstanding as deducted; use the
     // returned (capped) total so an over-large advance_deduction cannot over-charge.
     let actually_deducted = deduct_advances(&tx, staff_id, advance_deduction)?;
-    let date = normalize_date_to_local(&date);
     let net_amount = amount + bonus - deduction - actually_deducted;
     if net_amount < 0.0 {
         return Err(format!(
@@ -3846,13 +3845,13 @@ pub fn process_batch_payout(payouts: Vec<BatchPayoutEntry>, payout_date: String)
 }
 
 /// Recomputes `advance_deduction` and `net_pay` on a staff member's Pending
-/// payroll records to match their current outstanding advance balance, capped
-/// at what each period's salary can absorb.
+/// payroll records to match their current outstanding advance balance scoped
+/// to each record's own period date range.
 fn resync_pending_advances(tx: &rusqlite::Transaction, staff_id: i32) -> std::result::Result<(), String> {
     tx.execute(
         "UPDATE payroll_records SET
-            advance_deduction = MAX(0, MIN(base_salary + bonus - deduction, COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = ?1), 0))),
-            net_pay = MAX(0, base_salary + bonus - deduction - MAX(0, MIN(base_salary + bonus - deduction, COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = ?1), 0)))),
+            advance_deduction = MAX(0, MIN(base_salary + bonus - deduction, COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = ?1 AND date >= payroll_records.start_date AND date <= payroll_records.end_date), 0))),
+            net_pay = MAX(0, base_salary + bonus - deduction - MAX(0, MIN(base_salary + bonus - deduction, COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = ?1 AND date >= payroll_records.start_date AND date <= payroll_records.end_date), 0)))),
             updated_at = datetime('now', 'localtime')
          WHERE staff_id = ?1 AND status = 'Pending'",
         [&staff_id],
@@ -4044,7 +4043,7 @@ fn map_payroll_row(row: &rusqlite::Row) -> rusqlite::Result<PayrollRecordRow> {
 const PAYROLL_RECORD_SELECT: &str =
     "SELECT pr.id, pr.staff_id, s.name, c.name, pr.base_salary,
             (SELECT COUNT(DISTINCT a.date) FROM staff_attendance a WHERE a.staff_id = s.id AND a.date >= ?1 AND a.date <= ?2) AS days_present,
-            COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = s.id), 0) AS advance_balance,
+            COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = s.id AND date >= ?1 AND date <= ?2), 0) AS advance_balance,
             pr.bonus, pr.deduction, pr.advance_deduction, pr.gross_pay, pr.net_pay, pr.status, pr.payroll_id, pr.paid_at
      FROM payroll_records pr
      JOIN staff s ON pr.staff_id = s.id
@@ -4056,7 +4055,7 @@ const PAYROLL_RECORD_SELECT: &str =
 const PAYROLL_RECORD_SELECT_BY_ID: &str =
     "SELECT pr.id, pr.staff_id, s.name, c.name, pr.base_salary,
             (SELECT COUNT(DISTINCT a.date) FROM staff_attendance a WHERE a.staff_id = s.id AND a.date >= ?1 AND a.date <= ?2) AS days_present,
-            COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = s.id), 0) AS advance_balance,
+            COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = s.id AND date >= ?1 AND date <= ?2), 0) AS advance_balance,
             pr.bonus, pr.deduction, pr.advance_deduction, pr.gross_pay, pr.net_pay, pr.status, pr.payroll_id, pr.paid_at
      FROM payroll_records pr
      JOIN staff s ON pr.staff_id = s.id
@@ -4077,9 +4076,9 @@ pub fn get_payroll_period(start_date: String, end_date: String) -> Result<Payrol
     tx.execute(
         "INSERT OR IGNORE INTO payroll_records (start_date, end_date, staff_id, base_salary, advance_deduction, gross_pay, net_pay, status)
          SELECT ?1, ?2, s.id, COALESCE(s.salary, 0), 
-                MIN(COALESCE(s.salary, 0), COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = s.id), 0)),
+                MIN(COALESCE(s.salary, 0), COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = s.id AND date >= ?1 AND date <= ?2), 0)),
                 COALESCE(s.salary, 0), 
-                COALESCE(s.salary, 0) - MIN(COALESCE(s.salary, 0), COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = s.id), 0)),
+                COALESCE(s.salary, 0) - MIN(COALESCE(s.salary, 0), COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = s.id AND date >= ?1 AND date <= ?2), 0)),
                 'Pending'
          FROM staff s WHERE COALESCE(s.status, 'Active') = 'Active'",
         rusqlite::params![&start_date, &end_date],
@@ -4087,16 +4086,15 @@ pub fn get_payroll_period(start_date: String, end_date: String) -> Result<Payrol
 
     // Recompute gross/net for pending records from their stored split, and
     // resync advance_deduction against the CURRENT outstanding advance balance
-    // so records created before advances existed (or by an older build) still
-    // recover the advance instead of paying it out in full. The deduction is
-    // capped at what this period's salary can absorb; the rest carries over.
+    // scoped to advances within this period's date range only. The deduction is
+    // capped at what this period's salary can absorb.
     tx.execute(
         "UPDATE payroll_records SET
             advance_deduction = MAX(0, MIN(base_salary + bonus - deduction,
-                COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = payroll_records.staff_id), 0))),
+                COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = payroll_records.staff_id AND date >= ?1 AND date <= ?2), 0))),
             gross_pay = base_salary + bonus,
             net_pay = MAX(0, base_salary + bonus - deduction - MAX(0, MIN(base_salary + bonus - deduction,
-                COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = payroll_records.staff_id), 0)))),
+                COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = payroll_records.staff_id AND date >= ?1 AND date <= ?2), 0)))),
             updated_at = datetime('now', 'localtime')
          WHERE start_date = ?1 AND end_date = ?2 AND status = 'Pending'",
         rusqlite::params![&start_date, &end_date],
@@ -4501,6 +4499,63 @@ pub fn delete_payroll_period(start_date: String, end_date: String) -> Result<Str
     Ok(format!("Deleted payroll period with {} staff record(s).", count))
 }
 
+/// A single advance entry deducted during a payroll record – used to show
+/// individual transaction details on the salary slip.
+#[derive(serde::Serialize)]
+pub struct AdvanceTransactionRow {
+    pub id: i32,
+    pub date: String,
+    pub amount: f64,
+    pub deducted_amount: f64,
+    pub note: Option<String>,
+}
+
+/// Returns the advance transactions that were deducted (or will be deducted)
+/// for a specific payroll record. For Paid records, returns advances within
+/// the period that have `deducted_amount > 0`. For Pending records, returns
+/// advances within the period that still have an outstanding balance.
+#[tauri::command]
+pub fn get_advance_transactions_for_record(record_id: i32) -> Result<Vec<AdvanceTransactionRow>, String> {
+    let conn = get_conn()?;
+
+    let (staff_id, start_date, end_date, status): (i32, String, String, String) = conn.query_row(
+        "SELECT staff_id, start_date, end_date, status FROM payroll_records WHERE id = ?1",
+        [&record_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).map_err(|_| "Payroll record not found.".to_string())?;
+
+    // For Paid records: show advances that had deductions applied within the period.
+    // For Pending records: show advances with outstanding balance in the period.
+    let sql = if status == "Paid" {
+        "SELECT id, date, amount, COALESCE(deducted_amount, 0.0), note
+         FROM advance_salaries
+         WHERE staff_id = ?1 AND date >= ?2 AND date <= ?3 AND COALESCE(deducted_amount, 0.0) > 0
+         ORDER BY date, id"
+    } else {
+        "SELECT id, date, amount, (amount - COALESCE(deducted_amount, 0.0)), note
+         FROM advance_salaries
+         WHERE staff_id = ?1 AND date >= ?2 AND date <= ?3 AND (amount - COALESCE(deducted_amount, 0.0)) > 0.001
+         ORDER BY date, id"
+    };
+
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let iter = stmt.query_map(rusqlite::params![&staff_id, &start_date, &end_date], |row| {
+        Ok(AdvanceTransactionRow {
+            id: row.get(0)?,
+            date: row.get(1)?,
+            amount: row.get(2)?,
+            deducted_amount: row.get(3)?,
+            note: row.get(4).unwrap_or(None),
+        })
+    }).map_err(|e| e.to_string())?;
+
+    let mut out = Vec::new();
+    for r in iter {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
 #[derive(serde::Serialize)]
 pub struct AdvanceHistoryRow {
     pub id: i32,
@@ -4568,11 +4623,12 @@ pub struct PayrollHistoryPeriod {
 /// along with their records and a summary of paid vs pending.
 #[tauri::command]
 pub fn get_payroll_history(start_date: String, end_date: String) -> Result<Vec<PayrollHistoryPeriod>, String> {
-    let conn = get_conn()?;
+    let mut conn_guard = get_conn()?;
+    let tx = conn_guard.transaction().map_err(|e| e.to_string())?;
 
     let mut periods = Vec::new();
     {
-        let mut stmt = conn.prepare(
+        let mut stmt = tx.prepare(
             "SELECT DISTINCT start_date, end_date FROM payroll_records
              WHERE (start_date >= ?1 AND start_date <= ?2)
                 OR (start_date <= ?2 AND end_date >= ?1)
@@ -4586,6 +4642,25 @@ pub fn get_payroll_history(start_date: String, end_date: String) -> Result<Vec<P
         }
     }
 
+    // Resync advance deductions and net_pay for ALL Pending records across all
+    // overlapping periods so the history always reflects the current outstanding
+    // advance balance, even if advances were given after the records were created.
+    for (sd, ed) in &periods {
+        tx.execute(
+            "UPDATE payroll_records SET
+                advance_deduction = MAX(0, MIN(base_salary + bonus - deduction,
+                    COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = payroll_records.staff_id), 0))),
+                gross_pay = base_salary + bonus,
+                net_pay = MAX(0, base_salary + bonus - deduction - MAX(0, MIN(base_salary + bonus - deduction,
+                    COALESCE((SELECT SUM(amount - COALESCE(deducted_amount, 0)) FROM advance_salaries WHERE staff_id = payroll_records.staff_id), 0)))),
+                updated_at = datetime('now', 'localtime')
+             WHERE start_date = ?1 AND end_date = ?2 AND status = 'Pending'",
+            rusqlite::params![sd, ed],
+        ).map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+
+    let conn = &conn_guard;
     let mut out = Vec::new();
     for (sd, ed) in periods {
         let mut stmt = conn.prepare(PAYROLL_RECORD_SELECT).map_err(|e| e.to_string())?;

@@ -36,7 +36,13 @@ fn login_attempts() -> &'static Mutex<HashMap<String, Vec<Instant>>> {
 /// login attempts within the window.
 pub fn is_login_locked(username: &str) -> bool {
     let now = Instant::now();
-    let cutoff = now - std::time::Duration::from_secs(LOGIN_WINDOW_SECS);
+    // On Windows, `Instant` is anchored to boot, so subtracting the window can
+    // underflow when the machine has been up for less than the window (e.g. the
+    // app is launched right after a reboot). Fall back to `now` so an empty/
+    // short-lived attempt list simply yields no lockout instead of panicking.
+    let cutoff = now
+        .checked_sub(std::time::Duration::from_secs(LOGIN_WINDOW_SECS))
+        .unwrap_or(now);
     // Recover from a poisoned lock instead of panicking forever: a panic in one
     // thread while holding the mutex must not permanently break logins.
     let mut map = login_attempts().lock().unwrap_or_else(|e| e.into_inner());
@@ -48,7 +54,9 @@ pub fn is_login_locked(username: &str) -> bool {
 /// Records a failed login attempt for the given username.
 pub fn record_login_attempt(username: &str) {
     let now = Instant::now();
-    let cutoff = now - std::time::Duration::from_secs(LOGIN_WINDOW_SECS);
+    let cutoff = now
+        .checked_sub(std::time::Duration::from_secs(LOGIN_WINDOW_SECS))
+        .unwrap_or(now);
     // Recover from a poisoned lock instead of panicking forever: a panic in one
     // thread while holding the mutex must not permanently break logins.
     let mut map = login_attempts().lock().unwrap_or_else(|e| e.into_inner());
@@ -81,7 +89,9 @@ fn verify_attempts() -> &'static Mutex<HashMap<String, Vec<Instant>>> {
 /// password-verification attempts within the window.
 pub fn is_verify_locked(username: &str) -> bool {
     let now = Instant::now();
-    let cutoff = now - std::time::Duration::from_secs(VERIFY_WINDOW_SECS);
+    let cutoff = now
+        .checked_sub(std::time::Duration::from_secs(VERIFY_WINDOW_SECS))
+        .unwrap_or(now);
     // Poison-recovery, same rationale as login_attempts above.
     let mut map = verify_attempts().lock().unwrap_or_else(|e| e.into_inner());
     let attempts = map.entry(username.to_string()).or_insert_with(Vec::new);
@@ -92,7 +102,9 @@ pub fn is_verify_locked(username: &str) -> bool {
 /// Records a failed password-verification attempt for the session user.
 pub fn record_verify_attempt(username: &str) {
     let now = Instant::now();
-    let cutoff = now - std::time::Duration::from_secs(VERIFY_WINDOW_SECS);
+    let cutoff = now
+        .checked_sub(std::time::Duration::from_secs(VERIFY_WINDOW_SECS))
+        .unwrap_or(now);
     // Poison-recovery, same rationale as login_attempts above.
     let mut map = verify_attempts().lock().unwrap_or_else(|e| e.into_inner());
     let attempts = map.entry(username.to_string()).or_insert_with(Vec::new);
@@ -115,11 +127,17 @@ pub fn clear_verify_attempts(username: &str) {
 /// reset attempts within the window.
 pub fn is_reset_locked(conn: &rusqlite::Connection, username: &str) -> bool {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let row: Option<(i64, i64)> = conn.query_row(
-        "SELECT count, window_start FROM reset_attempts WHERE username = ?1",
-        [username], |row| Ok((row.get(0)?, row.get(1)?)),
-    ).ok();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let row: Option<(i64, i64)> = conn
+        .query_row(
+            "SELECT count, window_start FROM reset_attempts WHERE username = ?1",
+            [username],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok();
     match row {
         Some((count, window_start)) => {
             if now.saturating_sub(window_start as u64) >= RESET_WINDOW_SECS {
@@ -136,7 +154,10 @@ pub fn is_reset_locked(conn: &rusqlite::Connection, username: &str) -> bool {
 /// Records a failed reset attempt for the given username.
 pub fn record_reset_attempt(conn: &rusqlite::Connection, username: &str) {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let _ = conn.execute(
         "INSERT INTO reset_attempts (username, count, window_start) VALUES (?1, 1, ?2)
          ON CONFLICT(username) DO UPDATE SET count = count + 1",
@@ -334,6 +355,7 @@ pub const ADMIN_COMMANDS: &[&str] = &[
     "void_payroll",
     "delete_payroll_record",
     "delete_payroll_period",
+    "get_advance_transactions_for_record",
     "get_advance_history",
     "get_staff_advance_balance",
     "get_payroll_history",

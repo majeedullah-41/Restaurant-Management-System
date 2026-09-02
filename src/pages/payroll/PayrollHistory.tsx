@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '../../lib/api';
 import { formatCurrency, formatDateTime } from '../../lib/utils';
-import { Clock, Calendar, Download, Trash2 } from 'lucide-react';
+import { Clock, Calendar, Download, Trash2, RefreshCw } from 'lucide-react';
 import { exportReportAsPdf } from '../../lib/pdfExport';
 import Sidebar from '../../components/Sidebar';
 import Header from '../../components/Header';
@@ -110,14 +110,25 @@ export default function PayrollHistory() {
                 }}
                 defaultMode="month"
               />
-              <button
-                onClick={() => handlePrint()}
-                disabled={loading || exporting || history.length === 0}
-                className="shrink-0 px-4 py-2.5 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-sm font-semibold rounded-xl transition-colors flex items-center gap-2 border border-slate-200 dark:border-slate-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Download size={16} />
-                {exporting ? "Exporting…" : "Export PDF"}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => fetchHistory()}
+                  disabled={loading}
+                  className="shrink-0 px-4 py-2.5 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-sm font-semibold rounded-xl transition-colors flex items-center gap-2 border border-slate-200 dark:border-slate-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Refresh data"
+                >
+                  <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                  Refresh
+                </button>
+                <button
+                  onClick={() => handlePrint()}
+                  disabled={loading || exporting || history.length === 0}
+                  className="shrink-0 px-4 py-2.5 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-sm font-semibold rounded-xl transition-colors flex items-center gap-2 border border-slate-200 dark:border-slate-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Download size={16} />
+                  {exporting ? "Exporting…" : "Export PDF"}
+                </button>
+              </div>
             </div>
 
             {errorMsg && (
@@ -156,8 +167,14 @@ export default function PayrollHistory() {
                       </div>
                       <div className="flex items-center space-x-4">
                         <div className="text-right">
-                          <p className="text-sm text-slate-500 font-medium mb-1">Total Paid ({period.paid_count} staff)</p>
+                          <p className="text-sm text-slate-500 font-medium mb-1">
+                            {period.paid_count} of {period.total_count} staff paid
+                            {period.total_count > period.paid_count && (
+                              <span className="text-orange-500 ml-2">({period.total_count - period.paid_count} pending)</span>
+                            )}
+                          </p>
                           <p className="text-2xl font-bold text-emerald-600">{formatCurrency(period.total_net)}</p>
+                          <p className="text-[11px] text-slate-400 font-medium">Total Paid</p>
                         </div>
                         <button
                           onClick={() => setDeleteTarget(period)}
@@ -179,6 +196,7 @@ export default function PayrollHistory() {
                             <th className="py-3 px-4 text-right border-r border-slate-200 dark:border-slate-800">Bonus</th>
                             <th className="py-3 px-4 text-right border-r border-slate-200 dark:border-slate-800">Deduction</th>
                             <th className="py-3 px-4 text-right border-r border-slate-200 dark:border-slate-800">Advance</th>
+                            <th className="py-3 px-4 text-center border-r border-slate-200 dark:border-slate-800">Status</th>
                             <th className="py-3 px-4 text-right">Net Paid</th>
                           </tr>
                         </thead>
@@ -221,8 +239,23 @@ export default function PayrollHistory() {
                                   <span className="text-slate-300 dark:text-slate-600">—</span>
                                 )}
                               </td>
+                              <td className="py-3 px-4 text-center border-r border-slate-200 dark:border-slate-800">
+                                {row.status === 'Paid' ? (
+                                  <span className="text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10 px-3 py-1 rounded-full text-xs font-bold">
+                                    Paid
+                                  </span>
+                                ) : row.status === 'Void' ? (
+                                  <span className="text-slate-500 bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-full text-xs font-bold">
+                                    Void
+                                  </span>
+                                ) : (
+                                  <span className="text-orange-500 bg-orange-50 dark:bg-orange-500/10 px-3 py-1 rounded-full text-xs font-bold">
+                                    Pending
+                                  </span>
+                                )}
+                              </td>
                               <td className="py-3 px-4 text-right font-mono text-sm font-bold text-slate-900 dark:text-white">
-                                {formatCurrency(row.net_pay)}
+                                {row.status === 'Paid' ? formatCurrency(row.net_pay) : <span className="text-slate-400">—</span>}
                               </td>
                             </tr>
                           ))}
