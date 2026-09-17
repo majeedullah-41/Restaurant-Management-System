@@ -142,4 +142,75 @@ describe('RMS Order Flow E2E Test', () => {
         const tableStatus = db.prepare('SELECT status FROM table_status WHERE table_number = 1').get();
         assert.strictEqual(tableStatus.status, 'Available', 'Table 1 should be Available again');
     });
+
+    it('should honor settings toggles that relax dine-in table/order-taker requirements', async () => {
+        // Relax the mandatory dine-in requirements directly in the test DB, then
+        // open a fresh walk-in new-order screen (POS re-fetches settings on mount).
+        db.prepare('UPDATE restaurant_settings SET require_table_dinein = 0, require_taker_dinein = 0, auto_assign_taker = 0 WHERE id = 1').run();
+
+        const posNav = await $('button=POS / New Order');
+        await posNav.click();
+        const newOrderBtn = await $('button=New Order');
+        await newOrderBtn.waitForDisplayed({ timeout: 30000 });
+        await newOrderBtn.click();
+        await browser.pause(2000);
+        const dbg = await browser.execute(() => {
+            const out = { chain: [] };
+            const h2 = [...document.querySelectorAll('h2')].find(h => h.innerText.trim() === 'Order Summary');
+            if (!h2) { out.chain.push('NOT FOUND'); return out; }
+            let el = h2;
+            let depth = 0;
+            while (el && depth < 20) {
+                const cs = getComputedStyle(el);
+                const r = el.getBoundingClientRect();
+                out.chain.push({ tag: el.tagName.toLowerCase(), cls: String(el.className).slice(0, 60),
+                    opacity: cs.opacity, display: cs.display, visibility: cs.visibility,
+                    contentVis: cs.contentVisibility, z: cs.zIndex, x: r.x, y: r.y, w: r.width, h: r.height });
+                el = el.parentElement;
+                depth++;
+            }
+            return out;
+        });
+        console.log('T2-DOMDUMP:', JSON.stringify(dbg));
+        const orderSummary = await $('h2=Order Summary');
+        await orderSummary.waitForDisplayed({ timeout: 30000 });
+
+        // 1. Walk-in + Dine-in selected, NO table and NO order taker chosen.
+        await selectOption(1, 'Dine-in');
+        const takerSelect = await $$('select')[2];
+        await takerSelect.waitForDisplayed({ timeout: 30000 });
+
+        // 2. Add an item — with the requirements relaxed this must succeed.
+        const burger = await $('h3=Burger');
+        await burger.waitForDisplayed({ timeout: 30000 });
+        await burger.click();
+
+        // The order is created lazily on first item add; a walk-in dine-in order
+        // should now exist with table_id/table_number = 0 and no order taker.
+        await browser.waitUntil(
+            () => {
+                const row = db.prepare('SELECT * FROM orders ORDER BY id DESC LIMIT 1').get();
+                return row && row.order_type === 'Dine-in' && row.table_id === 0 && row.order_taker_id === null;
+            },
+            { timeout: 30000, timeoutMsg: 'Relaxed dine-in order was not created without table/taker' }
+        );
+
+        // 3. Restore the defaults, remount POS (fresh settings fetch), and
+        //    verify the old enforcement returns.
+        db.prepare('UPDATE restaurant_settings SET require_table_dinein = 1, require_taker_dinein = 1, auto_assign_taker = 1 WHERE id = 1').run();
+        const dashboardNav = await $('button=Dashboard');
+        await dashboardNav.click();
+        await orderSummary.waitForDisplayed({ timeout: 30000, reverse: true });
+        await posNav.click();
+        await orderSummary.waitForDisplayed({ timeout: 30000 });
+        await selectOption(1, 'Dine-in');
+
+        const staleId = db.prepare('SELECT id FROM orders ORDER BY id DESC LIMIT 1').get().id;
+        await $('h3=Coke').click();
+        await browser.pause(800);
+
+        const latest = db.prepare('SELECT id FROM orders ORDER BY id DESC LIMIT 1').get();
+        assert.strictEqual(latest.id, staleId, 'No new order should be created when dine-in requirements are enforced');
+        assert.strictEqual(db.prepare('SELECT COUNT(*) AS c FROM order_items WHERE order_id = ?').get(staleId).c, 0, 'No item should be added when dine-in requirements are enforced');
+    });
 });

@@ -24,6 +24,7 @@ import {
 import { ReceiptTemplate } from "./ReceiptTemplate";
 import { KOTTemplate } from "./KOTTemplate";
 import { DeliveryReceiptTemplate } from "./DeliveryReceiptTemplate";
+import { ToggleRow } from "./ui/toggle";
 
 const inputCls =
   "w-full h-11 bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700 rounded-lg px-4 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500";
@@ -865,30 +866,5 @@ export default function PrintSettingsSection() {
         </button>
       </form>
     </div>
-  );
-}
-
-function ToggleRow({ label, checked, onChange, testId }: { label: string; checked: boolean; onChange: (v: boolean) => void; testId?: string }) {
-  return (
-    <label className="flex items-center justify-between py-2 cursor-pointer select-none">
-      <span className="text-sm text-slate-700 dark:text-slate-300">{label}</span>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        data-testid={testId}
-        onClick={(e) => {
-          e.preventDefault();
-          onChange(!checked);
-        }}
-        className={`relative w-11 h-6 rounded-full transition-colors ${checked ? "bg-violet-600" : "bg-slate-300 dark:bg-slate-700"}`}
-      >
-        <span
-          className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
-            checked ? "translate-x-5" : ""
-          }`}
-        />
-      </button>
-    </label>
   );
 }

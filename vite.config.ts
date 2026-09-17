@@ -17,6 +17,7 @@ export default defineConfig({
   // standalone HTML exported to PDF (headless Edge reads the temp file at
   // file://, where a relative /assets/*.woff2 URL cannot resolve).
   build: {
+    chunkSizeWarningLimit: 2000,
     assetsInlineLimit: 100000,
   },
   // Add this block right here:

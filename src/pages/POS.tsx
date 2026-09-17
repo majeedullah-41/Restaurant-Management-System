@@ -54,6 +54,12 @@ export default function POS() {
   const [taxRate, setTaxRate] = useState<number>(0);
   const [serviceChargeRate, setServiceChargeRate] = useState<number>(0);
   const [serviceChargeTypes, setServiceChargeTypes] = useState<string[]>(["Dine-in"]);
+  const [requireTableDinein, setRequireTableDinein] = useState(true);
+  const [requireTakerDinein, setRequireTakerDinein] = useState(true);
+  const [requireTakerOther, setRequireTakerOther] = useState(false);
+  const [requirePhoneDelivery, setRequirePhoneDelivery] = useState(true);
+  const [requireAddressDelivery, setRequireAddressDelivery] = useState(true);
+  const [autoAssignTaker, setAutoAssignTaker] = useState(true);
   const [tables, setTables] = useState<DetailedTableStatus[]>([]);
   const [posLoading, setPosLoading] = useState(true);
 
@@ -260,6 +266,12 @@ export default function POS() {
         setRestaurantAddress(settings.address || "");
         setRestaurantContact(settings.contact_number || "");
         setRestaurantLogo(settings.logo_path || null);
+        setRequireTableDinein(settings.require_table_dinein !== false);
+        setRequireTakerDinein(settings.require_taker_dinein !== false);
+        setRequireTakerOther(settings.require_taker_other === true);
+        setRequirePhoneDelivery(settings.require_phone_delivery !== false);
+        setRequireAddressDelivery(settings.require_address_delivery !== false);
+        setAutoAssignTaker(settings.auto_assign_taker !== false);
 
         const pSettings = await loadPrintSettings();
         setPrintSettings(pSettings);
@@ -273,7 +285,7 @@ export default function POS() {
         // Default the order taker to the logged-in user when they are an order taker
         const currentName = displayName?.toLowerCase().trim();
         const selfTaker = takers.find((t: any) => (t.name || "").toLowerCase().trim() === currentName);
-        if (selfTaker) {
+        if (selfTaker && autoAssignTaker) {
           setOrderTakerId(selfTaker.id);
           setOrderTakerName(selfTaker.name);
         }
@@ -322,8 +334,8 @@ export default function POS() {
             setDeliveryAddress("");
             setOrderNote("");
             setSelectedCustomerId(null);
-            setOrderTakerId(selfTaker ? selfTaker.id : null);
-            setOrderTakerName(selfTaker ? selfTaker.name : null);
+            setOrderTakerId(autoAssignTaker && selfTaker ? selfTaker.id : null);
+            setOrderTakerName(autoAssignTaker && selfTaker ? selfTaker.name : null);
             // Restore the order taker carried over from a previous screen (e.g., walk-in -> table)
             try {
               const savedTaker = sessionStorage.getItem("pos_selected_taker");
@@ -445,18 +457,20 @@ export default function POS() {
   };
 
   const handleAddToCart = async (item: MenuItem) => {
-    // Dine-in orders require both a table and an order taker before any item
-    // can be added (which is what places/creates the order).
+    // Dine-in orders may require both a table and an order taker before any
+    // item can be added (which is what places/creates the order). These
+    // requirements are configurable in Settings > General > Order Entry.
+    const missing: string[] = [];
     if (orderType === "Dine-in") {
-      const tableSelected = !!tableId && tableId !== "0";
-      const takerSelected = orderTakerId != null;
-      const missing: string[] = [];
-      if (!tableSelected) missing.push("table");
-      if (!takerSelected) missing.push("order taker");
-      if (missing.length > 0) {
-        showAlert("Selection Required", `Please select ${missing.join(" and ")} before adding items to a dine-in order.`);
-        return;
-      }
+      if (requireTableDinein && (!tableId || tableId === "0")) missing.push("table");
+      if (requireTakerDinein && orderTakerId == null) missing.push("order taker");
+    } else if (requireTakerOther && orderTakerId == null) {
+      missing.push("order taker");
+    }
+    if (missing.length > 0) {
+      const label = orderType === "Dine-in" ? "a dine-in order" : `a ${orderType.toLowerCase()} order`;
+      showAlert("Selection Required", `Please select ${missing.join(" and ")} before adding items to ${label}.`);
+      return;
     }
 
     setRecentlyAdded(prev => new Set(prev).add(item.id));
@@ -767,12 +781,12 @@ export default function POS() {
       }
 
       if (orderType === "Delivery") {
-        if (!finalCustomerId && !deliveryPhone.trim()) {
+        if (requirePhoneDelivery && !finalCustomerId && !deliveryPhone.trim()) {
           showAlert("Validation Error", "Please provide a phone number for delivery.");
           isCheckingOut.current = false;
           return;
         }
-        if (!deliveryAddress.trim()) {
+        if (requireAddressDelivery && !deliveryAddress.trim()) {
           showAlert("Validation Error", "Please enter a delivery address.");
           isCheckingOut.current = false;
           return;
@@ -1217,7 +1231,7 @@ export default function POS() {
 
                 <details className="p-2.5 border border-rose-200 dark:border-rose-900/30 bg-rose-50/50 dark:bg-rose-900/10 rounded-lg group transition-all shadow-sm mb-3">
                   <summary className="flex justify-between items-center cursor-pointer list-none [&::-webkit-details-marker]:hidden text-[10px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider hover:text-rose-700 dark:hover:text-rose-300 transition-colors select-none">
-                    <span>Customer Info {orderType === "Delivery" && "(Required)"}</span>
+                    <span>Customer Info {orderType === "Delivery" && (requirePhoneDelivery || requireAddressDelivery) && "(Required)"}</span>
                     <ChevronDown size={13} className="group-open:rotate-180 transition-transform" />
                   </summary>
                   <div className="mt-2 space-y-2">

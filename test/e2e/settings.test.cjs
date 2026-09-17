@@ -57,6 +57,7 @@ describe('RMS Settings E2E Test', () => {
     it('navigates every settings inner-sidebar tab', async () => {
         const tabs = [
             ['General Preferences', 'h2=General Preferences'],
+            ['Order Requirements', 'h2=Order Entry Requirements'],
             ['Printing & Receipts', '[data-testid="print-settings-section"]'],
             ['Delivery Settings', 'h2=Delivery Configuration'],
             ['Backup & Restore', 'h2=Backup & Data Preservation'],

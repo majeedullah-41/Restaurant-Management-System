@@ -217,7 +217,7 @@ pub fn init_db() -> Result<()> {
 /// monotonic, idempotent migration sequence: it runs exactly once per database
 /// (`PRAGMA user_version`), so the expensive per-row backfills no longer re-run
 /// on every app start or backup command.
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 
 pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
     // Only run the migration suite once per database. `user_version` starts at
@@ -294,6 +294,15 @@ pub fn run_migrations(conn: &Connection) -> std::result::Result<(), String> {
     let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN service_charge_rate REAL DEFAULT 0.0", []);
     let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN service_charge_types TEXT DEFAULT 'Dine-in'", []);
     let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN contact_number TEXT", []);
+
+    // Order entry requirement toggles. Default 1 = keep the legacy mandatory
+    // behavior so existing businesses are unaffected until they opt out.
+    let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN require_table_dinein INTEGER NOT NULL DEFAULT 1", []);
+    let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN require_taker_dinein INTEGER NOT NULL DEFAULT 1", []);
+    let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN require_taker_other INTEGER NOT NULL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN require_phone_delivery INTEGER NOT NULL DEFAULT 1", []);
+    let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN require_address_delivery INTEGER NOT NULL DEFAULT 1", []);
+    let _ = conn.execute("ALTER TABLE restaurant_settings ADD COLUMN auto_assign_taker INTEGER NOT NULL DEFAULT 1", []);
 
     // Add service_charge_amount to orders here as well to ensure it's globally migrated
     let _ = conn.execute("ALTER TABLE orders ADD COLUMN service_charge_amount REAL DEFAULT 0.0", []);
@@ -1325,12 +1334,22 @@ pub struct RestaurantSettings {
     pub service_charge_types: String,
     pub contact_number: Option<String>,
     pub order_reset_frequency: String,
+    pub require_table_dinein: bool,
+    pub require_taker_dinein: bool,
+    pub require_taker_other: bool,
+    pub require_phone_delivery: bool,
+    pub require_address_delivery: bool,
+    pub auto_assign_taker: bool,
+}
+
+fn as_bool(v: i32) -> bool {
+    v != 0
 }
 
 #[tauri::command]
 pub fn get_settings() -> Result<RestaurantSettings, String> {
     let conn = get_conn()?;
-    let mut stmt = conn.prepare("SELECT restaurant_name, logo_path, tax_rate, total_tables, address, COALESCE(service_charge_rate, 0.0), COALESCE(service_charge_types, 'Dine-in'), contact_number, COALESCE(order_reset_frequency, 'Daily') FROM restaurant_settings WHERE id = 1").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT restaurant_name, logo_path, tax_rate, total_tables, address, COALESCE(service_charge_rate, 0.0), COALESCE(service_charge_types, 'Dine-in'), contact_number, COALESCE(order_reset_frequency, 'Daily'), COALESCE(require_table_dinein, 1), COALESCE(require_taker_dinein, 1), COALESCE(require_taker_other, 0), COALESCE(require_phone_delivery, 1), COALESCE(require_address_delivery, 1), COALESCE(auto_assign_taker, 1) FROM restaurant_settings WHERE id = 1").map_err(|e| e.to_string())?;
     
     let settings = stmt.query_row([], |row| {
         Ok(RestaurantSettings {
@@ -1343,6 +1362,12 @@ pub fn get_settings() -> Result<RestaurantSettings, String> {
             service_charge_types: row.get(6).unwrap_or("Dine-in".to_string()),
             contact_number: row.get(7).unwrap_or(None),
             order_reset_frequency: row.get(8).unwrap_or("Daily".to_string()),
+            require_table_dinein: row.get::<_, i32>(9).map(as_bool).unwrap_or(true),
+            require_taker_dinein: row.get::<_, i32>(10).map(as_bool).unwrap_or(true),
+            require_taker_other: row.get::<_, i32>(11).map(as_bool).unwrap_or(false),
+            require_phone_delivery: row.get::<_, i32>(12).map(as_bool).unwrap_or(true),
+            require_address_delivery: row.get::<_, i32>(13).map(as_bool).unwrap_or(true),
+            auto_assign_taker: row.get::<_, i32>(14).map(as_bool).unwrap_or(true),
         })
     }).map_err(|e| e.to_string())?;
 
@@ -1350,7 +1375,7 @@ pub fn get_settings() -> Result<RestaurantSettings, String> {
 }
 
 #[tauri::command]
-pub fn update_settings(name: String, address: Option<String>, logo_path: Option<String>, tax_rate: f64, total_tables: Option<i32>, service_charge_rate: f64, service_charge_types: String, contact_number: Option<String>, order_reset_frequency: Option<String>) -> Result<String, String> {
+pub fn update_settings(name: String, address: Option<String>, logo_path: Option<String>, tax_rate: f64, total_tables: Option<i32>, service_charge_rate: f64, service_charge_types: String, contact_number: Option<String>, order_reset_frequency: Option<String>, require_table_dinein: Option<bool>, require_taker_dinein: Option<bool>, require_taker_other: Option<bool>, require_phone_delivery: Option<bool>, require_address_delivery: Option<bool>, auto_assign_taker: Option<bool>) -> Result<String, String> {
     let conn = get_conn()?;
 
     // NOTE: Physical tables are managed exclusively through Table Management
@@ -1372,8 +1397,8 @@ pub fn update_settings(name: String, address: Option<String>, logo_path: Option<
     }
 
     conn.execute(
-        "UPDATE restaurant_settings SET restaurant_name = ?1, address = ?2, logo_path = ?3, tax_rate = ?4, total_tables = COALESCE(?5, total_tables), service_charge_rate = ?6, service_charge_types = ?7, contact_number = ?8, order_reset_frequency = COALESCE(?9, order_reset_frequency) WHERE id = 1",
-        rusqlite::params![name, address, logo_path, tax_rate, total_tables, service_charge_rate, service_charge_types, contact_number, order_reset_frequency],
+        "UPDATE restaurant_settings SET restaurant_name = ?1, address = ?2, logo_path = ?3, tax_rate = ?4, total_tables = COALESCE(?5, total_tables), service_charge_rate = ?6, service_charge_types = ?7, contact_number = ?8, order_reset_frequency = COALESCE(?9, order_reset_frequency), require_table_dinein = COALESCE(?10, require_table_dinein), require_taker_dinein = COALESCE(?11, require_taker_dinein), require_taker_other = COALESCE(?12, require_taker_other), require_phone_delivery = COALESCE(?13, require_phone_delivery), require_address_delivery = COALESCE(?14, require_address_delivery), auto_assign_taker = COALESCE(?15, auto_assign_taker) WHERE id = 1",
+        rusqlite::params![name, address, logo_path, tax_rate, total_tables, service_charge_rate, service_charge_types, contact_number, order_reset_frequency, require_table_dinein, require_taker_dinein, require_taker_other, require_phone_delivery, require_address_delivery, auto_assign_taker],
     ).map_err(|e| e.to_string())?;
     
     Ok("Settings updated successfully".into())

@@ -1,14 +1,15 @@
 import { useState, useEffect } from "react";
 import { invoke } from "../lib/api";
-import { Save, ShieldCheck, Copy, CheckCircle, CalendarClock, Clock, Cpu, RefreshCw, Key, XCircle, Loader2, Upload, Trash, DatabaseBackup, Settings as SettingsIcon, Truck, Printer, Database, Menu } from "lucide-react";
+import { Save, ShieldCheck, Copy, CheckCircle, CalendarClock, Clock, Cpu, RefreshCw, Key, XCircle, Loader2, Upload, Trash, DatabaseBackup, Settings as SettingsIcon, Truck, Printer, Database, Menu, ClipboardCheck } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import BackupSection from "../components/BackupSection";
 import DataMigrationSection from "../components/DataMigrationSection";
 import DeliverySettingsSection from "../components/DeliverySettingsSection";
 import PrintSettingsSection from "../components/PrintSettingsSection";
+import OrderRequirementsSection from "../components/OrderRequirementsSection";
 
-type SettingsTab = 'general' | 'printing' | 'delivery' | 'backup' | 'migration' | 'license';
+type SettingsTab = 'general' | 'order-requirements' | 'printing' | 'delivery' | 'backup' | 'migration' | 'license';
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
@@ -22,6 +23,12 @@ export default function SettingsPage() {
   const [orderResetFrequency, setOrderResetFrequency] = useState("Daily");
   const [logo, setLogo] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [requireTableDinein, setRequireTableDinein] = useState(true);
+  const [requireTakerDinein, setRequireTakerDinein] = useState(true);
+  const [requireTakerOther, setRequireTakerOther] = useState(false);
+  const [requirePhoneDelivery, setRequirePhoneDelivery] = useState(true);
+  const [requireAddressDelivery, setRequireAddressDelivery] = useState(true);
+  const [autoAssignTaker, setAutoAssignTaker] = useState(true);
 
   // License info state
   const [licenseInfo, setLicenseInfo] = useState<any>(null);
@@ -61,6 +68,12 @@ export default function SettingsPage() {
         setServiceChargeRate(data.service_charge_rate?.toString() || "0");
         setServiceChargeTypes(data.service_charge_types ? data.service_charge_types.split(",") : ["Dine-in"]);
         setOrderResetFrequency(data.order_reset_frequency || "Daily");
+        setRequireTableDinein(data.require_table_dinein !== false);
+        setRequireTakerDinein(data.require_taker_dinein !== false);
+        setRequireTakerOther(data.require_taker_other === true);
+        setRequirePhoneDelivery(data.require_phone_delivery !== false);
+        setRequireAddressDelivery(data.require_address_delivery !== false);
+        setAutoAssignTaker(data.auto_assign_taker !== false);
       } catch (err) {
         console.error("Failed to load settings", err);
       }
@@ -75,6 +88,9 @@ export default function SettingsPage() {
     }
     fetchSettings();
     fetchLicenseInfo();
+
+    window.addEventListener("settingsUpdated", fetchSettings);
+    return () => window.removeEventListener("settingsUpdated", fetchSettings);
   }, []);
 
   const copyHwid = async () => {
@@ -133,7 +149,13 @@ export default function SettingsPage() {
         serviceChargeRate: parsedServiceChargeRate,
         serviceChargeTypes: serviceChargeTypes.join(","),
         contactNumber: contact.trim() || null,
-        orderResetFrequency: orderResetFrequency
+        orderResetFrequency: orderResetFrequency,
+        requireTableDinein,
+        requireTakerDinein,
+        requireTakerOther,
+        requirePhoneDelivery,
+        requireAddressDelivery,
+        autoAssignTaker
       });
       setMessage("Settings saved successfully!");
       window.dispatchEvent(new Event("settingsUpdated"));
@@ -145,6 +167,7 @@ export default function SettingsPage() {
 
   const tabs = [
     { id: 'general', label: 'General Preferences', icon: SettingsIcon },
+    { id: 'order-requirements', label: 'Order Requirements', icon: ClipboardCheck },
     { id: 'printing', label: 'Printing & Receipts', icon: Printer },
     { id: 'delivery', label: 'Delivery Settings', icon: Truck },
     { id: 'backup', label: 'Backup & Restore', icon: DatabaseBackup },
@@ -191,14 +214,15 @@ export default function SettingsPage() {
               {tabs.map(t => (
                 <button
                   key={t.id}
+                  data-testid={`tab-${t.id}`}
                   onClick={() => { setActiveTab(t.id); setShowMobileMenu(false); }}
-                  className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all font-semibold text-sm cursor-pointer ${
+                  className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all font-semibold text-sm cursor-pointer text-left ${
                     activeTab === t.id 
                       ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border border-blue-100 dark:border-blue-800/30 shadow-sm' 
                       : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200 border border-transparent'
                   }`}
                 >
-                  <t.icon size={18} className={activeTab === t.id ? "text-blue-600 dark:text-blue-500" : "text-slate-400 dark:text-slate-500"} />
+                  <t.icon size={18} className={`shrink-0 ${activeTab === t.id ? "text-blue-600 dark:text-blue-500" : "text-slate-400 dark:text-slate-500"}`} />
                   <span>{t.label}</span>
                 </button>
               ))}
@@ -323,6 +347,12 @@ export default function SettingsPage() {
             </form>
           </div>
         )}
+            
+            {activeTab === 'order-requirements' && (
+              <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <OrderRequirementsSection />
+              </div>
+            )}
             
             {activeTab === 'backup' && (
               <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
