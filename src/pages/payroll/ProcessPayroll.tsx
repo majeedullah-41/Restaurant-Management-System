@@ -141,6 +141,7 @@ export default function ProcessPayroll() {
     } catch (e: any) {
       console.error(e);
       setLoadError(String(e));
+      setSelectedIds(new Set());
       toast.error(String(e));
     } finally {
       setLoading(false);
@@ -168,7 +169,7 @@ export default function ProcessPayroll() {
   };
 
   const executeProcessPayroll = async () => {
-    if (!period) return;
+    if (!period || loadError) return;
     try {
       setProcessing(true);
 
@@ -530,7 +531,7 @@ export default function ProcessPayroll() {
         </div>
 
         {/* Sticky Action Footer */}
-        {pendingRows.length > 0 && (
+        {!loadError && pendingRows.length > 0 && (
           <div className="absolute bottom-0 left-0 right-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 p-4 shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.1)] z-20">
             <div className="max-w-[1400px] mx-auto flex items-center justify-between">
               <div className="text-sm font-semibold text-slate-500">
@@ -543,7 +544,7 @@ export default function ProcessPayroll() {
                 </div>
                 <button
                   onClick={executeProcessPayroll}
-                  disabled={processing || selectedIds.size === 0}
+                  disabled={processing || !!loadError || selectedIds.size === 0}
                   data-testid="process-payroll-btn"
                   className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-bold px-8 py-3 rounded-xl shadow-lg shadow-blue-600/20 transition-all flex items-center space-x-2"
                 >
