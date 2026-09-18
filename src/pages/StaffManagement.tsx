@@ -5,7 +5,7 @@ import { Plus, Trash2, UserCircle, X, Edit2, Clock } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { ConfirmModal } from "../components/ConfirmModal";
-import { AlertModal } from "../components/AlertModal";
+import { useToast } from "../lib/toast";
 import { MoneyInput } from "../components/MoneyInput";
 
 interface StaffMember {
@@ -25,6 +25,7 @@ interface StaffCategory {
 }
 
 export default function StaffManagement() {
+  const toast = useToast();
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [categories, setCategories] = useState<StaffCategory[]>([]);
 
@@ -54,7 +55,6 @@ export default function StaffManagement() {
   const [clockStaffId, setClockStaffId] = useState<number | "">("");
 
   // App Dialogs
-  const [alertMessage, setAlertMessage] = useState<{ title: string; message: string; type: 'danger' | 'success' } | null>(null);
   const [deleteCategoryId, setDeleteCategoryId] = useState<number | null>(null);
   const [deleteStaffId, setDeleteStaffId] = useState<number | null>(null);
 
@@ -99,18 +99,18 @@ export default function StaffManagement() {
   const handleClockInOut = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clockStaffId) {
-      setAlertMessage({ title: "No Staff Selected", message: "Please select a staff member.", type: "danger" });
+      toast.warning("Please select a staff member.");
       return;
     }
     try {
       const msg = await invoke<string>("clock_in_out", { staffId: Number(clockStaffId) });
-      setAlertMessage({ title: "Success", message: msg, type: "success" });
+      toast.success(msg);
       setClockStaffId("");
       setClockCategoryId("");
       loadAttendance(attendanceDate);
     } catch (err: any) {
       console.error(err);
-      setAlertMessage({ title: "Clock In/Out Failed", message: String(err), type: "danger" });
+      toast.error(String(err));
     }
   };
 
@@ -143,8 +143,10 @@ export default function StaffManagement() {
       setSalary("0");
       setEditingStaffId(null);
       loadStaff();
+      toast.success(editingStaffId ? "Staff member updated." : "Staff member added.");
     } catch (err) {
       console.error(err);
+      toast.error(String(err));
     }
   };
 
@@ -173,8 +175,10 @@ export default function StaffManagement() {
       await invoke("add_staff_category", { name: newCategoryName });
       setNewCategoryName("");
       loadCategories();
+      toast.success("Category added.");
     } catch (err) {
       console.error(err);
+      toast.error(String(err));
     }
   };
 
@@ -187,8 +191,10 @@ export default function StaffManagement() {
     try {
       await invoke("delete_staff_category", { id: deleteCategoryId });
       loadCategories();
+      toast.success("Category deleted.");
     } catch (err) {
       console.error(err);
+      toast.error(String(err));
     }
     setDeleteCategoryId(null);
   };
@@ -202,8 +208,10 @@ export default function StaffManagement() {
     try {
       await invoke("delete_staff", { id: deleteStaffId });
       loadStaff();
+      toast.success("Staff member deleted.");
     } catch (err) {
       console.error(err);
+      toast.error(String(err));
     }
     setDeleteStaffId(null);
   };
@@ -527,15 +535,6 @@ export default function StaffManagement() {
         confirmText="Delete"
         onConfirm={confirmDeleteStaff}
         onCancel={() => setDeleteStaffId(null)}
-      />
-
-      <AlertModal
-        isOpen={alertMessage !== null}
-        title={alertMessage?.title || ""}
-        message={alertMessage?.message || ""}
-        type={alertMessage?.type || "danger"}
-        buttonText="OK"
-        onClose={() => setAlertMessage(null)}
       />
     </div>
   );

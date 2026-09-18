@@ -9,7 +9,7 @@ import Header from "../components/Header";
 import DateFilterToolbar from "../components/DateFilterToolbar";
 import { MoneyInput } from "../components/MoneyInput";
 import AdminPasswordModal from "../components/AdminPasswordModal";
-import { AlertModal } from "../components/AlertModal";
+import { useToast } from "../lib/toast";
 import { ReceiptTemplate } from "../components/ReceiptTemplate";
 import { DeliveryReceiptTemplate } from "../components/DeliveryReceiptTemplate";
 import {
@@ -106,6 +106,7 @@ const EditablePayable = ({ order, onDiscountUpdated }: { order: OrderHistory, on
 };
 
 export default function Orders() {
+  const toast = useToast();
   const location = useLocation();
   const navigate = useNavigate();
   const isHistoryPage = location.pathname.includes('history');
@@ -122,17 +123,12 @@ export default function Orders() {
   const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
   const [deleteOrderId, setDeleteOrderId] = useState<number | null>(null);
   const [showDeletePassword, setShowDeletePassword] = useState(false);
-  const [alertModal, setAlertModal] = useState<{isOpen: boolean; title: string; message: string; type: 'danger' | 'warning' | 'info' | 'success'}>({ isOpen: false, title: '', message: '', type: 'danger' });
   const [restaurantName, setRestaurantName] = useState("RMS");
   const [restaurantAddress, setRestaurantAddress] = useState("");
   const [restaurantContact, setRestaurantContact] = useState("");
   const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
   const [taxRate, setTaxRate] = useState(0);
   const [printSettings, setPrintSettings] = useState<PrintSettings>(DEFAULT_PRINT_SETTINGS);
-
-  const showAlert = (title: string, message: string, type: 'danger' | 'warning' | 'info' | 'success' = 'danger') => {
-    setAlertModal({ isOpen: true, title, message, type });
-  };
 
   const handleDiscountUpdated = (orderId: number, discountAmt: number) => {
     setAllOrders(prev => prev.map(o => o.id === orderId ? { ...o, discount_amount: discountAmt, total_price: o.total_price + o.discount_amount - discountAmt } : o));
@@ -145,10 +141,10 @@ export default function Orders() {
       setAllOrders(prev => prev.filter(o => o.id !== orderId));
       setOrderItems(prev => { const next = { ...prev }; delete next[orderId]; return next; });
       if (expandedOrderId === orderId) setExpandedOrderId(null);
-      showAlert("Success", `Order #${orderId} deleted from history.`, "success");
+      toast.success(`Order #${orderId} deleted from history.`);
     } catch (err) {
       console.error("Failed to delete order", err);
-      showAlert("Error", "Failed to delete order: " + err);
+      toast.error("Failed to delete order: " + err);
     }
   };
 
@@ -161,7 +157,7 @@ export default function Orders() {
         setOrderItems(prev => ({ ...prev, [id]: items }));
       } catch (err) {
         console.error("Failed to load order items", err);
-        showAlert("Error", "Failed to load order items for printing.");
+        toast.error("Failed to load order items for printing.");
         return;
       } finally {
         setLoadingItems(prev => ({ ...prev, [id]: false }));
@@ -312,7 +308,7 @@ export default function Orders() {
       }
     } catch (err) {
       console.error("Failed to print receipt:", err);
-      showAlert("Error", "Failed to print receipt: " + err);
+      toast.error("Failed to print receipt: " + err);
     }
   };
 
@@ -701,13 +697,6 @@ export default function Orders() {
         }}
       />
 
-      <AlertModal
-        isOpen={alertModal.isOpen}
-        title={alertModal.title}
-        message={alertModal.message}
-        type={alertModal.type}
-        onClose={() => setAlertModal({ ...alertModal, isOpen: false })}
-      />
     </div>
   );
 }

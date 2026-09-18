@@ -1,14 +1,15 @@
 import { useState, useEffect } from "react";
 import { invoke } from "../lib/api";
 import { Save, Truck, Loader2 } from "lucide-react";
+import { useToast } from "../lib/toast";
 import { MoneyInput } from "./MoneyInput";
 
 export default function DeliverySettingsSection() {
+  const toast = useToast();
   const [baseFee, setBaseFee] = useState("");
   const [freeThreshold, setFreeThreshold] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     async function fetchSettings() {
@@ -28,16 +29,14 @@ export default function DeliverySettingsSection() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    setMessage(null);
     try {
       await invoke("update_delivery_settings", {
         baseDeliveryFee: parseFloat(baseFee) || 0,
         freeDeliveryThreshold: parseFloat(freeThreshold) || 0,
       });
-      setMessage({ type: "success", text: "Delivery settings saved successfully!" });
-      setTimeout(() => setMessage(null), 3000);
+      toast.success("Delivery settings saved successfully!");
     } catch (err: any) {
-      setMessage({ type: "error", text: err.toString() });
+      toast.error(err.toString());
     } finally {
       setSaving(false);
     }
@@ -82,12 +81,6 @@ export default function DeliverySettingsSection() {
             <p className="text-xs text-slate-500 mt-1">Set to 0 to always charge the base fee.</p>
           </div>
         </div>
-
-        {message && (
-          <p className={`text-sm font-bold ${message.type === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-            {message.text}
-          </p>
-        )}
 
         <button 
           type="submit" 

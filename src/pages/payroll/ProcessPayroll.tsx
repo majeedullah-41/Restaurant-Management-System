@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '../../lib/api';
 import { formatCurrency, todayLocal } from '../../lib/utils';
-import { Users, Banknote, Calendar, ArrowRight, Printer, Trash2 } from 'lucide-react';
+import { Users, Banknote, Calendar, ArrowRight, Printer, Trash2, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
+import { useToast } from '../../lib/toast';
 import { useReactToPrint } from 'react-to-print';
 import Sidebar from '../../components/Sidebar';
 import Header from '../../components/Header';
@@ -14,12 +15,12 @@ import { MoneyInput } from '../../components/MoneyInput';
 import { PayrollPeriod, PayrollRecordRow, SalaryPayout } from './types';
 
 export default function ProcessPayroll() {
+  const toast = useToast();
   const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
   const [period, setPeriod] = useState<PayrollPeriod | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -45,14 +46,13 @@ export default function ProcessPayroll() {
     if (!deleteTarget) return;
     try {
       setDeleting(true);
-      setErrorMsg(null);
       await invoke('delete_payroll_record', { recordId: deleteTarget.id });
       setDeleteTarget(null);
-      setSuccessMsg(`Removed payroll record for ${deleteTarget.name}.`);
+      toast.success(`Removed payroll record for ${deleteTarget.name}.`);
       await fetchPeriod();
     } catch (e: any) {
       console.error(e);
-      setErrorMsg(String(e));
+      toast.error(String(e));
     } finally {
       setDeleting(false);
     }
@@ -99,7 +99,6 @@ export default function ProcessPayroll() {
     if (!advanceStaffId || !advanceAmount) return;
     try {
       setSavingAdvance(true);
-      setErrorMsg(null);
       const staff = staffList.find(s => s.id === parseInt(advanceStaffId));
       await invoke('pay_advance_salary', {
         staffId: parseInt(advanceStaffId),
@@ -112,19 +111,17 @@ export default function ProcessPayroll() {
       setAdvanceAmount('');
       setAdvanceNote('');
       setAdvanceStaffId('');
-      setSuccessMsg('Advance salary recorded.');
+      toast.success('Advance salary recorded.');
       await fetchPeriod();
     } catch (e: any) {
       console.error(e);
-      setErrorMsg(String(e));
+      toast.error(String(e));
     } finally {
       setSavingAdvance(false);
     }
   };
 
   useEffect(() => {
-    setSuccessMsg(null);
-    setErrorMsg(null);
     if (dateRange.startDate && dateRange.endDate) {
       fetchPeriod();
     }
@@ -133,7 +130,6 @@ export default function ProcessPayroll() {
   const fetchPeriod = async () => {
     try {
       setLoading(true);
-      setErrorMsg(null);
       const data = await invoke<PayrollPeriod>('get_payroll_period', {
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
@@ -141,9 +137,11 @@ export default function ProcessPayroll() {
       setPeriod(data);
       // Clear selection on refresh
       setSelectedIds(new Set());
+      setLoadError(null);
     } catch (e: any) {
       console.error(e);
-      setErrorMsg(String(e));
+      setLoadError(String(e));
+      toast.error(String(e));
     } finally {
       setLoading(false);
     }
@@ -152,7 +150,6 @@ export default function ProcessPayroll() {
   const handleSaveDrawer = async (id: number, bonus: number, deduction: number, advanceDeduction: number) => {
     try {
       setSavingRecord(true);
-      setErrorMsg(null);
       const updated = await invoke<PayrollRecordRow>('update_payroll_record', {
         recordId: id,
         bonus,
@@ -161,10 +158,10 @@ export default function ProcessPayroll() {
       });
       setPeriod(prev => prev ? { ...prev, rows: prev.rows.map(r => r.id === id ? updated : r) } : prev);
       setSelectedRecord(updated); // Update drawer
-      setSuccessMsg('Adjustments saved successfully.');
+      toast.success('Adjustments saved successfully.');
     } catch (e: any) {
       console.error(e);
-      setErrorMsg(String(e));
+      toast.error(String(e));
     } finally {
       setSavingRecord(false);
     }
@@ -174,18 +171,17 @@ export default function ProcessPayroll() {
     if (!period) return;
     try {
       setProcessing(true);
-      setErrorMsg(null);
 
       const msg = await invoke<string>('process_payroll_batch', {
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
         recordIds: Array.from(selectedIds),
       });
-      setSuccessMsg(msg);
+      toast.success(msg);
       await fetchPeriod();
     } catch (e: any) {
       console.error(e);
-      setErrorMsg(String(e));
+      toast.error(String(e));
     } finally {
       setProcessing(false);
     }
@@ -303,22 +299,16 @@ export default function ProcessPayroll() {
             </div>
 
             {/* Error / Success */}
-            {errorMsg && (
-              <div className="mb-6 bg-red-50 text-red-700 px-4 py-3 rounded-xl text-sm font-semibold border border-red-200 flex justify-between">
-                <span>{errorMsg}</span>
-                <button onClick={() => setErrorMsg(null)}>✕</button>
-              </div>
-            )}
-            {successMsg && (
-              <div data-testid="payroll-success-msg" className="mb-6 bg-emerald-50 text-emerald-700 px-4 py-3 rounded-xl text-sm font-semibold border border-emerald-200 flex justify-between">
-                <span>{successMsg}</span>
-                <button onClick={() => setSuccessMsg(null)}>✕</button>
-              </div>
-            )}
 
             {loading ? (
               <div className="flex justify-center py-20">
                 <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+              </div>
+            ) : loadError ? (
+              <div className="text-center py-20 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+                <AlertCircle className="mx-auto h-12 w-12 text-red-400 mb-4" />
+                <h3 className="text-lg font-medium text-slate-900 dark:text-white">Failed to load payroll</h3>
+                <p className="text-slate-500">Could not retrieve the payroll period. Check your connection and try again.</p>
               </div>
             ) : (
               <>

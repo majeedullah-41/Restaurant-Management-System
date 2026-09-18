@@ -5,6 +5,7 @@ import { Truck, CheckCircle2, MapPin, Clock, User, Phone, Navigation, ChevronDow
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { AlertModal } from "../components/AlertModal";
+import { useToast } from "../lib/toast";
 import { DeliveryReceiptTemplate } from "../components/DeliveryReceiptTemplate";
 import {
   loadPrintSettings,
@@ -37,6 +38,7 @@ interface Staff {
 }
 
 export default function DeliveryManagement() {
+  const toast = useToast();
   const [deliveries, setDeliveries] = useState<DeliveryOrder[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [selectedDriver, setSelectedDriver] = useState<Record<number, number>>({});
@@ -61,7 +63,7 @@ export default function DeliveryManagement() {
       setDeliveries(data);
     } catch (err) {
       console.error("Failed to load deliveries:", err);
-      showAlert("Error", "Failed to load active deliveries.");
+      toast.error("Failed to load active deliveries.");
     }
   };
 
@@ -111,20 +113,20 @@ export default function DeliveryManagement() {
     }
     try {
       await invoke("assign_delivery_driver", { orderId, driverId });
-      showAlert("Success", "Driver assigned successfully.", "success");
+      toast.success("Driver assigned successfully.");
       fetchDeliveries();
     } catch (err) {
-      showAlert("Error", "Failed to assign driver: " + err);
+      toast.error("Failed to assign driver: " + err);
     }
   };
 
   const handleMarkDelivered = async (orderId: number) => {
     try {
       await invoke("update_delivery_status", { orderId, status: "Delivered" });
-      showAlert("Success", "Order marked as delivered and closed.", "success");
+      toast.success("Order marked as delivered and closed.");
       fetchDeliveries();
     } catch (err) {
-      showAlert("Error", "Failed to update delivery status: " + err);
+      toast.error("Failed to update delivery status: " + err);
     }
   };
 
@@ -219,10 +221,10 @@ export default function DeliveryManagement() {
         />
       );
       await printTicketDocument("delivery_receipt", element, doc, text, printSettings);
-      showAlert("Success", "Delivery receipt sent to the printer.", "success");
+      toast.success("Delivery receipt sent to the printer.");
     } catch (err) {
       console.error("Failed to print delivery receipt:", err);
-      showAlert("Error", "Failed to print delivery receipt: " + err);
+      toast.error("Failed to print delivery receipt: " + err);
     }
   };
 

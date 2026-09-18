@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { useToast } from '../lib/toast';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import SecuritySettingsSection from '../components/SecuritySettingsSection';
@@ -15,6 +16,7 @@ interface ManagedUser {
 
 export default function UserProfile() {
   const { user, refresh } = useAuth();
+  const toast = useToast();
   const userRole = user?.role || "Unknown";
   const isAdmin = userRole === "Admin";
 
@@ -118,8 +120,6 @@ export default function UserProfile() {
         newRole: isAdmin ? targetRole : null,
       });
 
-      setMessage({ text: "Profile updated successfully!", type: "success" });
-
       if (!isManagingOther && newUsername !== currentUsername) {
         localStorage.setItem("userName", newUsername);
         localStorage.setItem("username", newUsername);
@@ -135,14 +135,20 @@ export default function UserProfile() {
         } catch { /* ignore refresh failures */ }
       }
 
-      await refresh();
+      try {
+        await refresh();
+        toast.success("Profile updated successfully!");
+      } catch (refreshErr) {
+        console.error("Profile updated, but session refresh failed:", refreshErr);
+        toast.warning("Profile updated, but the session could not be refreshed. Sign out and back in if the changes do not take effect.");
+      }
 
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
 
     } catch (error: any) {
-      setMessage({ text: error.toString(), type: "error" });
+      toast.error(error.toString());
     } finally {
       setLoading(false);
     }

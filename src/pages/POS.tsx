@@ -16,6 +16,7 @@ import {
 
 import { ConfirmModal } from "../components/ConfirmModal";
 import { AlertModal } from "../components/AlertModal";
+import { useToast } from "../lib/toast";
 import { ReceiptTemplate } from "../components/ReceiptTemplate";
 import { KOTTemplate } from "../components/KOTTemplate";
 import { DeliveryReceiptTemplate } from "../components/DeliveryReceiptTemplate";
@@ -38,6 +39,7 @@ interface Customer { id: number; name: string; phone: string; visits: number; ad
 interface DetailedTableStatus { id: number; table_id: number; table_number: number; status: string; active_order_id: number | null; active_order_total: number | null; elapsed_minutes: number | null; category_name: string | null; }
 
 export default function POS() {
+  const toast = useToast();
   const { tableId, orderId: routeOrderId } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -59,7 +61,7 @@ export default function POS() {
   const [requireTakerOther, setRequireTakerOther] = useState(false);
   const [requirePhoneDelivery, setRequirePhoneDelivery] = useState(true);
   const [requireAddressDelivery, setRequireAddressDelivery] = useState(true);
-  const [autoAssignTaker, setAutoAssignTaker] = useState(true);
+  const [, setAutoAssignTaker] = useState(true);
   const [tables, setTables] = useState<DetailedTableStatus[]>([]);
   const [posLoading, setPosLoading] = useState(true);
 
@@ -271,7 +273,8 @@ export default function POS() {
         setRequireTakerOther(settings.require_taker_other === true);
         setRequirePhoneDelivery(settings.require_phone_delivery !== false);
         setRequireAddressDelivery(settings.require_address_delivery !== false);
-        setAutoAssignTaker(settings.auto_assign_taker !== false);
+        const shouldAutoAssignTaker = settings.auto_assign_taker !== false;
+        setAutoAssignTaker(shouldAutoAssignTaker);
 
         const pSettings = await loadPrintSettings();
         setPrintSettings(pSettings);
@@ -285,7 +288,7 @@ export default function POS() {
         // Default the order taker to the logged-in user when they are an order taker
         const currentName = displayName?.toLowerCase().trim();
         const selfTaker = takers.find((t: any) => (t.name || "").toLowerCase().trim() === currentName);
-        if (selfTaker && autoAssignTaker) {
+        if (selfTaker && shouldAutoAssignTaker) {
           setOrderTakerId(selfTaker.id);
           setOrderTakerName(selfTaker.name);
         }
@@ -334,8 +337,8 @@ export default function POS() {
             setDeliveryAddress("");
             setOrderNote("");
             setSelectedCustomerId(null);
-            setOrderTakerId(autoAssignTaker && selfTaker ? selfTaker.id : null);
-            setOrderTakerName(autoAssignTaker && selfTaker ? selfTaker.name : null);
+            setOrderTakerId(shouldAutoAssignTaker && selfTaker ? selfTaker.id : null);
+            setOrderTakerName(shouldAutoAssignTaker && selfTaker ? selfTaker.name : null);
             // Restore the order taker carried over from a previous screen (e.g., walk-in -> table)
             try {
               const savedTaker = sessionStorage.getItem("pos_selected_taker");
@@ -456,10 +459,7 @@ export default function POS() {
     });
   };
 
-  const handleAddToCart = async (item: MenuItem) => {
-    // Dine-in orders may require both a table and an order taker before any
-    // item can be added (which is what places/creates the order). These
-    // requirements are configurable in Settings > General > Order Entry.
+  const validateOrderRequirements = () => {
     const missing: string[] = [];
     if (orderType === "Dine-in") {
       if (requireTableDinein && (!tableId || tableId === "0")) missing.push("table");
@@ -470,8 +470,13 @@ export default function POS() {
     if (missing.length > 0) {
       const label = orderType === "Dine-in" ? "a dine-in order" : `a ${orderType.toLowerCase()} order`;
       showAlert("Selection Required", `Please select ${missing.join(" and ")} before adding items to ${label}.`);
-      return;
+      return false;
     }
+    return true;
+  };
+
+  const handleAddToCart = async (item: MenuItem) => {
+    if (!validateOrderRequirements()) return;
 
     setRecentlyAdded(prev => new Set(prev).add(item.id));
     setTimeout(() => {
@@ -528,8 +533,10 @@ export default function POS() {
         price: item.price
       });
       refreshCart(activeOrderId);
+      toast.success(`Added ${item.name}`);
     } catch (err) {
       console.error(err);
+      toast.error("Failed to add item: " + String(err));
     }
   };
 
@@ -568,7 +575,7 @@ export default function POS() {
   };
 
   const handleIncrementItem = async (item: CartItem) => {
-    if (!orderId) return;
+    if (!orderId || !validateOrderRequirements()) return;
     try {
       await invoke("add_item_to_order", {
         orderId,
@@ -741,9 +748,10 @@ export default function POS() {
         );
         await printTicketDocument("receipt", element, doc, text, printSettings);
       }
+      toast.success("Receipt printed.");
     } catch (err) {
       console.error("Failed to generate receipt:", err);
-      showAlert("Print Error", String(err));
+      toast.error(String(err));
     } finally {
       setTimeout(() => navigate(`${basePath}/pos/0`), 500);
     }
@@ -781,7 +789,7 @@ export default function POS() {
       }
 
       if (orderType === "Delivery") {
-        if (requirePhoneDelivery && !finalCustomerId && !deliveryPhone.trim()) {
+        if (requirePhoneDelivery && !deliveryPhone.trim()) {
           showAlert("Validation Error", "Please provide a phone number for delivery.");
           isCheckingOut.current = false;
           return;
@@ -804,6 +812,7 @@ export default function POS() {
           orderNote: orderNote,
           serviceChargeAmount: serviceChargeAmount
         });
+        toast.success("Order placed successfully.");
         await handlePrint(); // Still print receipt
         isCheckingOut.current = false;
         return;
@@ -823,9 +832,10 @@ export default function POS() {
         orderNote: orderNote,
         serviceChargeAmount: serviceChargeAmount
       });
+      toast.success("Order completed successfully.");
       await handlePrint();
     } catch (err) {
-      showAlert("Checkout Failed", String(err));
+      toast.error("Checkout failed: " + String(err));
     } finally {
       isCheckingOut.current = false;
     }
@@ -882,11 +892,12 @@ export default function POS() {
       );
       await printTicketDocument("kot", element, doc, text, printSettings);
       await invoke("mark_kot_printed", { orderId });
+      toast.success("KOT sent to kitchen.");
       refreshCart(orderId);
       navigate(`${basePath}/pos/0`);
     } catch (err) {
       console.error(err);
-      showAlert("KOT Print Failed", String(err));
+      toast.error("KOT print failed: " + String(err));
     }
   };
 
@@ -933,9 +944,10 @@ export default function POS() {
             orderId,
             tableId: parseInt(tableId || "0")
           });
+          toast.success("Order cancelled.");
           navigate(`${basePath}/pos/0`);
         } catch (err) {
-          showAlert("Cancel Failed", "Failed to cancel order: " + err);
+          toast.error("Failed to cancel order: " + String(err));
         }
       }
     });
@@ -1483,7 +1495,10 @@ export default function POS() {
                 </button>
                 <button
                   id="draft-btn"
-                  onClick={() => navigate(`${basePath}/pos/0`)}
+                  onClick={() => {
+                    toast.success("Order held. You can resume it from Pending Orders.");
+                    navigate(`${basePath}/pos/0`);
+                  }}
                   disabled={!orderId}
                   className="py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-[#0066FF] dark:text-blue-400 disabled:opacity-50 rounded-md text-[9px] font-bold uppercase transition-colors flex items-center justify-center space-x-1 shadow-sm"
                 >

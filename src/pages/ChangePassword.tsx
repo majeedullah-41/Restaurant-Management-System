@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { Lock, AlertCircle, CheckCircle2, ShieldCheck } from "lucide-react";
+import { useToast } from "../lib/toast";
+import { Lock, AlertCircle, ShieldCheck } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -10,18 +11,17 @@ import { Label } from "../components/ui/label";
 export default function ChangePassword() {
   const { user, refresh } = useAuth();
   const navigate = useNavigate();
+  const toast = useToast();
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
-  const [message, setMessage] = useState({ text: "", type: "" });
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setMessage({ text: "", type: "" });
 
     if (newPassword.length < 6) {
       setError("New password must be at least 6 characters long.");
@@ -48,7 +48,7 @@ export default function ChangePassword() {
         newRole: null,
       });
 
-      setMessage({ text: "Password updated successfully!", type: "success" });
+      toast.success("Password updated successfully!");
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
@@ -77,17 +77,6 @@ export default function ChangePassword() {
             </p>
           </div>
         </div>
-
-        {message.text && (
-          <div className={`p-3.5 rounded-xl border text-sm font-semibold flex items-center gap-2 ${
-            message.type === "success"
-              ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20"
-              : "bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border-red-200 dark:border-red-500/20"
-          }`}>
-            {message.type === "success" ? <CheckCircle2 size={16} className="shrink-0" /> : <AlertCircle size={16} className="shrink-0" />}
-            <span>{message.text}</span>
-          </div>
-        )}
 
         {error && (
           <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-red-700 dark:text-red-400 text-sm font-semibold flex items-center gap-2">

@@ -81,7 +81,7 @@ describe('RMS Settings E2E Test', () => {
         await setNativeValue('[data-testid="restaurant-name-input"]', 'E2E Test Restaurant');
         await $('[data-testid="save-settings-btn"]').click();
 
-        const message = await $('[data-testid="settings-save-message"]');
+        const message = await $('[data-testid="toast-success"]');
         await message.waitForDisplayed({ timeout: 30000 });
         assert.match(await message.getText(), /Settings saved successfully/i);
 

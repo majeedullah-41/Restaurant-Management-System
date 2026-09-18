@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
 import { invoke } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { useToast } from "../lib/toast";
 import { ShieldAlert, Save } from "lucide-react";
 
 export default function SecuritySettingsSection() {
   const { user } = useAuth();
+  const toast = useToast();
   const [question, setQuestion] = useState("What is your pet's name?");
   const [customQuestion, setCustomQuestion] = useState("");
   const [answer, setAnswer] = useState("");
@@ -57,11 +59,10 @@ export default function SecuritySettingsSection() {
         question: finalQuestion,
         answer: answer.trim()
       });
-      setMessage("Security question saved successfully!");
+      toast.success("Security question saved successfully!");
       setAnswer(""); // clear answer for security
-      setTimeout(() => setMessage(""), 3000);
     } catch (err: any) {
-      setMessage(err.toString());
+      toast.error(err.toString());
     }
   };
 

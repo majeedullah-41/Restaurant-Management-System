@@ -9,6 +9,7 @@ import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { MoneyInput } from "../components/MoneyInput";
+import { useToast } from "../lib/toast";
 
 // Mock Icons for Categories (since DB just has names)
 const getCategoryIcon = (name: string) => {
@@ -22,6 +23,7 @@ const getCategoryIcon = (name: string) => {
 };
 
 export default function MenuManagement() {
+  const toast = useToast();
   const [categories, setCategories] = useState<{id: number, name: string}[]>([]);
   const [menuItems, setMenuItems] = useState<{id: number, name: string, category_id: number, price: number, is_active: boolean}[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
@@ -68,7 +70,8 @@ export default function MenuManagement() {
       else await invoke("add_category", { name: catName });
       setIsCatModalOpen(false); setEditingCat(null); setCatName("");
       loadData();
-    } catch (err) { console.error(err); }
+      toast.success(editingCat ? "Category updated." : "Category added.");
+    } catch (err) { console.error(err); toast.error(String(err)); }
   };
 
   const handleDeleteCategory = async (id: number) => {
@@ -81,7 +84,8 @@ export default function MenuManagement() {
       await invoke("delete_category", { id: deleteCatId });
       if (selectedCategoryId === deleteCatId) setSelectedCategoryId(null);
       loadData();
-    } catch (err) { console.error(err); }
+      toast.success("Category deleted.");
+    } catch (err) { console.error(err); toast.error(String(err)); }
     setDeleteCatId(null);
   };
 
@@ -102,7 +106,8 @@ export default function MenuManagement() {
       setIsItemModalOpen(false); setEditingItem(null); setItemName(""); setItemPrice(""); setItemCatId("");
       setHasHalfPortion(false); setHalfPrice("");
       loadData();
-    } catch (err) { console.error(err); }
+      toast.success(editingItem ? "Menu item updated." : "Menu item added.");
+    } catch (err) { console.error(err); toast.error(String(err)); }
   };
 
   const handleDeleteItem = async (id: number) => {
@@ -114,7 +119,8 @@ export default function MenuManagement() {
     try {
       await invoke("delete_menu_item", { id: deleteItemId });
       loadData();
-    } catch (err) { console.error(err); }
+      toast.success("Menu item deleted.");
+    } catch (err) { console.error(err); toast.error(String(err)); }
     setDeleteItemId(null);
   };
 
@@ -122,7 +128,8 @@ export default function MenuManagement() {
     try {
       await invoke("toggle_menu_item_status", { id, isActive: !currentStatus });
       loadData();
-    } catch (err) { console.error(err); }
+      toast.success(currentStatus ? "Menu item deactivated." : "Menu item activated.");
+    } catch (err) { console.error(err); toast.error(String(err)); }
   };
 
   const openCatModal = (cat: {id: number, name: string} | null = null) => {

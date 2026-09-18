@@ -1,15 +1,16 @@
 import { useState, useEffect } from "react";
 import { invoke } from "../lib/api";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Database, FolderOpen, RefreshCw, Clock, CheckCircle2, AlertCircle } from "lucide-react";
+import { Database, FolderOpen, RefreshCw, Clock } from "lucide-react";
+import { useToast } from "../lib/toast";
 import AdminPasswordModal from "./AdminPasswordModal";
 
 export default function BackupSection() {
+  const toast = useToast();
   const [lastBackupAt, setLastBackupAt] = useState<string | null>(null);
   const [frequency, setFrequency] = useState<string>("Off");
   const [backupPath, setBackupPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
 
   useEffect(() => {
@@ -31,10 +32,9 @@ export default function BackupSection() {
     setFrequency(newFreq);
     try {
       await invoke("update_backup_settings", { frequency: newFreq, path: backupPath });
-      setMessage({ text: "Backup frequency updated", type: "success" });
-      setTimeout(() => setMessage(null), 3000);
+      toast.success("Backup frequency updated");
     } catch (err: any) {
-      setMessage({ text: err.toString(), type: "error" });
+      toast.error(err.toString());
     }
   };
 
@@ -48,19 +48,17 @@ export default function BackupSection() {
       if (selected && typeof selected === "string") {
         setBackupPath(selected);
         await invoke("update_backup_settings", { frequency, path: selected });
-        setMessage({ text: "Backup folder location saved", type: "success" });
-        setTimeout(() => setMessage(null), 3000);
+        toast.success("Backup folder location saved");
         return selected;
       }
     } catch (err: any) {
-      setMessage({ text: err.toString(), type: "error" });
+      toast.error(err.toString());
     }
     return null;
   };
 
   const executeBackupNow = async () => {
     setLoading(true);
-    setMessage(null);
     try {
       let targetPath = backupPath;
       if (!targetPath) {
@@ -72,11 +70,11 @@ export default function BackupSection() {
       }
 
       const res: string = await invoke("perform_backup", { destination: targetPath });
-      setMessage({ text: `Backup completed successfully! Saved to: ${res}`, type: "success" });
+      toast.success(`Backup completed successfully! Saved to: ${res}`);
       await loadBackupSettings();
     } catch (err: any) {
       console.error("Backup failed:", err);
-      setMessage({ text: `Backup failed: ${err.toString()}`, type: "error" });
+      toast.error(`Backup failed: ${err.toString()}`);
     } finally {
       setLoading(false);
     }
@@ -143,23 +141,6 @@ export default function BackupSection() {
           <span>{loading ? "Backing up..." : "Backup Now"}</span>
         </button>
       </div>
-
-      {message && (
-        <div
-          className={`p-4 rounded-xl text-sm flex items-start gap-3 border ${
-            message.type === "success"
-              ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
-              : "bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800"
-          }`}
-        >
-          {message.type === "success" ? (
-            <CheckCircle2 size={18} className="shrink-0 mt-0.5" />
-          ) : (
-            <AlertCircle size={18} className="shrink-0 mt-0.5" />
-          )}
-          <span className="font-medium break-all">{message.text}</span>
-        </div>
-      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="p-4 rounded-xl bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-800 flex flex-col justify-between">

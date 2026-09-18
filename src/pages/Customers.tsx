@@ -4,7 +4,7 @@ import { Plus, Trash2, User, Phone, X, Award } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { ConfirmModal } from "../components/ConfirmModal";
-import { AlertModal } from "../components/AlertModal";
+import { useToast } from "../lib/toast";
 
 interface Customer {
   id: number;
@@ -14,12 +14,12 @@ interface Customer {
 }
 
 export default function Customers() {
+  const toast = useToast();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
 
-  const [addError, setAddError] = useState<string | null>(null);
   const [deleteCustomerId, setDeleteCustomerId] = useState<number | null>(null);
 
   const loadCustomers = async () => {
@@ -44,9 +44,10 @@ export default function Customers() {
       setName("");
       setPhone("");
       loadCustomers();
+      toast.success("Customer added.");
     } catch (err) {
       console.error(err);
-      setAddError("Failed to add customer. Make sure the phone number is unique.");
+      toast.error("Failed to add customer. Make sure the phone number is unique.");
     }
   };
 
@@ -59,8 +60,10 @@ export default function Customers() {
     try {
       await invoke("delete_customer", { id: deleteCustomerId });
       loadCustomers();
+      toast.success("Customer deleted.");
     } catch (err) {
       console.error(err);
+      toast.error(String(err));
     }
     setDeleteCustomerId(null);
   };
@@ -165,14 +168,6 @@ export default function Customers() {
         confirmText="Delete"
         onConfirm={confirmDeleteCustomer}
         onCancel={() => setDeleteCustomerId(null)}
-      />
-
-      <AlertModal
-        isOpen={addError !== null}
-        title="Error"
-        message={addError || ""}
-        type="danger"
-        onClose={() => setAddError(null)}
       />
     </div>
   );

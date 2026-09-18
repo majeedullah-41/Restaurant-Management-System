@@ -187,7 +187,7 @@ describe('RMS Staff & Payroll E2E Test', () => {
             { timeout: 30000, timeoutMsg: 'Payroll payout was not recorded in the DB' }
         );
 
-        const msg = await $('[data-testid="payroll-success-msg"]');
+        const msg = await $('[data-testid="toast-success"]');
         await msg.waitForDisplayed({ timeout: 30000 });
         assert.match(await msg.getText(), /Processed/i);
     });

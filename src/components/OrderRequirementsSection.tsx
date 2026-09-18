@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
 import { invoke } from "../lib/api";
 import { ClipboardCheck, Save, Loader2 } from "lucide-react";
+import { useToast } from "../lib/toast";
 import { ToggleRow } from "./ui/toggle";
 
 export default function OrderRequirementsSection() {
+  const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const [requireTableDinein, setRequireTableDinein] = useState(true);
   const [requireTakerDinein, setRequireTakerDinein] = useState(true);
@@ -42,7 +43,6 @@ export default function OrderRequirementsSection() {
   const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setSaving(true);
-    setMessage(null);
     try {
       const current: any = baseSettings || (await invoke("get_settings"));
       await invoke("update_settings", {
@@ -62,11 +62,10 @@ export default function OrderRequirementsSection() {
         requireAddressDelivery,
         autoAssignTaker,
       });
-      setMessage({ type: "success", text: "Order requirements saved successfully!" });
+      toast.success("Order requirements saved successfully!");
       window.dispatchEvent(new Event("settingsUpdated"));
-      setTimeout(() => setMessage(null), 3000);
     } catch (err: any) {
-      setMessage({ type: "error", text: err?.toString() || "Failed to save settings" });
+      toast.error(err?.toString() || "Failed to save settings");
     } finally {
       setSaving(false);
     }
@@ -166,19 +165,6 @@ export default function OrderRequirementsSection() {
             />
           </div>
         </div>
-
-        {message && (
-          <p
-            data-testid="order-requirements-save-message"
-            className={`text-sm font-bold ${
-              message.type === "success"
-                ? "text-emerald-600 dark:text-emerald-400"
-                : "text-red-600 dark:text-red-400"
-            }`}
-          >
-            {message.text}
-          </p>
-        )}
 
         <button
           type="submit"

@@ -9,6 +9,7 @@ import {
 import { exportReportAsPdf } from '../lib/pdfExport';
 import { ReportTemplate } from '../components/ReportTemplate';
 import DateFilterToolbar from '../components/DateFilterToolbar';
+import { useToast } from '../lib/toast';
 
 interface DetailedOrder {
     id: number;
@@ -69,6 +70,7 @@ interface DetailedReport {
 }
 
 export default function Reports() {
+  const toast = useToast();
   const [report, setReport] = useState<DetailedReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -108,6 +110,10 @@ export default function Reports() {
         `Detailed_Business_Report_${dateRange.startDate}_to_${dateRange.endDate}`,
         printRef.current
       );
+      toast.success("Report exported.");
+    } catch (err) {
+      console.error(err);
+      toast.error(String(err));
     } finally {
       setExporting(false);
     }

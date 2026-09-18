@@ -94,7 +94,7 @@ describe('RMS Printing & Receipts E2E Test', () => {
 
     it('test print fires the real PowerShell print pipeline', async () => {
         await $('[data-testid="test-receipt"]').click();
-        const testMsg = await $('[data-testid="print-test-message"]');
+        const testMsg = await $('[data-testid="toast-success"]');
         await testMsg.waitForDisplayed({ timeout: 30000 });
         assert.match(await testMsg.getText(), /Test print sent/i);
     });
@@ -168,7 +168,7 @@ describe('RMS Printing & Receipts E2E Test', () => {
     it('save persists the settings', async () => {
         await $('[data-testid="tab-printers"]').click();
         await $('[data-testid="save-print-settings"]').click();
-        const msg = await $('[data-testid="print-save-message"]');
+        const msg = await $('[data-testid="toast-success"]');
         await msg.waitForDisplayed({ timeout: 30000 });
         assert.match(await msg.getText(), /Print settings saved/i);
     });

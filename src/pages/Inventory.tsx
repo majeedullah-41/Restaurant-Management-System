@@ -12,6 +12,7 @@ import AdminPasswordModal from "../components/AdminPasswordModal";
 import DateFilterToolbar from "../components/DateFilterToolbar";
 import { MoneyInput } from "../components/MoneyInput";
 import { exportReportAsPdf } from "../lib/pdfExport";
+import { useToast } from "../lib/toast";
 import { InventoryReportTemplate } from "../components/InventoryReportTemplate";
 
 // ── Types ─────────────────────────────────────────────
@@ -50,6 +51,7 @@ const PRESET_UNITS = ["pcs", "kg", "g", "liters", "ml", "dozen", "bags", "boxes"
 type TabType = "overview" | "usage" | "purchase" | "history";
 
 export default function Inventory() {
+  const toast = useToast();
   // ── Core State ──
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [summary, setSummary] = useState<InventorySummary>({ total_items: 0, low_stock_count: 0, out_of_stock_count: 0, period_purchase_total: 0 });
@@ -84,8 +86,6 @@ export default function Inventory() {
   const [usageItemId, setUsageItemId] = useState<number | "">("");
   const [usageQty, setUsageQty] = useState("");
   const [usageNote, setUsageNote] = useState("");
-  const [usageSuccess, setUsageSuccess] = useState<string | null>(null);
-  const [usageError, setUsageError] = useState<string | null>(null);
 
   // ── Purchase Form ──
   const [purchaseItemId, setPurchaseItemId] = useState<number | "">("");
@@ -93,8 +93,6 @@ export default function Inventory() {
   const [purchaseCost, setPurchaseCost] = useState("");
   const [purchaseSupplier, setPurchaseSupplier] = useState("");
   const [purchaseNote, setPurchaseNote] = useState("");
-  const [purchaseSuccess, setPurchaseSuccess] = useState<string | null>(null);
-  const [purchaseError, setPurchaseError] = useState<string | null>(null);
 
   // ── History Filters ──
   const [dateRange, setDateRange] = useState({ 
@@ -103,9 +101,6 @@ export default function Inventory() {
   });
   const [historyItemFilter, setHistoryItemFilter] = useState<number | "">("");
   const [historyTypeFilter, setHistoryTypeFilter] = useState<string>("all");
-
-  // ── Error Toast ──
-  const [error, setError] = useState<string | null>(null);
 
   // ── Data Loading ──
   const loadItems = async () => {
@@ -154,12 +149,6 @@ export default function Inventory() {
   };
 
   useEffect(() => { loadAll(); }, []);
-  useEffect(() => {
-    setUsageSuccess(null);
-    setUsageError(null);
-    setPurchaseSuccess(null);
-    setPurchaseError(null);
-  }, [activeTab]);
   useEffect(() => {
     loadSummary();
     if (dateRange.startDate && dateRange.endDate) {
@@ -233,8 +222,9 @@ export default function Inventory() {
       }
       setIsItemModalOpen(false);
       loadAll();
+      toast.success(editingItem ? "Inventory item updated successfully!" : "Inventory item added successfully!");
     } catch (err: any) {
-      setError(err.toString());
+      toast.error(err.toString());
     }
   };
 
@@ -250,8 +240,9 @@ export default function Inventory() {
     try {
       await invoke("delete_inventory_item", { id: itemToDelete });
       loadAll();
+      toast.success("Inventory item deleted.");
     } catch (err: any) {
-      setError(err.toString());
+      toast.error(err.toString());
     } finally {
       setItemToDelete(null);
     }
@@ -274,16 +265,15 @@ export default function Inventory() {
       if (dateRange.startDate && dateRange.endDate) {
         loadTransactions();
       }
+      toast.success("Inventory transaction deleted.");
     } catch (err: any) {
-      setError(err.toString());
+      toast.error(err.toString());
     }
   };
 
   // ── Record Usage ──
   const handleRecordUsage = async (e: React.FormEvent) => {
     e.preventDefault();
-    setUsageSuccess(null);
-    setUsageError(null);
     if (!usageItemId || !usageQty) return;
 
     try {
@@ -293,20 +283,18 @@ export default function Inventory() {
         note: usageNote || null,
       });
       const selectedItem = items.find(i => i.id === usageItemId);
-      setUsageSuccess(`Recorded: ${usageQty} ${selectedItem?.unit || ''} of ${selectedItem?.name || 'item'} used`);
+      toast.success(`Recorded: ${usageQty} ${selectedItem?.unit || ''} of ${selectedItem?.name || 'item'} used`);
       setUsageQty("");
       setUsageNote("");
       loadAll();
     } catch (err: any) {
-      setUsageError(err.toString());
+      toast.error(err.toString());
     }
   };
 
   // ── Record Purchase ──
   const handleRecordPurchase = async (e: React.FormEvent) => {
     e.preventDefault();
-    setPurchaseSuccess(null);
-    setPurchaseError(null);
     if (!purchaseItemId || !purchaseQty || !purchaseCost) return;
 
     try {
@@ -318,14 +306,14 @@ export default function Inventory() {
         note: purchaseNote.trim() || null,
       });
       const selectedItem = items.find(i => i.id === purchaseItemId);
-      setPurchaseSuccess(`Recorded: ${purchaseQty} ${selectedItem?.unit || ''} of ${selectedItem?.name || 'item'} purchased — ${formatCurrency(parseFloat(purchaseCost))} auto-logged to Expenses`);
+      toast.success(`Recorded: ${purchaseQty} ${selectedItem?.unit || ''} of ${selectedItem?.name || 'item'} purchased — ${formatCurrency(parseFloat(purchaseCost))} auto-logged to Expenses`);
       setPurchaseQty("");
       setPurchaseCost("");
       setPurchaseSupplier("");
       setPurchaseNote("");
       loadAll();
     } catch (err: any) {
-      setPurchaseError(err.toString());
+      toast.error(err.toString());
     }
   };
 
@@ -357,14 +345,6 @@ export default function Inventory() {
 
   return (
     <div className="flex h-[100dvh] w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-300 font-sans overflow-hidden relative transition-colors">
-
-      {/* Error Toast */}
-      {error && (
-        <div className="absolute top-4 right-4 z-[60] max-w-md bg-red-500 text-white p-3 rounded-xl shadow-lg flex items-center justify-between text-xs font-semibold animate-in fade-in slide-in-from-top-2">
-          <span>⚠️ {error}</span>
-          <button onClick={() => setError(null)} className="ml-3 hover:text-red-200 cursor-pointer font-bold">✕</button>
-        </div>
-      )}
 
       {/* Add / Edit Item Modal */}
       {isItemModalOpen && (
@@ -592,17 +572,6 @@ export default function Inventory() {
                     <span className="flex items-center justify-center space-x-2"><Minus size={18} /><span>Record Usage</span></span>
                   </button>
                 </form>
-
-                {usageSuccess && (
-                  <div className="mt-4 p-3 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 rounded-lg text-emerald-700 dark:text-emerald-400 text-sm font-medium">
-                    ✓ {usageSuccess}
-                  </div>
-                )}
-                {usageError && (
-                  <div className="mt-4 p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-lg text-red-700 dark:text-red-400 text-sm font-medium">
-                    ✕ {usageError}
-                  </div>
-                )}
               </div>
 
               {/* Usage Log */}
@@ -687,17 +656,6 @@ export default function Inventory() {
                     <span className="flex items-center justify-center space-x-2"><Plus size={18} /><span>Record Purchase</span></span>
                   </button>
                 </form>
-
-                {purchaseSuccess && (
-                  <div className="mt-4 p-3 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 rounded-lg text-emerald-700 dark:text-emerald-400 text-sm font-medium">
-                    ✓ {purchaseSuccess}
-                  </div>
-                )}
-                {purchaseError && (
-                  <div className="mt-4 p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-lg text-red-700 dark:text-red-400 text-sm font-medium">
-                    ✕ {purchaseError}
-                  </div>
-                )}
               </div>
 
               {/* Purchase Log */}

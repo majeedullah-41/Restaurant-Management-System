@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '../../lib/api';
 import { formatCurrency, formatDateTime } from '../../lib/utils';
 import { Banknote, CheckCircle, Clock, Pencil, Plus, Trash2, ChevronDown, ChevronUp, CornerDownRight } from 'lucide-react';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { MoneyInput } from '../../components/MoneyInput';
+import { useToast } from '../../lib/toast';
 import Sidebar from '../../components/Sidebar';
 import Header from '../../components/Header';
 import DateFilterToolbar from '../../components/DateFilterToolbar';
@@ -19,10 +20,12 @@ type GroupedAdvance = {
 };
 
 export default function AdvanceHistory() {
+  const toast = useToast();
   const [history, setHistory] = useState<AdvanceHistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedStaffIds, setExpandedStaffIds] = useState<number[]>([]);
+  const historyRequestRef = useRef(0);
 
   // Date filters — first to last day of the current month from the device clock.
   const [startDate, setStartDate] = useState(() => `${todayLocal().slice(0, 8)}01`);
@@ -52,20 +55,25 @@ export default function AdvanceHistory() {
   }, [startDate, endDate]);
 
   const fetchHistory = async () => {
+    const requestId = ++historyRequestRef.current;
     try {
       setLoading(true);
-      setErrorMsg(null);
+      if (requestId === historyRequestRef.current) setLoadError(null);
       const data = await invoke<AdvanceHistoryRow[]>('get_advance_history', {
         staffId: 0,
         startDate,
         endDate
       });
+      if (requestId !== historyRequestRef.current) return;
       setHistory(data);
+      setLoadError(null);
     } catch (e: any) {
+      if (requestId !== historyRequestRef.current) return;
       console.error(e);
-      setErrorMsg(String(e));
+      setLoadError(String(e));
+      toast.error(String(e));
     } finally {
-      setLoading(false);
+      if (requestId === historyRequestRef.current) setLoading(false);
     }
   };
 
@@ -88,7 +96,6 @@ export default function AdvanceHistory() {
     if (!selectedStaffId || !advanceAmount) return;
     try {
       setSaving(true);
-      setErrorMsg(null);
       const staffName = staffList.find(s => s.id === parseInt(selectedStaffId))?.name || '';
       await invoke('pay_advance_salary', {
         staffId: parseInt(selectedStaffId),
@@ -101,10 +108,11 @@ export default function AdvanceHistory() {
       setAdvanceAmount('');
       setAdvanceNote('');
       setSelectedStaffId('');
+      toast.success("Advance recorded for " + staffName + ".");
       await fetchHistory();
     } catch (e: any) {
       console.error(e);
-      setErrorMsg(String(e));
+      toast.error(String(e));
     } finally {
       setSaving(false);
     }
@@ -114,7 +122,6 @@ export default function AdvanceHistory() {
     setEditingRow(row);
     setEditAmount(String(row.amount));
     setEditNote(row.note || '');
-    setErrorMsg(null);
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
@@ -122,17 +129,17 @@ export default function AdvanceHistory() {
     if (!editingRow || !editAmount) return;
     try {
       setSavingEdit(true);
-      setErrorMsg(null);
       await invoke('update_advance', {
         advanceId: editingRow.id,
         amount: parseFloat(editAmount),
         note: editNote
       });
       setEditingRow(null);
+      toast.success("Advance updated.");
       await fetchHistory();
     } catch (err: any) {
       console.error(err);
-      setErrorMsg(String(err));
+      toast.error(String(err));
     } finally {
       setSavingEdit(false);
     }
@@ -142,13 +149,13 @@ export default function AdvanceHistory() {
     if (!confirmDelete) return;
     try {
       setDeleting(true);
-      setErrorMsg(null);
       await invoke('delete_advance', { advanceId: confirmDelete.id });
       setConfirmDelete(null);
+      toast.success("Advance deleted.");
       await fetchHistory();
     } catch (err: any) {
       console.error(err);
-      setErrorMsg(String(err));
+      toast.error(String(err));
     } finally {
       setDeleting(false);
     }
@@ -231,13 +238,6 @@ export default function AdvanceHistory() {
               </button>
             </div>
 
-            {errorMsg && (
-              <div className="bg-red-50 text-red-700 px-4 py-3 rounded-xl text-sm font-semibold border border-red-200 flex justify-between">
-                <span>{errorMsg}</span>
-                <button onClick={() => setErrorMsg(null)}>✕</button>
-              </div>
-            )}
-
             {loading ? (
               <div className="flex justify-center py-20">
                 <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
@@ -257,7 +257,13 @@ export default function AdvanceHistory() {
                       </tr>
                     </thead>
                     <tbody>
-                      {groupedHistory.length === 0 ? (
+                      {loadError ? (
+                        <tr>
+                          <td colSpan={6} className="py-8 text-center text-red-500">
+                            Failed to load advance history.
+                          </td>
+                        </tr>
+                      ) : groupedHistory.length === 0 ? (
                         <tr>
                           <td colSpan={6} className="py-8 text-center text-slate-500">
                             No advance history found.

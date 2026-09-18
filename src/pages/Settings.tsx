@@ -3,6 +3,7 @@ import { invoke } from "../lib/api";
 import { Save, ShieldCheck, Copy, CheckCircle, CalendarClock, Clock, Cpu, RefreshCw, Key, XCircle, Loader2, Upload, Trash, DatabaseBackup, Settings as SettingsIcon, Truck, Printer, Database, Menu, ClipboardCheck } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
+import { useToast } from "../lib/toast";
 import BackupSection from "../components/BackupSection";
 import DataMigrationSection from "../components/DataMigrationSection";
 import DeliverySettingsSection from "../components/DeliverySettingsSection";
@@ -12,6 +13,7 @@ import OrderRequirementsSection from "../components/OrderRequirementsSection";
 type SettingsTab = 'general' | 'order-requirements' | 'printing' | 'delivery' | 'backup' | 'migration' | 'license';
 
 export default function SettingsPage() {
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [name, setName] = useState("Restaurant Management System");
@@ -157,11 +159,10 @@ export default function SettingsPage() {
         requireAddressDelivery,
         autoAssignTaker
       });
-      setMessage("Settings saved successfully!");
       window.dispatchEvent(new Event("settingsUpdated"));
-      setTimeout(() => setMessage(""), 3000);
+      toast.success("Settings saved successfully!");
     } catch (err: any) {
-      setMessage(err.toString());
+      toast.error(err.toString());
     }
   };
 
@@ -549,7 +550,7 @@ export default function SettingsPage() {
                             try {
                               const res: any = await invoke("activate_license", { key: trimmed });
                               if (res.valid) {
-                                setRenewMessage({ type: "success", text: `License renewed successfully! Valid until ${res.expiry_date}.` });
+                                toast.success(`License renewed successfully! Valid until ${res.expiry_date}.`);
                                 // Refresh license info locally
                                 const info: any = await invoke("get_license_info");
                                 setLicenseInfo(info);
@@ -563,7 +564,7 @@ export default function SettingsPage() {
                                 setRenewMessage({ type: "error", text: res.message });
                               }
                             } catch (err: any) {
-                              setRenewMessage({ type: "error", text: err?.toString() || "Renewal failed." });
+                              toast.error(err?.toString() || "Renewal failed.");
                             } finally {
                               setRenewLoading(false);
                             }

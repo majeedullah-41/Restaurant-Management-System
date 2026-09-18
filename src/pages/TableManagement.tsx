@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo } from "react";
 import { invoke } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { X, Plus, Trash2, CheckCircle2, Lock, AlertTriangle, Pencil } from "lucide-react";
+import { useToast } from "../lib/toast";
+import { X, Plus, Trash2, CheckCircle2, Lock, Pencil } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import { ConfirmModal } from "../components/ConfirmModal";
-import { AlertModal } from "../components/AlertModal";
 
 interface TableData {
   id: number;
@@ -22,6 +22,7 @@ interface TableCategory {
 
 export default function TableManagement() {
   const { user } = useAuth();
+  const toast = useToast();
   const isAdmin = user?.role === "Admin";
   const [tables, setTables] = useState<TableData[]>([]);
   const [categories, setCategories] = useState<TableCategory[]>([]);
@@ -31,21 +32,17 @@ export default function TableManagement() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newTableNumber, setNewTableNumber] = useState<string>("");
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>("");
-  const [errorAlert, setErrorAlert] = useState<string | null>(null);
-  const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
   // Category management
   const [isCatModalOpen, setIsCatModalOpen] = useState(false);
   const [catName, setCatName] = useState("");
   const [editingCat, setEditingCat] = useState<TableCategory | null>(null);
-  const [catError, setCatError] = useState<string | null>(null);
   const [deleteCatId, setDeleteCatId] = useState<number | null>(null);
   const [isManageCategoriesOpen, setIsManageCategoriesOpen] = useState(false);
 
   // Existing table management
   const [selectedTable, setSelectedTable] = useState<TableData | null>(null);
   const [newStatus, setNewStatus] = useState<string>("");
-  const [errorMsg, setErrorMsg] = useState<string>("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
 
   const loadTables = async () => {
@@ -77,19 +74,16 @@ export default function TableManagement() {
   const openAdminModal = (table: TableData) => {
     setSelectedTable(table);
     setNewStatus(table.status);
-    setErrorMsg("");
   };
 
   const closeAdminModal = () => {
     setSelectedTable(null);
-    setErrorMsg("");
   };
 
   const handleUpdateStatus = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedTable) return;
 
-    setErrorMsg("");
     try {
       await invoke("admin_update_table_status", {
         tableId: selectedTable.id,
@@ -97,28 +91,27 @@ export default function TableManagement() {
       });
       closeAdminModal();
       loadTables();
+      toast.success("Table status updated.");
     } catch (err: any) {
-      setErrorMsg(err);
+      toast.error(String(err));
     }
   };
 
   const handleAddTable = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTableNumber || !selectedCategoryId) return;
-    setSaveMsg(null);
-    setErrorAlert(null);
     try {
       const res: any = await invoke("add_tables", {
         numbers: newTableNumber,
         categoryId: parseInt(selectedCategoryId)
       });
-      setSaveMsg(res || "Table(s) added");
+      toast.success(res || "Table(s) added");
       setIsAddModalOpen(false);
       setNewTableNumber("");
       setSelectedCategoryId("");
       loadTables();
     } catch (err: any) {
-      setErrorAlert("Failed to add table(s): " + err);
+      toast.error("Failed to add table(s): " + err);
     }
   };
 
@@ -132,8 +125,9 @@ export default function TableManagement() {
       await invoke("delete_table", { id: deleteConfirmId });
       closeAdminModal();
       loadTables();
+      toast.success("Table deleted.");
     } catch (err: any) {
-      setErrorMsg(err);
+      toast.error(String(err));
     }
     setDeleteConfirmId(null);
   };
@@ -142,7 +136,6 @@ export default function TableManagement() {
   const handleSaveCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!catName) return;
-    setCatError(null);
     try {
       if (editingCat) {
         await invoke("update_table_category", { id: editingCat.id, name: catName });
@@ -153,15 +146,15 @@ export default function TableManagement() {
       setEditingCat(null);
       setCatName("");
       loadCategories();
+      toast.success(editingCat ? "Category updated." : "Category added.");
     } catch (err: any) {
-      setCatError(String(err));
+      toast.error(String(err));
     }
   };
 
   const openEditCategory = (cat: TableCategory) => {
     setEditingCat(cat);
     setCatName(cat.name);
-    setCatError(null);
     setIsCatModalOpen(true);
   };
 
@@ -175,8 +168,9 @@ export default function TableManagement() {
       await invoke("delete_table_category", { id: deleteCatId });
       loadCategories();
       loadTables();
+      toast.success("Category deleted.");
     } catch (err: any) {
-      setErrorAlert(String(err));
+      toast.error(String(err));
     }
     setDeleteCatId(null);
   };
@@ -247,13 +241,6 @@ export default function TableManagement() {
                 </select>
               </div>
 
-              {errorMsg && (
-                <div className="p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900/50 rounded-lg flex items-start space-x-2 text-red-600 dark:text-red-400 text-xs font-medium leading-relaxed">
-                  <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                  <span>{errorMsg}</span>
-                </div>
-              )}
-
               <button type="submit" className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors mt-4 shadow-lg shadow-blue-600/20">
                 Apply Override
               </button>
@@ -268,7 +255,7 @@ export default function TableManagement() {
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-96 shadow-2xl">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">Add New Table</h3>
-              <button onClick={() => { setIsAddModalOpen(false); setNewTableNumber(""); setSelectedCategoryId(""); setSaveMsg(null); setErrorAlert(null); }} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"><X size={20}/></button>
+              <button onClick={() => { setIsAddModalOpen(false); setNewTableNumber(""); setSelectedCategoryId(""); }} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"><X size={20}/></button>
             </div>
 
             <form onSubmit={handleAddTable} className="space-y-4">
@@ -306,13 +293,6 @@ export default function TableManagement() {
                 <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">Comma-separated numbers and ranges are supported (e.g. 1-5,8,11-15).</p>
               </div>
 
-              {errorAlert && (
-                <div className="p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900/50 rounded-lg flex items-start space-x-2 text-red-600 dark:text-red-400 text-xs font-medium">
-                  <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                  <span>{errorAlert}</span>
-                </div>
-              )}
-
               <button type="submit" className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors mt-4 shadow-lg shadow-blue-600/20">
                 Create Table(s)
               </button>
@@ -327,7 +307,7 @@ export default function TableManagement() {
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-96 shadow-2xl">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">{editingCat ? "Edit Category" : "Add Category"}</h3>
-              <button onClick={() => { setIsCatModalOpen(false); setEditingCat(null); setCatName(""); setCatError(null); }} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"><X size={20}/></button>
+              <button onClick={() => { setIsCatModalOpen(false); setEditingCat(null); setCatName(""); }} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"><X size={20}/></button>
             </div>
 
             <form onSubmit={handleSaveCategory} className="space-y-4">
@@ -342,13 +322,6 @@ export default function TableManagement() {
                   required
                 />
               </div>
-
-              {catError && (
-                <div className="p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900/50 rounded-lg flex items-start space-x-2 text-red-600 dark:text-red-400 text-xs font-medium">
-                  <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                  <span>{catError}</span>
-                </div>
-              )}
 
               <button type="submit" className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors mt-4 shadow-lg shadow-blue-600/20">
                 {editingCat ? "Update Category" : "Create Category"}
@@ -390,7 +363,7 @@ export default function TableManagement() {
             )}
 
             <button
-              onClick={() => { setIsManageCategoriesOpen(false); setEditingCat(null); setCatName(""); setCatError(null); setIsCatModalOpen(true); }}
+              onClick={() => { setIsManageCategoriesOpen(false); setEditingCat(null); setCatName(""); setIsCatModalOpen(true); }}
               className="w-full h-10 shrink-0 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-semibold rounded-lg flex items-center justify-center space-x-2 transition-colors mt-4"
             >
               <Plus size={16} />
@@ -419,7 +392,7 @@ export default function TableManagement() {
                   <span>Manage Categories</span>
                 </button>
                 <button
-                  onClick={() => { setIsAddModalOpen(true); setSaveMsg(null); setErrorAlert(null); }}
+                  onClick={() => { setIsAddModalOpen(true); }}
                   className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center space-x-2 transition-colors shadow-lg shadow-blue-600/20"
                 >
                   <Plus size={16} />
@@ -428,13 +401,6 @@ export default function TableManagement() {
               </>
             )}
           </div>
-
-          {saveMsg && (
-            <div className="mb-4 p-3 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900/50 rounded-lg flex items-center space-x-2 text-emerald-700 dark:text-emerald-400 text-xs font-medium">
-              <CheckCircle2 size={14} className="shrink-0" />
-              <span>{saveMsg}</span>
-            </div>
-          )}
 
           {loading ? (
             <div className="flex-1 flex items-center justify-center text-slate-500">Loading floor plan...</div>
@@ -511,14 +477,6 @@ export default function TableManagement() {
         confirmText="Delete"
         onConfirm={confirmDeleteCategory}
         onCancel={() => setDeleteCatId(null)}
-      />
-
-      <AlertModal
-        isOpen={errorAlert !== null}
-        title="Error"
-        message={errorAlert || ""}
-        type="danger"
-        onClose={() => setErrorAlert(null)}
       />
     </div>
   );

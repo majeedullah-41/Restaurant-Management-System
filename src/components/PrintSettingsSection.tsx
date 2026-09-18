@@ -24,6 +24,7 @@ import {
 import { ReceiptTemplate } from "./ReceiptTemplate";
 import { KOTTemplate } from "./KOTTemplate";
 import { DeliveryReceiptTemplate } from "./DeliveryReceiptTemplate";
+import { useToast } from "../lib/toast";
 import { ToggleRow } from "./ui/toggle";
 
 const inputCls =
@@ -95,6 +96,7 @@ const SAMPLE_DR_DATA = {
 type Tab = "printers" | "receipt" | "kot" | "dr";
 
 export default function PrintSettingsSection() {
+  const toast = useToast();
   const [settings, setSettings] = useState<PrintSettings>(DEFAULT_PRINT_SETTINGS);
   const [printers, setPrinters] = useState<PrinterInfo[]>([]);
   const [restaurant, setRestaurant] = useState<{ name: string; address: string; contact: string; logo: string | null }>({
@@ -106,9 +108,7 @@ export default function PrintSettingsSection() {
   const [tab, setTab] = useState<Tab>("printers");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [testing, setTesting] = useState<TicketKind | null>(null);
-  const [testMsg, setTestMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     async function init() {
@@ -146,14 +146,12 @@ export default function PrintSettingsSection() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    setMessage(null);
     try {
       await savePrintSettings(settings);
-      setMessage({ type: "success", text: "Print settings saved successfully!" });
       window.dispatchEvent(new Event("settingsUpdated"));
-      setTimeout(() => setMessage(null), 3000);
+      toast.success("Print settings saved successfully!");
     } catch (err: any) {
-      setMessage({ type: "error", text: err.toString() });
+      toast.error(err.toString());
     } finally {
       setSaving(false);
     }
@@ -161,7 +159,6 @@ export default function PrintSettingsSection() {
 
   const handleTestPrint = async (kind: TicketKind) => {
     setTesting(kind);
-    setTestMsg(null);
     try {
       const logoUrl = assetFileUrl(restaurant.logo);
       let text = "";
@@ -334,9 +331,9 @@ export default function PrintSettingsSection() {
             : printer.toLowerCase().includes("pdf")
               ? "Designed ticket PDF created and opened."
               : "Test print sent to the printer queue.";
-      setTestMsg({ type: "success", text: successText });
+      toast.success(successText);
     } catch (err: any) {
-      setTestMsg({ type: "error", text: err.toString() });
+      toast.error(err.toString());
     } finally {
       setTesting(null);
     }
@@ -481,12 +478,6 @@ export default function PrintSettingsSection() {
                 </div>
               </div>
             ))}
-
-            {testMsg && (
-              <p data-testid="print-test-message" className={`text-sm font-bold ${testMsg.type === "success" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                {testMsg.text}
-              </p>
-            )}
           </div>
         )}
 
@@ -847,12 +838,6 @@ export default function PrintSettingsSection() {
               </div>
             </div>
           </div>
-        )}
-
-        {message && (
-          <p data-testid="print-save-message" className={`text-sm font-bold ${message.type === "success" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-            {message.text}
-          </p>
         )}
 
         <button

@@ -9,6 +9,7 @@ import {
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import { AlertModal } from '../components/AlertModal';
+import { useToast } from '../lib/toast';
 
 interface CashierStats {
   todays_sales: number;
@@ -66,7 +67,7 @@ export default function CashierDashboard() {
   
   const [staff, setStaff] = useState<StaffDropdown[]>([]);
   const [categories, setCategories] = useState<StaffCategory[]>([]);
-
+  const toast = useToast();
   const [alertModal, setAlertModal] = useState<{ title: string; message: string; type: 'danger' | 'warning' | 'info' | 'success' } | null>(null);
 
   const loadData = async () => {
@@ -112,13 +113,13 @@ export default function CashierDashboard() {
     }
     try {
       const msg = await invoke<string>("clock_in_out", { staffId: Number(clockStaffId) });
-      setAlertModal({ title: "Success", message: msg, type: "success" });
+      toast.success(msg);
       setShowClockModal(false);
       setClockStaffId("");
       setClockCategoryId("");
     } catch (err) {
       console.error(err);
-      setAlertModal({ title: "Clock In/Out Failed", message: String(err), type: "danger" });
+      toast.error(String(err));
     }
   };
 

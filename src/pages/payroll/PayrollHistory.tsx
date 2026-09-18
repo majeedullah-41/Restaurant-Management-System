@@ -7,14 +7,16 @@ import Sidebar from '../../components/Sidebar';
 import Header from '../../components/Header';
 import DateFilterToolbar from '../../components/DateFilterToolbar';
 import { ConfirmModal } from '../../components/ConfirmModal';
+import { useToast } from '../../lib/toast';
 import { PayrollReportTemplate } from '../../components/PayrollReportTemplate';
 import { todayLocal, parseDeviceDate } from '../../lib/utils';
 import { PayrollHistoryPeriod } from './types';
 
 export default function PayrollHistory() {
+  const toast = useToast();
   const [history, setHistory] = useState<PayrollHistoryPeriod[]>([]);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const printRef = useRef<HTMLDivElement>(null);
   const [restaurantName, setRestaurantName] = useState('Restaurant POS');
   const [restaurantLogo, setRestaurantLogo] = useState<string | null>(null);
@@ -28,16 +30,16 @@ export default function PayrollHistory() {
     if (!deleteTarget) return;
     try {
       setDeleting(true);
-      setErrorMsg(null);
       await invoke('delete_payroll_period', {
         startDate: deleteTarget.start_date,
         endDate: deleteTarget.end_date,
       });
       setDeleteTarget(null);
+      toast.success("Payroll period deleted.");
       await fetchHistory();
     } catch (e: any) {
       console.error(e);
-      setErrorMsg(String(e));
+      toast.error(String(e));
     } finally {
       setDeleting(false);
     }
@@ -54,15 +56,16 @@ export default function PayrollHistory() {
   const fetchHistory = async () => {
     try {
       setLoading(true);
-      setErrorMsg(null);
       const data = await invoke<PayrollHistoryPeriod[]>('get_payroll_history', {
         startDate,
         endDate
       });
       setHistory(data);
+      setLoadError(null);
     } catch (e: any) {
       console.error(e);
-      setErrorMsg(String(e));
+      setLoadError(String(e));
+      toast.error(String(e));
     } finally {
       setLoading(false);
     }
@@ -87,6 +90,10 @@ export default function PayrollHistory() {
         `Payroll_Report_${startDate}_to_${endDate}`,
         printRef.current
       );
+      toast.success("Payroll report exported as PDF.");
+    } catch (e: any) {
+      console.error(e);
+      toast.error(String(e));
     } finally {
       setExporting(false);
     }
@@ -131,15 +138,15 @@ export default function PayrollHistory() {
               </div>
             </div>
 
-            {errorMsg && (
-              <div className="bg-red-50 text-red-700 px-4 py-3 rounded-xl text-sm font-semibold border border-red-200">
-                {errorMsg}
-              </div>
-            )}
-
             {loading ? (
               <div className="flex justify-center py-20">
                 <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+              </div>
+            ) : loadError ? (
+              <div className="text-center py-20 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+                <Clock className="mx-auto h-12 w-12 text-slate-400 mb-4" />
+                <h3 className="text-lg font-medium text-slate-900 dark:text-white">Failed to load history</h3>
+                <p className="text-slate-500">Could not retrieve payroll periods. Check your connection and try the Refresh button.</p>
               </div>
             ) : history.length === 0 ? (
               <div className="text-center py-20 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">

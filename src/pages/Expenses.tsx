@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "../lib/api";
 import { formatCurrency, todayLocal } from "../lib/utils";
-import { Plus, Trash2, Landmark, X, Download, AlertCircle } from "lucide-react";
+import { Plus, Trash2, Landmark, X, Download } from "lucide-react";
 import { exportReportAsPdf } from "../lib/pdfExport";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
@@ -9,6 +9,7 @@ import { ConfirmModal } from "../components/ConfirmModal";
 import { MoneyInput } from "../components/MoneyInput";
 import { ExpenseReportTemplate } from "../components/ExpenseReportTemplate";
 import DateFilterToolbar from "../components/DateFilterToolbar";
+import { useToast } from "../lib/toast";
 
 interface Expense {
   id: number;
@@ -20,12 +21,11 @@ interface Expense {
 }
 
 export default function Expenses() {
+  const toast = useToast();
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [expenseToDelete, setExpenseToDelete] = useState<number | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
 
   // Expense Form State
   const [amount, setAmount] = useState("");
@@ -58,6 +58,10 @@ export default function Expenses() {
         `Expense_Report_${dateRange.startDate || 'all'}_to_${dateRange.endDate || 'all'}`,
         printRef.current
       );
+      toast.success("Expense report exported.");
+    } catch (err) {
+      console.error(err);
+      toast.error(String(err));
     } finally {
       setExporting(false);
     }
@@ -94,8 +98,10 @@ export default function Expenses() {
       setNote("");
       setExpenseDate(todayLocal());
       loadExpenses();
+      toast.success("Expense added.");
     } catch (err) {
       console.error(err);
+      toast.error(String(err));
     }
   };
 
@@ -104,9 +110,7 @@ export default function Expenses() {
   const handleDeleteExpense = (id: number) => {
     const expense = expenses.find(e => e.id === id);
     if (expense?.reference_type === "inventory_purchase") {
-      setBlockedNotice(
-        `This expense is linked to an inventory purchase and cannot be deleted from Expenses. Please go to the Inventory section and delete the purchase there — it will be removed from Expenses automatically.`
-      );
+      toast.warning("This expense is linked to an inventory purchase and cannot be deleted from Expenses. Go to Inventory to delete the purchase instead.");
       return;
     }
     setExpenseToDelete(id);
@@ -116,12 +120,13 @@ export default function Expenses() {
   const confirmDeleteExpense = async () => {
     if (expenseToDelete === null) return;
     setDeleteModalOpen(false);
-    setDeleteError(null);
     try {
       await invoke("delete_expense", { id: expenseToDelete });
       loadExpenses();
+      toast.success("Expense deleted.");
     } catch (err: any) {
-      setDeleteError(err.toString() || "Failed to delete expense.");
+      console.error(err);
+      toast.error(String(err));
     } finally {
       setExpenseToDelete(null);
     }
@@ -216,31 +221,6 @@ export default function Expenses() {
         confirmText="Delete"
       />
 
-      {blockedNotice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
-            <div className="flex items-start gap-3">
-              <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400">
-                <AlertCircle size={22} />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Cannot Delete from Expenses</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Inventory-linked expenses are managed from the Inventory section.</p>
-              </div>
-            </div>
-            <p className="text-sm text-slate-700 dark:text-slate-300">{blockedNotice}</p>
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                onClick={() => setBlockedNotice(null)}
-                className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-sm transition-all cursor-pointer shadow-md"
-              >
-                OK
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <Sidebar activePage="expenses" />
 
       <main className="flex-1 flex flex-col bg-slate-50 dark:bg-[#0B1120] z-10 overflow-hidden transition-colors min-w-0">
@@ -258,16 +238,6 @@ export default function Expenses() {
                  <h2 className="text-3xl font-bold text-slate-900 dark:text-white mt-1">{formatCurrency(totalExpenses)}</h2>
                </div>
             </div>
-
-            {deleteError && (
-              <div className="flex items-start gap-3 p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl text-amber-800 dark:text-amber-200 text-sm font-medium max-w-md shrink-0 animate-in fade-in">
-                <AlertCircle size={18} className="shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
-                <span className="flex-1">{deleteError}</span>
-                <button onClick={() => setDeleteError(null)} className="text-amber-600 dark:text-amber-400 hover:text-amber-800 cursor-pointer font-bold ml-2">
-                  <X size={16} />
-                </button>
-              </div>
-            )}
 
             <div className="flex items-center space-x-4 shrink-0">
               <DateFilterToolbar 

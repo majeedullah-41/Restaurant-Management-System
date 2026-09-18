@@ -206,11 +206,12 @@ describe('RMS Order Flow E2E Test', () => {
         await selectOption(1, 'Dine-in');
 
         const staleId = db.prepare('SELECT id FROM orders ORDER BY id DESC LIMIT 1').get().id;
+        const existingItemCount = db.prepare('SELECT COUNT(*) AS c FROM order_items WHERE order_id = ?').get(staleId).c;
         await $('h3=Coke').click();
         await browser.pause(800);
 
         const latest = db.prepare('SELECT id FROM orders ORDER BY id DESC LIMIT 1').get();
         assert.strictEqual(latest.id, staleId, 'No new order should be created when dine-in requirements are enforced');
-        assert.strictEqual(db.prepare('SELECT COUNT(*) AS c FROM order_items WHERE order_id = ?').get(staleId).c, 0, 'No item should be added when dine-in requirements are enforced');
+        assert.strictEqual(db.prepare('SELECT COUNT(*) AS c FROM order_items WHERE order_id = ?').get(staleId).c, existingItemCount, 'No item should be added when dine-in requirements are enforced');
     });
 });
