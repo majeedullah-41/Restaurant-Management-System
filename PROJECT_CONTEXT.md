@@ -79,7 +79,7 @@ D:\projects\RMS
 ├── src/                  React frontend (main.tsx, App.tsx, App.css, ErrorBoundary.tsx)
 │   ├── components/       UI + feature components (incl. components/ui/, 8 report templates)
 │   ├── lib/              invoke wrapper, auth context, session, toasts, printing, pdfExport, utils
-│   └── pages/            ～20 page components (+ pages/payroll/{ProcessPayroll,PayrollHistory,AdvanceHistory,types}.tsx)
+│   └── pages/            21 page components (18 in pages/ + 3 in pages/payroll/; payroll/types.ts is a types module, not a page)
 ├── src-tauri/            Rust backend (src/{main,lib,auth,db,license,print,devtools,proc_util,test_print}.rs, src/thermal/)
 │   ├── tests/            19 Rust integration test files (+ tests/golden/ thermal snapshots)
 │   ├── capabilities/     capabilities/default.json
@@ -492,7 +492,7 @@ ReactDOM.createRoot
 |---|---|
 | Frontend entry | `src/main.tsx`, `src/App.tsx`, `src/ErrorBoundary.tsx`, `src/App.css` |
 | Frontend core libs | `src/lib/api.ts` (invoke wrapper), `src/lib/session.ts`, `src/lib/auth.tsx`, `src/lib/toast.tsx` (toast system), `src/lib/utils.ts`, `src/lib/printing.ts` (print router), `src/lib/pdfExport.ts`, `src/lib/thermalSamples.ts`, `src/lib/useClickOutside.ts` |
-| Pages | `src/pages/*` (19 + `pages/payroll/*` 4) |
+| Pages | `src/pages/*` (18) + `src/pages/payroll/*` (3 pages + `types.ts`) = 21 page components |
 | Components | `src/components/*` (30, incl. `ui/`, 8 templates, 6 settings sections, modals, Sidebar/Header) |
 | Tauri main | `src-tauri/src/main.rs` (panic log, init, HWID warm-up), `lib.rs` (authorize + 141-command handler) |
 | Business logic/DB | `src-tauri/src/db.rs` (schema, migrations, all db commands) |
